@@ -73,6 +73,7 @@ function credential(data) {
     object(item)
     for (const name of names) requiredString(item[name], name)
   }
+  if (data.account.revision !== undefined) revision(data.account.revision)
   const result = camelize(data)
   result.fromLocal = false
   Object.defineProperty(result.account, inspect.custom, {
@@ -321,7 +322,7 @@ class Client {
   async getAccount({ accountId, signal, allowLocalFallback = true } = {}) {
     requiredString(accountId, 'accountId')
     const value = await this.getCredential({ accountId, signal, allowLocalFallback })
-    const account = { ...value.account, asset: value.asset, fromLocal: value.fromLocal }
+    const account = { ...value.account, revision: value.account.revision ?? 0, asset: value.asset, fromLocal: value.fromLocal }
     Object.defineProperty(account, inspect.custom, { value: () => ({ ...account, secret: '[REDACTED]' }) })
     return account
   }

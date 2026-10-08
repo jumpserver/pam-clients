@@ -279,7 +279,7 @@ class Client:
     def get_account(self, *, account_id: str, allow_local_fallback: bool = True) -> Account:
         """Fetch an authorized account, including asset and cache provenance."""
         value = self.get_credential(account_id=account_id, allow_local_fallback=allow_local_fallback)
-        return replace(value.account, asset=value.asset, from_local=value.from_local)
+        return replace(value.account, asset=value.asset, from_local=value.from_local, revision=value.account.revision or 0)
 
     def confirm_event(self, *, event_id: str, status: str = "success", error_code: str = "") -> CommandResult:
         """Report only after applying the event; receiving or fetching is insufficient."""

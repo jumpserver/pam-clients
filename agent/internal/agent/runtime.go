@@ -598,6 +598,10 @@ func (a *Agent) ConfirmEvent(ctx context.Context, eventID string) (Applied, erro
 func (a *Agent) Confirm(ctx context.Context, key string, revision int64) (Applied, error) {
 	a.syncMu.Lock()
 	defer a.syncMu.Unlock()
+	return a.confirm(ctx, key, revision)
+}
+
+func (a *Agent) confirm(ctx context.Context, key string, revision int64) (Applied, error) {
 	a.mu.Lock()
 	value, exists := a.state.Latest[key]
 	if a.state.Denied || !a.state.Authorized[key] || !exists || a.state.Delivered[key] != revision || value.Revision != revision || (a.state.Events[key].EventID == "" && !contains(a.state.Scope.ConfirmationKeys, key)) {

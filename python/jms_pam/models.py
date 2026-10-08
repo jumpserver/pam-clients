@@ -78,7 +78,7 @@ class Account:
     username: str
     secret_type: str
     secret: str = field(repr=False)
-    revision: int = 0
+    revision: Optional[int] = None
     asset: Optional[Asset] = None
     from_local: bool = field(default=False, compare=False)
 
@@ -91,7 +91,7 @@ class Account:
             username=_string(data, "username"),
             secret_type=_string(data, "secret_type"),
             secret=_string(data, "secret"),
-            revision=_revision(data) if "revision" in data else 0,
+            revision=_revision(data) if "revision" in data else None,
         )
 
 
@@ -119,6 +119,8 @@ class Credential:
         data.pop("from_local")
         data["account"].pop("asset")
         data["account"].pop("from_local")
+        if data["account"]["revision"] is None:
+            data["account"].pop("revision")
         return data
 
 
