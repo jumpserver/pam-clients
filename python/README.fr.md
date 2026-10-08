@@ -127,10 +127,10 @@ L’Agent réconcilie au démarrage, lors d’événements pertinents et toutes 
 
 ## Intégration du SDK Python
 
-Créez et associez une politique, autorisez les comptes et téléchargez jms_pam_config.py dans l’assistant d’accès. Python 3.9+. Téléchargez et extrayez le SDK depuis JumpServer. Exécutez la commande suivante dans le répertoire extrait avec le Python ou l’environnement virtuel de l’application.
+Python 3.9+ est requis. Installez jms-pam depuis PyPI ou votre miroir interne avec le Python de l’application, puis téléchargez la configuration depuis l’assistant de connexion.
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 Placez jms_pam_config.py à côté de l’application. client_options contient des éléments d’identité : ne les ajoutez ni au dépôt ni aux journaux. Utilisez instance_id stable et unique par réplique. get_credential accepte exactement un sélecteur : account_id pour les comptes autorisés ou key pour une politique de rotation.

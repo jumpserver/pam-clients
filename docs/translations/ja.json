@@ -25,7 +25,7 @@
   "agent_confirm": "confirm は交互ローテーション専用です。ローカル確認は先に永続化され、confirmed は Core が受理済み、pending は後で再試行する状態です。ファイル書込やサービス再起動だけで確認しないでください。",
   "recovery": "Agent は起動時、関連イベント受信時、300 秒ごとに同期します。通信障害時は取得済みの最新の許可済み認証情報を保持し、識別情報または権限が拒否されると Socket の取得を停止します。署名付き同期の成功で復旧します。配信済みファイルは保持され、SIGINT/SIGTERM でサービス、接続、読取スレッドを終了します。",
   "sdk_title": "Python SDK の接続",
-  "sdk_setup": "ポリシーを作成してアプリケーションに関連付け、資産アカウントを許可し、接続ウィザードから jms_pam_config.py を取得します。Python 3.9+. JumpServer から SDK をダウンロードして展開し、展開先でアプリケーションの Python または仮想環境を使って次のコマンドを実行します。",
+  "sdk_setup": "Python 3.9+ が必要です。アプリケーションの Python または仮想環境で PyPI または社内ミラーから jms-pam をインストールし、接続ウィザードから設定をダウンロードします。",
   "sdk_config": "jms_pam_config.py をアプリケーションから読み込める場所に配置します。client_options は識別情報を含むため、コミットやログ出力は禁止です。各レプリカに安定した一意の instance_id を設定します。get_credential は account_id またはローテーション用 key のどちらか一方だけを受け取ります。",
   "events": "イベントと認証情報の適用",
   "event_processing": "初回・再接続の snapshot と credential.updated を処理します。例では subscription と alternating_rotation を分けています。apply_credential で接続を検証し、接続プールを切り替え、古い接続を解放してください。未実装の関数は例外を発生させ、未適用の認証情報の確認を防止します。",

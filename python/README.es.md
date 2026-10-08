@@ -127,10 +127,10 @@ El Agent sincroniza al arrancar, ante eventos pertinentes y cada 300 segundos. L
 
 ## Integración del SDK de Python
 
-Cree y vincule una política, autorice las cuentas y descargue jms_pam_config.py del asistente de acceso. Se requiere Python 3.9+. Descargue y extraiga el SDK de JumpServer. Ejecute el siguiente comando en el directorio extraído con el Python o entorno virtual de la aplicación.
+Se requiere Python 3.9+. Instale jms-pam desde PyPI o su espejo interno con el Python de la aplicación y descargue la configuración del asistente de conexión.
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 Coloque jms_pam_config.py junto a la aplicación. client_options contiene material de identidad: no lo guarde en el repositorio ni en registros. Use un instance_id estable y único por réplica. get_credential admite exactamente un selector: account_id para cuentas autorizadas o key para una política de rotación.

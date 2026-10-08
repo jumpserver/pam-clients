@@ -193,10 +193,10 @@ The wizard writes a generated `instance_id` into `jms_pam_config.py`. Reuse that
 
 ### Install and configure
 
-The SDK requires Python 3.9 or later. Download and extract the SDK archive from JumpServer, then install from its root using the application’s Python interpreter or virtual environment:
+The SDK requires Python 3.9 or later. Install from PyPI or your internal PyPI mirror using the application’s Python interpreter or virtual environment:
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 Place `jms_pam_config.py` where the application can import it. It contains application identity material and the generated instance ID; never commit it to source control or write it to logs.

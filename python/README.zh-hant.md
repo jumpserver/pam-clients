@@ -127,10 +127,10 @@ Agent 在啟動、相關事件及每 300 秒同步。網路故障保留已取得
 
 ## Python SDK 接入
 
-建立並綁定憑證策略、授權資產帳號，從應用程式接入精靈下載 jms_pam_config.py。需要 Python 3.9+. 從 JumpServer 下載並解壓縮 SDK，在解壓縮目錄中使用應用實際執行的 Python 或虛擬環境執行以下命令。
+需要 Python 3.9+。使用應用的 Python 或虛擬環境，從 PyPI 或企業內部鏡像安裝 `jms-pam`，再從接入精靈下載應用身分設定。
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 將 jms_pam_config.py 放在應用程式旁邊。client_options 包含應用程式身分資料，不要提交或寫入日誌。每個副本使用穩定且唯一的 instance_id。get_credential 只能提供一種選擇參數：帳號取密用 account_id，輪換策略用 key。

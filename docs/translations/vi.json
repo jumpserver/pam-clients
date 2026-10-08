@@ -25,7 +25,7 @@
   "agent_confirm": "Chỉ luân phiên cần confirm. Xác nhận cục bộ được lưu bền vững trước; confirmed nghĩa là Core đã nhận, pending nghĩa là sẽ thử lại. Không xác nhận chỉ vì ghi tệp hoặc khởi động lại dịch vụ thành công.",
   "recovery": "Agent đồng bộ lúc khởi động, theo sự kiện liên quan và mỗi 300 giây. Lỗi mạng giữ thông tin xác thực mới nhất đã lấy và được cấp quyền. Khi danh tính/quyền bị từ chối, chặn lấy qua Socket; đồng bộ có chữ ký thành công sẽ khôi phục. Tệp đã giao vẫn được giữ. SIGINT/SIGTERM đóng dịch vụ, kết nối và luồng đọc.",
   "sdk_title": "Tích hợp Python SDK",
-  "sdk_setup": "Tạo và gắn chính sách, cấp quyền tài khoản tài sản, tải jms_pam_config.py từ trình hướng dẫn của ứng dụng. Cần Python 3.9+. Tải SDK từ JumpServer và giải nén. Chạy lệnh sau trong thư mục đã giải nén bằng Python hoặc môi trường ảo của ứng dụng.",
+  "sdk_setup": "Cần Python 3.9+. Cài jms-pam từ PyPI hoặc kho nội bộ bằng Python của ứng dụng, rồi tải cấu hình từ trình hướng dẫn kết nối.",
   "sdk_config": "Đặt jms_pam_config.py nơi ứng dụng có thể nhập. client_options chứa danh tính ứng dụng: không đưa vào kho mã hay nhật ký. Mỗi bản sao có instance_id ổn định, duy nhất. get_credential nhận đúng một bộ chọn: account_id cho tài khoản hoặc key cho chính sách luân phiên.",
   "events": "Sự kiện và áp dụng thông tin xác thực",
   "event_processing": "Xử lý snapshot ban đầu/khi kết nối lại và credential.updated. Ví dụ tách subscription với alternating_rotation. Triển khai apply_credential để xác minh kết nối thật, chuyển nhóm kết nối và giải phóng kết nối cũ. Hàm giữ chỗ phát sinh lỗi để ngăn xác nhận thông tin chưa áp dụng.",

@@ -127,10 +127,10 @@ Agent đồng bộ lúc khởi động, theo sự kiện liên quan và mỗi 30
 
 ## Tích hợp Python SDK
 
-Tạo và gắn chính sách, cấp quyền tài khoản tài sản, tải jms_pam_config.py từ trình hướng dẫn của ứng dụng. Cần Python 3.9+. Tải SDK từ JumpServer và giải nén. Chạy lệnh sau trong thư mục đã giải nén bằng Python hoặc môi trường ảo của ứng dụng.
+Cần Python 3.9+. Cài jms-pam từ PyPI hoặc kho nội bộ bằng Python của ứng dụng, rồi tải cấu hình từ trình hướng dẫn kết nối.
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 Đặt jms_pam_config.py nơi ứng dụng có thể nhập. client_options chứa danh tính ứng dụng: không đưa vào kho mã hay nhật ký. Mỗi bản sao có instance_id ổn định, duy nhất. get_credential nhận đúng một bộ chọn: account_id cho tài khoản hoặc key cho chính sách luân phiên.

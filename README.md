@@ -36,14 +36,14 @@
 
 ## 在应用中安装 SDK
 
-当前通过本仓库源码安装；以下路径替换为本地绝对路径。这些包尚未发布到公共包仓库。
+Python SDK 通过 PyPI 发布，首次发布完成后可直接安装。其他语言的包仓库发布尚未配置；对应的源码安装说明仅供开发者使用。
 
 在应用详情的接入向导中选择 SDK 语言，可下载当前应用的身份配置并查看对应事件处理示例；完整安装和接口说明在文档中心。向导为 SDK 生成实例 ID 并写入下载文件。部署时复用该文件以保持身份稳定；多个副本应分别生成材料，或为每个副本设置不同且可复用的 `JMS_INSTANCE_ID`。
 
 ### Python
 
 ```bash
-python3 -m pip install /path/to/pam-clients/python
+python3 -m pip install jms-pam
 ```
 
 导入：`from jms_pam import Client`。
@@ -160,3 +160,33 @@ go build -o jms-pam-agent ./cmd/jms-pam-agent
 ```
 
 仓库根目录运行 `go test -race ./go/... ./agent/...` 可同时验证两个模块。
+
+## Python SDK 自动发布
+
+`.github/workflows/publish-python.yml` 在 GitHub Release 发布时构建 wheel / sdist，
+校验版本与 tag 一致，然后通过 PyPI Trusted Publishing 上传。推送普通提交或仅创建 tag
+不会上传 PyPI；支持在 Actions 中输入已经发布的 release tag 手动重试。
+CI 也会检查包构建、元数据和 wheel 安装。当前尚未完成首次 PyPI 发布。
+
+一次性设置：
+
+1. 在 PyPI `jumpserver` 组织中创建或添加 `jms-pam` 项目。
+2. 项目 Publishing 中添加 GitHub Trusted Publisher，填写下表。
+3. 在 GitHub 仓库 Settings → Environments 创建 `pypi`，与 PyPI 中的名称保持一致。
+
+| PyPI 设置项 | 值 |
+| --- | --- |
+| Project name | `jms-pam` |
+| Owner | `jumpserver`（GitHub owner） |
+| Repository name | `pam-clients` |
+| Workflow name | `publish-python.yml`（不含目录） |
+| Environment name | `pypi` |
+
+该方案不需要设置用户名、密码、API Token 或自定义 GitHub Secret。
+`id-token: write` 已在发布 job 中声明，临时认证由 GitHub Actions 与 PyPI 完成。
+PyPI 项目名为全局名称，组织归属不改变 `pip install jms-pam` 的命令。
+
+每次发版前更新 `python/jms_pam/_version.py`，例如 `1.0.1`，再打对应的 `v1.0.1` tag。
+Python 包版本由该文件统一读取；发布 workflow 会检查包版本与 tag 相符。
+先配置 Trusted Publisher，再发布 GitHub Release。首次发布成功后，企业可同步发行包
+到内部 PyPI 镜像，应用直接使用 `python3 -m pip install jms-pam`。

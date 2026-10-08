@@ -430,7 +430,7 @@ sudo systemctl restart jms-pam-agent
 {texts["sdk_setup"]}
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 {texts["sdk_config"]}

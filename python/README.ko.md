@@ -127,10 +127,10 @@ Agent는 시작 시, 관련 이벤트 수신 시, 300초마다 동기화합니�
 
 ## Python SDK 연동
 
-정책을 생성하여 앱에 바인딩하고 자산 계정을 허용한 뒤 연동 마법사에서 jms_pam_config.py를 다운로드하세요. Python 3.9+. JumpServer에서 SDK를 다운로드하고 압축을 푼 디렉터리에서 애플리케이션의 Python 또는 가상 환경으로 다음 명령을 실행하세요.
+Python 3.9+가 필요합니다. 애플리케이션의 Python 또는 가상 환경에서 PyPI나 사내 미러로 jms-pam을 설치하고 연결 마법사에서 구성을 다운로드하세요.
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 jms_pam_config.py를 앱이 읽을 수 있는 위치에 두세요. client_options에는 신원 정보가 있으므로 커밋하거나 로그에 쓰지 마세요. 복제본마다 안정적이고 고유한 instance_id를 사용하세요. get_credential에는 account_id 또는 회전 정책의 key 중 하나만 지정하세요.

@@ -193,10 +193,10 @@ SDK 使用应用的 AK/SK，自动接收所有绑定到应用的有效策略。�
 
 ### 安装与配置
 
-SDK 需要 Python 3.9 及以上。从 JumpServer 下载并解压 SDK 源码包后，在解压目录中使用应用实际运行的 Python 或虚拟环境安装：
+SDK 需要 Python 3.9 及以上。使用应用实际运行的 Python 或虚拟环境，从 PyPI 或企业内部 PyPI 镜像安装：
 
 ```bash
-python3 -m pip install .
+python3 -m pip install jms-pam
 ```
 
 将 `jms_pam_config.py` 放入应用可以导入的位置。该文件包含应用身份信息和生成的实例 ID，不要提交到代码仓库或输出到日志。

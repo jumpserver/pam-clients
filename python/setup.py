@@ -1,4 +1,5 @@
 from pathlib import Path
+from runpy import run_path
 
 from setuptools import find_packages, setup
 
@@ -7,7 +8,7 @@ BASE_DIR = Path(__file__).parent
 
 setup(
     name="jms-pam",
-    version="1.0.0",
+    version=run_path(str(BASE_DIR / "jms_pam" / "_version.py"))["__version__"],
     packages=find_packages(),
     package_data={"jms_pam": ["py.typed"]},
     install_requires=["requests>=2.31.0", "websocket-client>=1.6.1"],
