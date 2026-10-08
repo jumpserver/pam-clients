@@ -22,13 +22,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
+          cache-dependency-path: |
+            go/go.sum
+            agent/go.sum
       - name: Validate tag
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
           git show-ref --verify "refs/tags/$RELEASE_TAG"
       - name: Test and build Agent
-        working-directory: go
+        working-directory: agent
         run: |
           go test -race ./...
           mkdir -p ../dist

@@ -97,7 +97,7 @@ npm install /path/to/pam-clients/node
 
 - SDK 入口：`python/jms_pam/client.py`。
 - 响应模型：`python/jms_pam/models.py`，使用带类型提示的 dataclass。
-- Agent 命令入口：`go/cmd/jms-pam-agent`；配置、交付、本地 API 和安装源码位于 `go/agent`，复用 Go SDK。
+- Agent 命令入口：`agent/cmd/jms-pam-agent`；配置、交付、本地 API 和安装源码位于 `agent/internal/agent`，复用 Go SDK。
 - Python 分发包：`jms-pam`，通过 `jms_pam` 导入 SDK。Agent 为独立 Go 二进制 `jms-pam-agent`，固定服务名 `jms-pam-agent.service`。
 - 示例应用：`python/demo.py`、`python/postgresql_app.py`、`python/file_apps/`。
 
@@ -122,7 +122,7 @@ Python 的原始 `credential.v1` 请求对象接口作为兼容入口保留；�
 
 ## Go Agent
 
-以 `/etc/jms-pam-agent/agent.json` 为核心，支持默认 JSON 文件、EnvironmentFile、本机模板、systemd reload/restart、固定脚本及 Unix Socket。通知触发实时取密，保留最新成功值并在交付失败时重试。服务通过 `systemctl start jms-pam-agent` 启动；身份仅使用应用 AK/SK 与稳定的 `instance_id`，账号范围随应用授权，交付和服务动作由本机配置决定。详见 [配置与安装](go/agent/README.zh-hans.md) / [English](go/agent/README.en.md)。
+以 `/etc/jms-pam-agent/agent.json` 为核心，支持默认 JSON 文件、EnvironmentFile、本机模板、systemd reload/restart、固定脚本及 Unix Socket。通知触发实时取密，保留最新成功值并在交付失败时重试。服务通过 `systemctl start jms-pam-agent` 启动；身份仅使用应用 AK/SK 与稳定的 `instance_id`，账号范围随应用授权，交付和服务动作由本机配置决定。详见 [配置与安装](agent/README.zh-hans.md) / [English](agent/README.en.md)。
 
 CLI 提供 `get_accounts` 和 `get_secret ACCOUNT_ID`，通过运行中的 Agent 查询，并标明 API / 本地最新值来源。macOS / Linux 开发可用 `init-local` 和 `run --local` 前台运行，记录私有 `events.jsonl` 并原子更新最新凭据文件；生产配置也支持可选的 `event_file`。
 
@@ -146,3 +146,17 @@ git submodule update --init --recursive apps/accounts/clients
 后端继续从原路径读取文档和示例。更新客户端时，在 submodule 中检出指定版本，
 然后在 JumpServer 提交新的 gitlink。构建后端镜像前必须初始化 submodule。
 docker-web 使用独立的 `pam-agent-version.txt` 从本仓库 Release 下载二进制。
+
+## Agent 与 Go SDK
+
+`agent/` 是独立 Go 模块，可部署程序入口为 `agent/cmd/jms-pam-agent`，
+内部实现为 `agent/internal/agent`。`go/` 只提供 SDK 和 SDK 示例。
+根目录 `go.work` 支持两个模块联合开发；Agent 的本地模块替换保证发布时使用同一提交的 SDK。
+
+```bash
+cd agent
+go test -race ./...
+go build -o jms-pam-agent ./cmd/jms-pam-agent
+```
+
+仓库根目录运行 `go test -race ./go/... ./agent/...` 可同时验证两个模块。

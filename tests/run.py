@@ -28,12 +28,13 @@ def main():
             env=environment,
             check=True,
         )
-        subprocess.run(
-            ["go", "test", "-race", "./..."],
-            cwd=CLIENTS / "go",
-            env=environment,
-            check=True,
-        )
+        for module in ("go", "agent"):
+            subprocess.run(
+                ["go", "test", "-race", "./..."],
+                cwd=CLIENTS / module,
+                env=environment,
+                check=True,
+            )
         subprocess.run(
             [maven, "-q", "test"], cwd=CLIENTS / "java", env=environment, check=True
         )

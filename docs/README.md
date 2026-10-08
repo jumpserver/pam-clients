@@ -33,4 +33,4 @@ python3 tests/run.py
 
 ## Go Agent
 
-独立 Agent 入口为 `go/cmd/jms-pam-agent`，配置和交付说明位于 `go/agent/README.*.md`。Python 包只提供 SDK，运行 Agent 不需要 Python。服务名称固定为 `jms-pam-agent`；生成文档不得拼接 configuration ID 作为服务名。Agent 文档通过翻译键 `agent_setup`、`agent_rules`、`native_agent` 等维护。
+独立 Agent 入口为 `agent/cmd/jms-pam-agent`，配置和交付说明位于 `agent/README.*.md`。Python 包只提供 SDK，运行 Agent 不需要 Python。服务名称固定为 `jms-pam-agent`；生成文档不得拼接 configuration ID 作为服务名。Agent 文档通过翻译键 `agent_setup`、`agent_rules`、`native_agent` 等维护。

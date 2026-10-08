@@ -171,7 +171,7 @@ jms-pam-agent get_secret '<account-id>' --socket '<socket-path>'
 
 ## Linux / macOS / Windows 前台运行
 
-本地开发无需 root 或 systemd。先从现有应用的 Agent 接入向导下载引导 JSON，设置 `0600`，选择 JSON 或 Socket 交付。在 Go SDK 目录执行：
+本地开发无需 root 或 systemd。先从现有应用的 Agent 接入向导下载引导 JSON，设置 `0600`，选择 JSON 或 Socket 交付。在 agent 目录执行：
 
 ```bash
 go build -o jms-pam-agent ./cmd/jms-pam-agent
@@ -183,7 +183,7 @@ chmod 600 /private/path/jms_pam_agent.json
 ./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
 ```
 
-Windows 从 Go SDK 目录构建 `GOOS=windows GOARCH=amd64 go build -o jms-pam-agent.exe ./cmd/jms-pam-agent`，然后在引导文件所在目录用 PowerShell 运行：
+Windows 从 agent 目录构建 `GOOS=windows GOARCH=amd64 go build -o jms-pam-agent.exe ./cmd/jms-pam-agent`，然后在引导文件所在目录用 PowerShell 运行：
 
 ```powershell
 $agentDir = Join-Path $HOME 'jms-pam\orders'
