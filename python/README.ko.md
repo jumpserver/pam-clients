@@ -30,13 +30,6 @@ sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pa
 
 JSON은 파일 전달, EnvironmentFile은 지정된 systemd 서비스, Unix Socket은 로컬 API를 제공합니다. Agent는 전달 성공 후 전달 리비전을 저장하고 애플리케이션은 검증 및 적용 후 적용 리비전을 저장합니다. Socket은 앱 사용자 소유이며 권한은 0600입니다. 해당 사용자로 요청하세요.
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-systemd unit은 EnvironmentFile을 참조해야 합니다. 앱이 파일을 다시 읽을 때만 reload를 사용하세요. reload는 실행 중인 프로세스에 새 환경 변수를 주입하지 않습니다. 경로, 사용자, 서비스, 작업 권한은 설치 시 고정되며 확장하려면 다시 설치해야 합니다.
-
 로컬 rules에 파일, JSON/EnvironmentFile 또는 신뢰할 수 있는 템플릿과 systemd reload/restart 또는 고정 실행 파일을 설정합니다. 스크립트는 표준 입력으로 자격 증명 JSON을 받고 고정 인수와 제한 시간을 사용하며 적용을 검증한 후 성공합니다. Core는 실행 경로나 권한을 확장할 수 없습니다. 구성을 수정한 후 Agent를 재시작합니다.
 
 다운로드한 설정에는 Agent 인증 정보와 전달 설정이 포함됩니다. rules에 업무에서 사용하는 계정 ID, 설정 갱신, 적용 동작, 실행 중인 연결 확인을 지정합니다. allow_account_switch를 설정하면 동일한 규칙으로 A/B 양방향 교체를 처리합니다. 선택적 credential_check는 파일 변경 전에 새 로그인을 검증합니다. 상태, 이벤트, Socket 경로와 300초 조정 간격에는 기본값이 있습니다. rules가 비어 있으면 자격 증명별 기본 파일을 기록합니다.

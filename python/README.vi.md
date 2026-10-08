@@ -30,13 +30,6 @@ Trình cài đặt tích hợp cần Linux và root. Trên macOS, Linux không c
 
 JSON giao tệp, EnvironmentFile dùng dịch vụ systemd cố định, Unix Socket cung cấp API cục bộ. Agent ghi phiên bản đã giao sau thành công; ứng dụng ghi phiên bản đã áp dụng sau kiểm tra và sử dụng. Socket thuộc người dùng ứng dụng với quyền 0600; gửi yêu cầu bằng người dùng đó.
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-Unit systemd phải tham chiếu EnvironmentFile. Chỉ dùng reload khi ứng dụng đọc lại tệp; reload không đưa biến môi trường mới vào tiến trình đang chạy. Đường dẫn, người dùng, dịch vụ và thao tác được cố định khi cài; mở rộng quyền cần cài lại.
-
 rules cục bộ cấu hình tệp, JSON/EnvironmentFile hoặc mẫu tin cậy cùng systemd reload/restart hoặc chương trình cố định. Script nhận JSON qua stdin, dùng đối số cố định và giới hạn thời gian, rồi kiểm tra ứng dụng trước khi báo thành công. Core không được mở rộng quyền này. Khởi động lại Agent sau khi sửa cấu hình riêng tư.
 
 Cấu hình tải về đã có danh tính và thiết lập phân phối của Agent. Trong rules, khai báo ID tài khoản ứng dụng sử dụng, cách cập nhật cấu hình, áp dụng thay đổi và kiểm tra kết nối đang chạy. allow_account_switch dùng cùng một quy tắc cho cả hai chiều luân phiên A/B. credential_check tùy chọn kiểm tra đăng nhập mới trước khi sửa tệp. Đường dẫn trạng thái, sự kiện, Socket và chu kỳ đối chiếu 300 giây có giá trị mặc định. rules rỗng ghi tệp mặc định cho từng thông tin xác thực.

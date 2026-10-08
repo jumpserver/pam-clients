@@ -84,13 +84,6 @@ For macOS, non-root Linux or Windows foreground use, select JSON or Socket deliv
 
 Choose JSON for files, EnvironmentFile for a pinned systemd service, or Unix Socket for local API access. The Agent records delivered revisions after delivery succeeds; the application validates and applies credentials before recording an applied revision. The socket belongs to the configured application user with mode 0600; make local requests as that user.
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-The systemd unit must reference the EnvironmentFile. Use reload only if the application rereads it; reload does not inject new environment variables into a running process. Installation pins the allowed paths, user, service and action; expanding them requires reinstallation.
-
 Local rules configure target files, JSON/EnvironmentFile rendering or trusted templates, and an optional systemd reload/restart or fixed executable. Scripts receive credential JSON on stdin, use fixed arguments, have a bounded timeout and must validate their application before returning success. Core cannot add script paths or expand local capabilities. Restart the Agent after editing its private configuration.
 
 The downloaded bootstrap contains Agent identity and delivery settings. Edit rules to declare the account IDs used by the business, update its configuration, activate the change and verify the running connection. An account selector with allow_account_switch also follows A/B rotation in either direction. Optional credential_check validates the new login before file changes. The Agent supplies default state, event and socket paths and a 300-second reconciliation interval. Empty rules write one default file per delivered credential.

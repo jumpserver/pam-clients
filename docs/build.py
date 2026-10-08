@@ -384,13 +384,6 @@ def python_guide(texts):
 
 {texts["agent_delivery"]}
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-{texts["agent_environment"]}
-
 {texts["agent_rules"]}
 
 {agent_configuration_section(texts)}

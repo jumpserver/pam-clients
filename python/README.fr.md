@@ -30,13 +30,6 @@ L’installateur intégré nécessite Linux et root. Sur macOS, Linux sans root 
 
 Choisissez JSON pour les fichiers, EnvironmentFile pour un service systemd fixé à l’installation ou Unix Socket pour l’API locale. L’Agent enregistre les révisions distribuées après distribution ; l’application valide et applique avant d’enregistrer la révision appliquée. Le socket appartient à l’utilisateur configuré avec le mode 0600 ; effectuez les requêtes avec cet utilisateur.
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-L’unité systemd doit référencer EnvironmentFile. Utilisez reload uniquement si l’application relit le fichier ; il n’injecte pas de nouvelles variables d’environnement dans un processus existant. L’installation fixe chemins, utilisateur, service et action autorisés ; leur extension nécessite une réinstallation.
-
 Les rules locales définissent fichiers, JSON/EnvironmentFile ou modèles fiables et une action systemd reload/restart ou un exécutable fixe. Les scripts reçoivent le JSON sur stdin, avec arguments fixes et délai limité, et vérifient l’application avant de réussir. Core ne peut pas étendre ces capacités. Redémarrez l’Agent après modification de sa configuration privée.
 
 La configuration téléchargée contient déjà l’identité et les paramètres de livraison de l’Agent. Dans rules, indiquez les ID des comptes utilisés, la mise à jour de configuration, l’activation et la vérification de la connexion en cours. allow_account_switch permet la même règle pour la rotation A/B dans les deux sens. credential_check est facultatif pour tester le nouvel accès avant de modifier les fichiers. L’état, les événements, le Socket et la synchronisation de 300 secondes ont des valeurs par défaut. Un rules vide écrit un fichier par identifiant.

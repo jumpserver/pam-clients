@@ -84,13 +84,6 @@ macOS、非 root Linux 或 Windows 前台运行时，在向导中选择 JSON 或
 
 JSON 交付文件，EnvironmentFile 对接固定 systemd 服务，Unix Socket 提供本地 API。Agent 在交付成功后保存交付版本，应用验证并使用后才保存生效版本。Socket 归配置的应用用户所有，权限为 0600，本地请求应以该用户执行。
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-systemd unit 必须引用 EnvironmentFile。
-
 本机 rules 配置目标文件、JSON/EnvironmentFile 或可信模板，以及可选的 systemd reload/restart 或固定可执行脚本。脚本通过标准输入接收凭据 JSON，参数固定、有超时，并应在验证业务生效后返回成功。Core 不能新增脚本路径或扩大本机能力。修改私有配置后重启 Agent。
 
 下载的引导配置已包含 Agent 身份和交付设置。只需在 rules 中声明业务使用的账号 ID，再配置更新业务文件、生效动作和运行中连接验证。账号设置 allow_account_switch 后可沿用同一规则处理 A/B 双向轮换；可选 credential_check 用于改文件前验证新账号。状态、事件、Socket 路径和 300 秒对账周期均有默认值。rules 为空时按凭据写默认文件。

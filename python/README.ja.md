@@ -30,13 +30,6 @@ sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pa
 
 JSON はファイル配信、EnvironmentFile は固定した systemd サービス、Unix Socket はローカル API に使用します。Agent は配信成功後に配信リビジョンを記録し、アプリケーションは検証・適用後に生効リビジョンを記録します。Socket はアプリケーションユーザー所有、0600 で、そのユーザーとして操作します。
 
-```ini
-[Service]
-EnvironmentFile=-/opt/jumpserver-pam/credentials/<credential-key>.env
-```
-
-systemd unit で EnvironmentFile を指定します。reload はアプリケーションがファイルを再読込する場合だけ使用してください。実行中のプロセスに新しい環境変数は注入されません。パス、ユーザー、サービス、操作権限はインストール時に固定され、拡張には再インストールが必要です。
-
 ローカル rules でファイル、JSON/EnvironmentFile または信頼済みテンプレートと、systemd reload/restart や固定実行ファイルを設定します。スクリプトは標準入力で認証情報 JSON を受け取り、固定引数とタイムアウトを使い、適用を検証してから成功を返します。Core は実行パスや権限を拡張できません。設定変更後に Agent を再起動します。
 
 ダウンロードした設定には Agent の識別情報と配信設定が含まれます。rules には業務で使うアカウント ID、設定更新、反映操作、稼働中の接続確認を指定します。allow_account_switch を設定したアカウントは A/B の双方向ローテーションに同じルールを使えます。任意の credential_check でファイル更新前に新しいログインを検証できます。状態、イベント、Socket のパスと 300 秒の照合間隔には既定値があります。rules が空なら資格情報ごとに既定ファイルを出力します。
