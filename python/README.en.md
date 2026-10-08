@@ -112,15 +112,15 @@ The downloaded bootstrap contains Agent identity and delivery settings. Edit rul
     "accounts": [
       {
         "account_id": "<primary-account-id>",
-        "allow_account_switch": true,
-        "fields": {
-          "DB_USER": "username",
-          "DB_PASSWORD": "secret"
-        }
+        "allow_account_switch": true
       }
     ],
     "config_update": {
-      "file": "/etc/order-service/config.yml"
+      "file": "/etc/order-service/config.yml",
+      "fields_map": {
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
+      }
     },
     "service_action": {
       "unit": "order-service.service",
