@@ -59,6 +59,6 @@ HTTP 401/403/404、`credential_not_found`（HTTP 400）或 `client_upgrade_requi
 
 ## 独立 Go Agent
 
-Agent 入口为 `go/cmd/jms-pam-agent`，运行逻辑位于 `go/agent`，以本机私有配置驱动默认文件、可信模板和有超时的 systemd 或固定脚本动作。服务固定为 `jms-pam-agent.service`，使用 `systemctl start jms-pam-agent`。脚本通过标准输入接收凭据，Core 不能扩大本机执行规则。取密或交付失败按 1–30 秒退避重试；交付不自动确认业务生效。Python 包不再注册 Agent 命令。
+Agent 入口为 `agent/cmd/jms-pam-agent`，运行逻辑位于 `agent/internal/agent`，以本机私有配置驱动默认文件、可信模板和有超时的 systemd 或固定脚本动作。服务固定为 `jms-pam-agent.service`，使用 `systemctl start jms-pam-agent`。脚本通过标准输入接收凭据，Core 不能扩大本机执行规则。取密或交付失败按 1–30 秒退避重试；交付不自动确认业务生效。Python 包不再注册 Agent 命令。
 
 本地开发支持 `init-local` / `run --local`；签名授权范围仍来自 Core，本机路径和属主由当前用户配置。可选 `event_file` 追加收到、保存和交付阶段的事件元数据，不记录密码；最新密码单独保留在私有状态和交付文件中。CLI `get_accounts` 不取密码，`get_secret ACCOUNT_ID` 优先在线取密，只在 API 临时不可用时返回仍授权的保留值，JSON 标明 `source`。
