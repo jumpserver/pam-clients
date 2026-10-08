@@ -1,0 +1,53 @@
+name: Release PAM clients
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Validate tag
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
+          git show-ref --verify "refs/tags/$RELEASE_TAG"
+      - name: Test and build Agent
+        working-directory: go
+        run: |
+          go test -race ./...
+          mkdir -p ../dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -o "../dist/jms-pam-agent-linux-$arch" ./cmd/jms-pam-agent
+          done
+      - name: Package SDK sources
+        run: |
+          for sdk in python go java node curl; do
+            git archive --format=tar.gz --output="dist/jms-pam-$sdk.tar.gz" HEAD "$sdk"
+          done
+          cd dist
+          sha256sum jms-pam-agent-linux-* > SHA256SUMS
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
