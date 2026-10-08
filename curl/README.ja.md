@@ -47,8 +47,8 @@ id はアプリケーションの識別子で、アカウントのリビジョ�
 
 | HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -60,6 +60,6 @@ id はアプリケーションの識別子で、アカウントのリビジョ�
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 ```
 
-交互ローテーションでは実際の接続を検証し、接続プールを切り替えて古い接続を解放した後に、正確な key、revision、account_id を確認します。認証情報変更の購読では確認は不要です。接続検証に失敗した場合は確認してはいけません。
+`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
 
 received はイベントを読み取ったことだけを示します。event_id を持つ業務イベントの処理前に、同じ WebSocket で received を送信します。snapshot と pong は受領通知不要です。接続・再接続のたびに快照を同期し、credential.updated、権限取消、設定変更を処理します。

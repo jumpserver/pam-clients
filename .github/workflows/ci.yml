@@ -26,6 +26,7 @@ jobs:
           cache: maven
       - run: python -m pip install ./python
       - run: npm ci --prefix node
+      - run: python docs/build.py --check
       - run: python tests/run.py
   python-package:
     runs-on: ubuntu-latest

@@ -163,3 +163,19 @@ func TestEventsAndCancellation(t *testing.T) {
 		t.Fatal("Clone was closed with original")
 	}
 }
+
+func TestAccountAndEventResult(t *testing.T) {
+	client := contractClient(t, "go-account-event", "jms-pam")
+	account, err := client.GetAccountFresh(context.Background(), "account")
+	if err != nil || account.Username != "app" || account.Asset.Address != "127.0.0.1" || account.Revision != 2 || account.FromLocal {
+		t.Fatalf("invalid account: %v", err)
+	}
+	result, err := client.ConfirmEvent(context.Background(), "event-one", "success", "")
+	if err != nil || !result.Accepted {
+		t.Fatalf("event result: %v", err)
+	}
+	result, err = client.ConfirmEvent(context.Background(), "event-two", "failed", "application_failed")
+	if err != nil || result.Status != "failed" {
+		t.Fatalf("failed event result: %v", err)
+	}
+}

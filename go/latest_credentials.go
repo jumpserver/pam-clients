@@ -12,6 +12,11 @@ func (c *Client) reconcileLatestCredentials(event Event) {
 	defer c.mu.Unlock()
 	c.credentialGeneration++
 	if event.Event == "configuration.updated" {
+		for selector := range c.latestCredentials {
+			if selector.AccountID != "" {
+				delete(c.latestCredentials, selector)
+			}
+		}
 		return
 	}
 	if event.Event != "snapshot" {

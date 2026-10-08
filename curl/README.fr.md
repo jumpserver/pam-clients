@@ -47,8 +47,8 @@ Les détails de signature et le tableau du protocole ci-dessous servent de réf�
 
 | HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -60,6 +60,6 @@ Signez avec HMAC-SHA256 dans l’ordre des en-têtes ci-dessous. Incluez chemin 
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 ```
 
-Pour la rotation alternée, validez une connexion réelle, remplacez le pool et libérez les anciennes connexions avant de confirmer exactement key, revision et account_id. Les abonnements aux changements d’identifiants ne nécessitent aucune confirmation. Un échec du contrôle de connexion doit empêcher la confirmation.
+Récupérez le compte via `account_id`. Validez et appliquez le changement avant de signaler `success` ou `failed` avec `event_id`. Réception et récupération ne prouvent pas l’application. Les événements et instantanés contiennent `event_id`, `account_id` et `account_revision` ; vérifiez la version. Réservez les commandes avec `running` et rendez les traitements idempotents.
 
 Un accusé received indique uniquement qu’un événement a été lu. Envoyez received avec event_id sur le même WebSocket avant le traitement métier ; snapshot et pong ne nécessitent aucun accusé. Réconciliez snapshot à chaque connexion ou reconnexion, traitez credential.updated et gérez révocations et changements de configuration.

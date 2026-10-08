@@ -1,6 +1,6 @@
 # JumpServer PAM Java SDK
 
-SDK соответствует функциям Python SDK политик учётных данных: получение по разрешённому аккаунту или политике ротации, подтверждение применённых версий, события, команды и синхронизация Agent. URL, HMAC-подпись, Digest, дата UTC, ID запроса и заголовки формируются автоматически.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 ## Требования
 
@@ -34,7 +34,7 @@ mvn -f /path/to/pam-clients/java/pom.xml install
 <dependency>
   <groupId>org.jumpserver</groupId>
   <artifactId>jms-pam</artifactId>
-  <version>1.0.1</version>
+  <version>1.0.2</version>
 </dependency>
 ```
 
@@ -57,222 +57,84 @@ public final class Demo {
                 System.getenv("JMS_INSTANCE_ID"))
             .orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
-      Models.Credential credential =
-          client.getCredentialByAccountId(System.getenv("JMS_ACCOUNT_ID"));
-      // Pass credential.getAccount().getUsername() / getSecret() to the connection pool.
+      Models.Account account =
+          client.getAccount(System.getenv("JMS_ACCOUNT_ID"));
+      // Pass account.getUsername() / getSecret() to the connection pool.
       System.out.println(
           "Fetched revision "
-              + credential.getRevision()
+              + account.getRevision()
               + "; implement application credential switching.");
     }
   }
 }
 ```
 
-## Обработчики событий
-
-Инициализируйте локальное состояние перед запуском подписки. Python и Node.js используют подкласс, Go — EventHandlers, Java — CredentialEventListener. Реализуйте переключение соединений в примере. Прежний API сохранён.
-
-```java
-package org.jumpserver.pam;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import org.jumpserver.pam.Models.Credential;
-import org.jumpserver.pam.Models.Event;
-
-/** Replace the business hook before running. Listener methods run serially. */
-public final class HooksDemo implements CredentialEventListener {
-  private final Client client;
-  private final Map<String, Credential> credentials = new HashMap<>();
-  private final Map<String, String> modes = new HashMap<>();
-
-  public HooksDemo(Client client) {
-    this.client = client;
-  }
-
-  @Override
-  public void onEvent(Event event) {
-    List<Event> updates = List.of(event);
-    if (event.getEvent().equals("snapshot")) {
-      modes.clear();
-      updates = event.getCredentials();
-    }
-    if (event.getEvent().equals("snapshot") || event.getEvent().equals("credential.updated"))
-      for (Event update : updates) modes.put(update.getKey(), update.getCredentialMode());
-    if (event.getEvent().equals("snapshot"))
-      credentials.keySet().removeIf(key -> !modes.containsKey(key)); // Also release connections.
-    // Use executeApplicationCommand for commands; see EventsDemo.
-  }
-
-  @Override
-  public void onCredentialChanged(Credential credential) {
-    applyCredential(credential);
-    if ("alternating_rotation".equals(modes.get(credential.getKey())))
-      client.confirmCredential(
-          credential.getKey(), credential.getRevision(), credential.getAccount().getId());
-    credentials.put(credential.getKey(), credential);
-  }
-
-  private void applyCredential(Credential credential) {
-    throw new UnsupportedOperationException(
-        "Implement connection validation, pool switching and old connection cleanup");
-  }
-
-  @Override
-  public void onCredentialRevoked(Event event) {
-    credentials.remove(event.getKey()); // Also release affected connections.
-  }
-
-  public static void main(String[] args) throws InterruptedException {
-    Client.Options options =
-        new Client.Options(
-                System.getenv("JMS_ENDPOINT"),
-                System.getenv("JMS_APP_ID"),
-                System.getenv("JMS_APP_SECRET"),
-                System.getenv("JMS_INSTANCE_ID"))
-            .orgId(System.getenv("JMS_ORG_ID"));
-    try (Client client = new Client(options)) {
-      Thread stop = new Thread(client::close, "jms-pam-shutdown");
-      Runtime.getRuntime().addShutdownHook(stop);
-      try {
-        client.watchEvents(new HooksDemo(client));
-      } finally {
-        try {
-          Runtime.getRuntime().removeShutdownHook(stop);
-        } catch (IllegalStateException ignored) {
-        }
-      }
-    }
-  }
-}
-```
-
-Начальный snapshot, snapshot после переподключения и credential.updated получают данные по режиму политики и последовательно вызывают обработчик. Чтение использует очередь на 128 событий; заполнение создаёт обратное давление. Ошибки получения и применения повторяются с экспоненциальной задержкой 1–30 секунд и новым запросом. Новое событие заменяет повтор для той же цели; snapshot обновляет область, отзыв и изменение конфигурации отменяют повторы. Обработчики должны быть идемпотентными. Наблюдатели и отзыв автоматически не повторяются; команды требуют захвата выполнения. received означает чтение; SDK не подтверждает ротацию автоматически. События старых ревизий не отменяют ожидающее получение более новой ревизии.
-
-`watchEvents(listener)` / `startEvents(listener)`; `stop()` / `close()` / `awaitTermination()`
-
-watchEvents ждёт в вызывающем потоке; startEvents не гарантирует синхронизацию. Один слушатель на клиент. close ждёт обработчик, который может закрыть свой клиент. awaitTermination вызывается извне.
-
-### Последние учётные данные и недоступность сервера
-
-Сначала выполняется запрос API. Успешный ответ заменяет сохранённые последние данные; старая версия не заменяет новую, срок истечения по времени отсутствует. Только тайм-аут, сетевой сбой или HTTP 5xx позволяют вернуть последний успешный результат того же селектора с признаком локального источника. Без прежнего значения возвращается исходная ошибка. SDK хранит данные в памяти клиента до обновления, отзыва или закрытия; clone и перезапуск начинают с пустого состояния. Agent использует защищённое локальное состояние. HTTP 401/403/404 или client_upgrade_required очищают данные SDK и вызывают ошибку; некорректный успешный ответ также ошибочен. Отзыв удаляет соответствующие данные, snapshot — данные вне разрешений. Изменение конфигурации сохраняет значения до проверки следующего snapshot. Agent применяет явный отзыв и сокращение области snapshot до HTTP-синхронизации, сохраняет эту область и блокирует соответствующую локальную выдачу даже при сбое сервера или после перезапуска. Ответ credential_not_found (HTTP 400) также удаляет сохранённые значения SDK. Прямой pull по account_id всегда требует ответа API; снимок push не подтверждает право на кешированное значение pull.
-
-- `credential.isFromLocal()`
-- `getCredential(key, false)` / `getCredentialByAccountId(accountId, false)`
-
-При управляемой подписке snapshot и credential.updated автоматически получают данные, заменяют локальное значение и вызывают обработчик. Ошибка обновления сохраняет прежнее значение и запускает повтор. Agent также получает данные по уведомлениям и сохраняет их при сбоях сервера. Для обновления и ручного переключения используйте вызовы с обязательным запросом API ниже. Сохранённое значение не считается новой полученной версией и не подтверждает ротацию автоматически.
-
-При простое ping отправляется каждые 10 секунд. Около 30 секунд без сообщений вызывают переподключение с задержкой 1–30 секунд и новой подписью. snapshot восстанавливает текущее состояние без воспроизведения истории.
-
-
-
 ## События и применение учётных данных
 
-Обрабатывайте начальный snapshot, снимки переподключения и credential.updated. Полный пример поддерживает subscription, alternating_rotation и команды. Реализуйте проверку реального подключения, переключение пула и освобождение прежних соединений. Заглушка вызывает исключение и запрещает подтверждение до применения. Удаляйте из состояния приложения отсутствующие в снимках аккаунты и обрабатывайте отзыв доступа.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 ```java
 package org.jumpserver.pam;
 
 import java.util.List;
-import org.jumpserver.pam.Models.Credential;
+import org.jumpserver.pam.Models.Account;
 import org.jumpserver.pam.Models.Event;
 
-/** Replace the business hooks before running; unapplied credentials are never confirmed. */
 public final class EventsDemo {
-  private static void applyCredential(Credential credential) {
-    throw new UnsupportedOperationException(
-        "Implement connection validation, pool switching and old connection cleanup");
+  private static void applyAccount(Account account) {
+    throw new UnsupportedOperationException("Implement connection validation, pool switching and old connection cleanup");
   }
-
-  private static void restartApplication() {
-    throw new UnsupportedOperationException("Implement restart and health check");
+  private static void applyEvent(Client client, Event event) {
+    if (event.getEvent().equals("application.restart.requested"))
+      throw new UnsupportedOperationException("Implement restart and health check");
+    Account account = client.getAccount(event.getAccountId(), false);
+    if (account.getRevision() != event.getAccountRevision())
+      throw new IllegalArgumentException("Event account version is superseded");
+    applyAccount(account);
   }
-
-  private static void handleCommand(Client client, Event event) {
-    if (event.getEvent().equals("application.restart.requested")) {
-      restartApplication();
-      return;
+  private static void handleEvent(Client client, Event event) {
+    if (!event.getCommandId().isEmpty()
+        && !client.reportApplicationCommandResult(event.getCommandId(), "running", null).isAccepted()) return;
+    try { applyEvent(client, event); }
+    catch (RuntimeException error) {
+      client.confirmEvent(event.getEventId(), "failed", "application_failed");
+      throw error;
     }
-    if (!event.getEvent().equals("credential.switch.requested"))
-      throw new IllegalArgumentException("Unsupported application command");
-    Credential credential = client.getCredential(event.getKey(), false);
-    if (credential.getRevision() != event.getRevision()
-        || !credential.getAccount().getId().equals(event.getAccountId()))
-      throw new IllegalArgumentException("Requested account version is superseded");
-    applyCredential(credential);
-    client.confirmCredential(
-        credential.getKey(), credential.getRevision(), credential.getAccount().getId());
+    client.confirmEvent(event.getEventId());
   }
-
   public static void main(String[] args) {
-    Client.Options options =
-        new Client.Options(
-                System.getenv("JMS_ENDPOINT"),
-                System.getenv("JMS_APP_ID"),
-                System.getenv("JMS_APP_SECRET"),
-                System.getenv("JMS_INSTANCE_ID"))
-            .orgId(System.getenv("JMS_ORG_ID"));
+    Client.Options options = new Client.Options(System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+        System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID")).orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
       Thread stop = new Thread(client::close, "jms-pam-shutdown");
       Runtime.getRuntime().addShutdownHook(stop);
       try (EventStream stream = client.watchCredentialEvents()) {
         for (Event event : stream) {
-          if (!event.getCommandId().isEmpty()) {
-            try {
-              client.executeApplicationCommand(event, command -> handleCommand(client, command));
-            } catch (RuntimeException ignored) {
-            }
-            continue;
-          }
-          List<Event> updates =
-              event.getEvent().equals("snapshot")
-                  ? event.getCredentials()
-                  : event.getEvent().equals("credential.updated") ? List.of(event) : List.of();
-          // On snapshots, remove application caches absent from the new authorized scope.
+          List<Event> updates = !event.getCommandId().isEmpty() || event.getEvent().equals("credential.updated")
+              ? List.of(event) : event.getEvent().equals("snapshot") ? event.getCredentials() : List.of();
+          // Reconcile removed connections on snapshots; release revoked accounts.
           for (Event update : updates) {
-            Credential credential;
-            if (update.getCredentialMode().equals("subscription")
-                && !update.getAccountId().isEmpty() && !update.getKey().isEmpty()) {
-              String key = update.getKey();
-              if (!key.endsWith(":" + update.getAccountId())) key += ":" + update.getAccountId();
-              credential = client.getCredential(key, false);
-            }
-            else if (update.getCredentialMode().equals("alternating_rotation")
-                && !update.getKey().isEmpty())
-              credential = client.getCredential(update.getKey(), false);
-            else continue;
-            applyCredential(credential);
-            if (update.getCredentialMode().equals("alternating_rotation"))
-              client.confirmCredential(
-                  credential.getKey(), credential.getRevision(), credential.getAccount().getId());
+            try { handleEvent(client, update); }
+            catch (RuntimeException error) { System.err.println(error.getClass().getSimpleName()); }
           }
         }
-      } finally {
-        try {
-          Runtime.getRuntime().removeShutdownHook(stop);
-        } catch (IllegalStateException ignored) {
-          // The shutdown hook is already closing the client.
-        }
-      }
+      } finally { Runtime.getRuntime().removeShutdownHook(stop); }
     }
   }
 }
 ```
 
-При чередующейся ротации проверьте реальное подключение, переключите пул и освободите старые соединения, затем подтвердите точные key, revision и account_id. Подписка на изменение учётных данных подтверждения не требует. При ошибке проверки соединения подтверждать нельзя.
+Старые API key сохранены для совместимости. Новые интеграции используют `get_account` и `confirm_event` и требуют обновления Core.
 
 ## Команды приложения
 
-Опрос, получение права выполнения и отчёт о результате используют методы SDK. Обработчик выполняется только после принятия заявки. Переключение проверяет версию и аккаунт, применяет и подтверждает; перезапуск проверяет работоспособность после запуска. Сообщайте об успехе после завершения. Ошибка отчёта сохраняет исходное исключение обработчика.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 ## Основные методы
 
-- `getCredential(key)`
-- `getCredentialByAccountId(accountId)`
-- `getCredential(key, false) / getCredentialByAccountId(accountId, false)`
-- `confirmCredential(key, revision, accountId)`
+- `getAccount(accountId)`
+- `getAccount(accountId, false)`
+- `confirmEvent(eventId, status, errorCode)`
 - `watchCredentialEvents()`
 - `watchEvents(listener) / startEvents(listener)`
 - `EventSubscription.stop() / close() / awaitTermination()`

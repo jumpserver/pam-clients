@@ -24,6 +24,9 @@ type Account struct {
 	Username   string `json:"username"`
 	SecretType string `json:"secret_type"`
 	Secret     string `json:"secret"`
+	Revision   int64  `json:"revision,omitempty"`
+	Asset      Asset  `json:"-"`
+	FromLocal  bool   `json:"-"`
 }
 
 type AccountSwitch struct {
@@ -80,11 +83,14 @@ type KnownRevision struct {
 	Revision int64  `json:"revision"`
 }
 type CredentialRevision struct {
-	Key           string         `json:"key"`
-	Revision      int64          `json:"revision"`
-	Available     bool           `json:"available"`
-	Changed       bool           `json:"changed"`
-	AccountSwitch *AccountSwitch `json:"account_switch,omitempty"`
+	AccountID       string         `json:"account_id"`
+	AccountRevision int64          `json:"account_revision"`
+	EventID         string         `json:"event_id"`
+	Key             string         `json:"key"`
+	Revision        int64          `json:"revision"`
+	Available       bool           `json:"available"`
+	Changed         bool           `json:"changed"`
+	AccountSwitch   *AccountSwitch `json:"account_switch,omitempty"`
 }
 type DeliveryScope struct {
 	Keys       []string `json:"keys"`
@@ -118,17 +124,18 @@ type CommandResult struct {
 // Event exposes protocol metadata; Credentials contains initial/reconnect snapshot items.
 // Data preserves all protocol fields, including future notification payloads.
 type Event struct {
-	Event          string                     `json:"event"`
-	EventID        string                     `json:"event_id"`
-	CommandID      string                     `json:"command_id"`
-	Key            string                     `json:"key"`
-	CredentialKey  string                     `json:"credential_key"`
-	CredentialMode string                     `json:"credential_mode"`
-	AccountID      string                     `json:"account_id"`
-	AccountSwitch  *AccountSwitch             `json:"account_switch,omitempty"`
-	Revision       int64                      `json:"revision"`
-	Credentials    []Event                    `json:"credentials"`
-	Data           map[string]json.RawMessage `json:"-"`
+	AccountRevision int64                      `json:"account_revision"`
+	Event           string                     `json:"event"`
+	EventID         string                     `json:"event_id"`
+	CommandID       string                     `json:"command_id"`
+	Key             string                     `json:"key"`
+	CredentialKey   string                     `json:"credential_key"`
+	CredentialMode  string                     `json:"credential_mode"`
+	AccountID       string                     `json:"account_id"`
+	AccountSwitch   *AccountSwitch             `json:"account_switch,omitempty"`
+	Revision        int64                      `json:"revision"`
+	Credentials     []Event                    `json:"credentials"`
+	Data            map[string]json.RawMessage `json:"-"`
 }
 
 func (e *Event) UnmarshalJSON(raw []byte) error {

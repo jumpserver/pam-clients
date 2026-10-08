@@ -61,7 +61,7 @@ func run(args []string) error {
                                             List authorized account metadata
   get_secret ACCOUNT_ID [--config PATH | --socket PATH]
                                             Get account secret JSON, with API/local source
-  confirm KEY --revision N --socket PATH     Confirm application of an exact revision
+  confirm EVENT_ID --socket PATH             Confirm successful application of an event
   check-config [--local] --config PATH       Validate private configuration
   version                                   Show version and platform
 `)
@@ -168,10 +168,14 @@ func run(args []string) error {
 		if err := flags.Parse(args); err != nil {
 			return err
 		}
-		if *socket == "" || *revision < 0 {
-			return errors.New("socket and applied revision are required")
+		if *socket == "" {
+			return errors.New("socket and event ID are required")
 		}
-		body, _ := json.Marshal(map[string]any{"key": key, "revision": *revision})
+		data := map[string]any{"event_id": key}
+		if *revision >= 0 {
+			data = map[string]any{"key": key, "revision": *revision}
+		} // Legacy CLI compatibility.
+		body, _ := json.Marshal(data)
 		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)
 		}}

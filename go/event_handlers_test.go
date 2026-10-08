@@ -25,7 +25,7 @@ func controlBackend(t *testing.T, instance string, values url.Values) {
 	}
 }
 
-func TestAccountPullRequiresLiveBackendEvenAfterSuccessfulFetch(t *testing.T) {
+func TestAccountCacheFallbackCanBeDisabled(t *testing.T) {
 	instance := "go-live-pull"
 	client := contractClient(t, instance, "jms-pam")
 	selector := CredentialSelector{AccountID: "account"}
@@ -33,8 +33,12 @@ func TestAccountPullRequiresLiveBackendEvenAfterSuccessfulFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	controlBackend(t, instance, url.Values{"fault": {"503"}})
-	if _, err := client.GetCredential(context.Background(), selector); err == nil {
-		t.Fatal("application pull returned a cached secret during backend outage")
+	account, err := client.GetAccount(context.Background(), "account")
+	if err != nil || !account.FromLocal {
+		t.Fatal("temporary outage did not expose cache provenance")
+	}
+	if _, err := client.GetAccountFresh(context.Background(), "account"); err == nil {
+		t.Fatal("fresh account fetch used cache")
 	}
 }
 

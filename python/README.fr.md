@@ -100,15 +100,14 @@ curl --fail --silent --show-error \
   'http://localhost/v1/credentials/<credential-key>'
 ```
 
-Pour la rotation alternée, validez une connexion réelle, remplacez le pool et libérez les anciennes connexions avant de confirmer exactement key, revision et account_id. Les abonnements aux changements d’identifiants ne nécessitent aucune confirmation. Un échec du contrôle de connexion doit empêcher la confirmation.
+Récupérez le compte via `account_id`. Validez et appliquez le changement avant de signaler `success` ou `failed` avec `event_id`. Réception et récupération ne prouvent pas l’application. Les événements et instantanés contiennent `event_id`, `account_id` et `account_revision` ; vérifiez la version. Réservez les commandes avec `running` et rendez les traitements idempotents.
 
 ```bash
-/usr/local/bin/jms-pam-agent confirm '<credential-key>' \
-  --revision '<revision>' \
+/usr/local/bin/jms-pam-agent confirm '<event-id>' \
   --socket '/run/jms-pam-agent/agent.sock'
 ```
 
-Seule la rotation alternée utilise confirm. La confirmation locale est enregistrée d’abord ; confirmed signifie que Core l’a acceptée et pending qu’elle sera réessayée. Ne confirmez pas simplement parce qu’un fichier a été écrit ou un service redémarré.
+Récupérez le compte via `account_id`. Validez et appliquez le changement avant de signaler `success` ou `failed` avec `event_id`. Réception et récupération ne prouvent pas l’application. Les événements et instantanés contiennent `event_id`, `account_id` et `account_revision` ; vérifiez la version. Réservez les commandes avec `running` et rendez les traitements idempotents.
 
 ### Dépannage
 
@@ -133,184 +132,108 @@ Python 3.9+ est requis. Installez jms-pam depuis PyPI ou votre miroir interne av
 python3 -m pip install jms-pam
 ```
 
-Placez jms_pam_config.py à côté de l’application. client_options contient des éléments d’identité : ne les ajoutez ni au dépôt ni aux journaux. Utilisez instance_id stable et unique par réplique. get_credential accepte exactement un sélecteur : account_id pour les comptes autorisés ou key pour une politique de rotation.
+Placez jms_pam_config.py à côté de l’application. client_options contient des éléments d’identité : ne les ajoutez ni au dépôt ni aux journaux. Utilisez instance_id stable et unique par réplique.
 
+<!-- python-account-example:start -->
 ```python
 from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
 with Client(instance_id=instance_id, **client_options) as client:
-    credential = client.get_credential(account_id="<account-id>")
-    username = credential.account.username
-    password = credential.account.secret
+    account = client.get_account(account_id="<account-id>")
+    username = account.username
+    password = account.secret
 ```
+<!-- python-account-example:end -->
 
 ### Événements et application des identifiants
 
-Traitez snapshot initial ou de reconnexion et credential.updated. L’exemple distingue subscription de alternating_rotation. Implémentez apply_credential pour valider une connexion réelle, remplacer le pool et libérer les anciennes connexions. Le code provisoire lève une exception pour empêcher de confirmer des identifiants non appliqués.
+Récupérez le compte via `account_id`. Validez et appliquez le changement avant de signaler `success` ou `failed` avec `event_id`. Réception et récupération ne prouvent pas l’application. Les événements et instantanés contiennent `event_id`, `account_id` et `account_revision` ; vérifiez la version. Réservez les commandes avec `running` et rendez les traitements idempotents.
 
+<!-- python-events-example:start -->
 ```python
 from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-def apply_credential(credential):
-    raise NotImplementedError('Implémentez et vérifiez le changement des identifiants de l’application')
-
-
-with Client(instance_id=instance_id, **client_options) as client:
-    for event in client.watch_credential_events():
-        if event.get("event") == "snapshot":
-            updates = event.get("credentials", [])
-        elif event.get("event") == "credential.updated":
-            updates = [event]
-        else:
-            continue
-        for update in updates:
-            mode = update.get("credential_mode")
-            key = update.get("credential_key") or update.get("key")
-            account_id = update.get("account_id")
-            if mode == "subscription" and account_id and key:
-                policy_key = key if key.endswith(f":{account_id}") else f"{key}:{account_id}"
-                credential = client.get_credential(key=policy_key, allow_local_fallback=False)
-            elif mode == "alternating_rotation" and key:
-                credential = client.get_credential(key=key, allow_local_fallback=False)
-            else:
-                continue
-            apply_credential(credential)
-            if mode == "alternating_rotation":
-                client.confirm_credential(
-                    key=credential.key,
-                    revision=credential.revision,
-                    account_id=credential.account.id,
-                )
-```
-
-Pour la rotation alternée, validez une connexion réelle, remplacez le pool et libérez les anciennes connexions avant de confirmer exactement key, revision et account_id. Les abonnements aux changements d’identifiants ne nécessitent aucune confirmation. Un échec du contrôle de connexion doit empêcher la confirmation.
-
-Le SDK tente automatiquement d’envoyer un accusé received avant de transmettre un événement métier. L’application n’a pas à le renvoyer. Il indique uniquement la lecture, pas l’application des identifiants, et ne remplace pas la confirmation. Réconciliez les snapshots initiaux et de reconnexion ; snapshot et pong ne nécessitent aucun accusé.
-
-## Gestionnaires d’événements
-
-Initialisez l’état local avant de démarrer l’écoute. Python et Node.js utilisent une sous-classe, Go EventHandlers et Java CredentialEventListener. Implémentez le changement réel de connexions de l’exemple. L’ancienne API reste disponible.
-
-```python
-from jms_pam import Client
-from jms_pam_config import client_options, instance_id
-
-
-def apply_credential(response):
-    # Replace this function with your application's connection update:
-    # build and verify a new connection, switch to it, then release the old one.
-    # Never write response.account.secret or authentication headers to logs.
-    raise NotImplementedError("Implement the application connection update first")
+def apply_account(account):
+    # Validate a new connection, switch the pool, then release old connections.
+    # Never log account.secret or authentication headers.
+    raise NotImplementedError("Implement the application's account update first")
 
 
 def restart_application():
-    # Implement restart and its health check, then return only after it succeeds.
-    raise NotImplementedError("Implement the application restart first")
-
-
-def handle_command(client, event):
-    if event["event"] == "application.restart.requested":
-        restart_application()
-    elif event["event"] == "credential.switch.requested":
-        response = client.get_credential(key=event["credential_key"], allow_local_fallback=False)
-        if (
-            response.revision != event["revision"]
-            or response.account.id != event["account_id"]
-        ):
-            raise ValueError("Requested account version is superseded")
-        apply_credential(response)
-        client.confirm_credential(
-            key=response.key, revision=response.revision, account_id=response.account.id
-        )
-    else:
-        raise ValueError("Unsupported application command")
+    raise NotImplementedError("Implement application restart and health check first")
 
 
 class ApplicationClient(Client):
-    def __init__(self, *args, **options):
-        super().__init__(*args, **options)
-        self.credentials = {}
-        self.credential_modes = {}
+    def apply_event(self, event):
+        if event.get("event") == "application.restart.requested":
+            restart_application()
+            return
+        account = self.get_account(
+            account_id=event["account_id"], allow_local_fallback=False,
+        )
+        if account.revision != event["account_revision"]:
+            raise ValueError("The event account version is superseded")
+        apply_account(account)
 
-    def on_event(self, event):
+    def handle_event(self, event):
+        event_id = event["event_id"]
         if event.get("command_id"):
-            self.execute_application_command(
-                event, lambda command: handle_command(self, command)
+            claim = self.report_application_command_result(
+                command_id=event["command_id"], status="running",
             )
-        elif event.get("event") == "snapshot":
-            self.credential_modes = {
-                item["key"]: item["credential_mode"]
-                for item in event.get("credentials", [])
-            }
-            for key in self.credentials.keys() - self.credential_modes.keys():
-                # Also release the application's connections for the removed key.
-                del self.credentials[key]
-        elif event.get("event") == "credential.updated":
-            key = event.get("credential_key") or event.get("key")
-            if key:
-                self.credential_modes[key] = event.get("credential_mode")
-
-    def on_credential_changed(self, credential):
-        apply_credential(credential)
-        if self.credential_modes.get(credential.key) == "alternating_rotation":
-            self.confirm_credential(
-                key=credential.key,
-                revision=credential.revision,
-                account_id=credential.account.id,
+            if not claim.accepted:
+                return
+        try:
+            self.apply_event(event)
+        except Exception:
+            self.confirm_event(
+                event_id=event_id, status="failed", error_code="application_failed",
             )
-        self.credentials[credential.key] = credential
+            raise
+        # A fetch or delivery receipt never confirms application success.
+        self.confirm_event(event_id=event_id)
 
-    def on_credential_revoked(self, event):
-        key = event.get("credential_key")
-        self.credentials.pop(key, None)
-        # Release affected connections. The following snapshot reconciles all keys.
+    def run(self):
+        for event in self.watch_credential_events():
+            if event.get("command_id"):
+                updates = [event]
+            elif event.get("event") == "snapshot":
+                updates = event.get("credentials", [])
+                # Release application connections absent from the new scope.
+            elif event.get("event") == "credential.updated":
+                updates = [event]
+            elif event.get("event") == "credential.revoked":
+                # Release connections for event["account_id"].
+                continue
+            else:
+                continue
+            for update in updates:
+                try:
+                    self.handle_event(update)
+                except Exception as error:
+                    self.on_event_error(error, update)
 
 
 with ApplicationClient(instance_id=instance_id, **client_options) as client:
-    client.watch_events()
+    client.run()
 ```
-
-Les snapshot initiaux et de reconnexion et credential.updated récupèrent les identifiants selon le mode puis appellent le gestionnaire en série. La lecture utilise une file limitée à 128 événements, avec contre-pression si elle est pleine. Les échecs de récupération ou d’application sont retentés après 1–30 secondes de délai exponentiel, avec une nouvelle requête. Une mise à jour remplace les tentatives de la même cible ; snapshot réinitialise le périmètre, révocations et changements de configuration les annulent. Les gestionnaires doivent être idempotents. Observateurs et révocations ne sont pas retentés ; les commandes doivent être revendiquées. received signifie lu ; le SDK ne confirme jamais automatiquement une rotation. Un événement de révision antérieure n’annule pas la récupération en attente d’une révision plus récente.
-
-`watch_events(stop_event=...)` / `start_events(stop_event=...)`; `stop_events()` / `close()`
-
-watch_events attend l’arrêt ; start_events ne garantit pas la synchronisation initiale. Attendez que l’application soit prête. Un écouteur par client ; stop_events et close attendent le gestionnaire actif. Il peut arrêter son propre client. clone réinitialise la sous-classe.
-
-### Identifiants les plus récents et panne du serveur
-
-La récupération demande d’abord l’API. Une réussite remplace les identifiants retenus ; une version ancienne ne remplace pas une nouvelle et aucune expiration temporelle n’est appliquée. Seuls un délai dépassé, une panne réseau ou HTTP 5xx permettent de retourner la dernière valeur du même sélecteur avec un indicateur local. Sans valeur précédente, l’erreur est propagée. Le SDK conserve ces valeurs en mémoire jusqu’à mise à jour, révocation ou fermeture ; clone et redémarrage commencent vides. L’Agent les conserve dans son état local protégé. HTTP 401/403/404 ou client_upgrade_required effacent les valeurs du SDK et échouent ; une réponse réussie invalide échoue aussi. Une révocation supprime les valeurs concernées, snapshot celles hors autorisation. Un changement de configuration conserve les valeurs jusqu’au snapshot suivant. L’Agent applique les révocations explicites et les réductions du périmètre du snapshot avant la synchronisation HTTP, conserve ce périmètre et bloque les lectures locales concernées même en cas de panne ou après redémarrage. Une réponse credential_not_found (HTTP 400) efface également les valeurs conservées du SDK. Le pull direct par account_id exige toujours une réponse API en direct ; les snapshots push ne valident pas les valeurs pull en cache.
-
-- `credential.from_local`
-- `get_credential(key=..., allow_local_fallback=False)` / `get_credential(account_id=..., allow_local_fallback=False)`
-
-Avec l’écoute gérée, snapshot et credential.updated récupèrent automatiquement les identifiants actuels, remplacent la valeur puis appellent le gestionnaire. Un échec conserve la valeur précédente et retente. L’Agent récupère aussi après notification et conserve les données pendant une panne du serveur. Utilisez les appels exigeant l’API ci-dessous pour actualiser ou changer les connexions ; une valeur retenue n’est pas une version nouvellement récupérée et ne confirme pas automatiquement une rotation.
-
-Au repos, ping est envoyé toutes les 10 secondes ; environ 30 secondes sans message déclenchent une reconnexion avec délai exponentiel de 1–30 secondes et nouvelle signature. Le snapshot rétablit l’état actuel sans rejouer l’historique.
-
-
-
-### Commandes d’application
-
-Utilisez list_application_commands pour interroger les demandes en attente et execute_application_command(event, handler) pour réclamer leur exécution. Seule une demande acceptée lance le handler. Celui de changement vérifie révision et compte, applique et confirme ; celui de redémarrage relance l’application et vérifie son état. Signalez le succès après la fin des opérations. Un échec du signalement conserve l’exception d’origine du handler.
+<!-- python-events-example:end -->
 
 ### Méthodes courantes
 
-- `get_credential(key=...)` / `get_credential(account_id=...)`
-- `confirm_credential(key=..., revision=..., account_id=...)`
+- `get_account(account_id=..., allow_local_fallback=True)`
+- `account.username` / `account.secret` / `account.asset` / `account.from_local`
+- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
 - `watch_credential_events(stop_event=...)`
-- `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
 - `list_application_commands()`
-- `report_application_command_result(command_id=..., status=...)`
-- `execute_application_command(event, handler)`
-- `sync_agent(credentials=..., delivered_credentials=...)`
+- `report_application_command_result(command_id=..., status="running")`
 - `clone()` / `close()`
 
-Le client ferme sessions HTTP et flux d’événements avec with ou close. clone crée une session indépendante. Les erreurs HTTP, réseau, authentification et décodage lèvent PAMError avec code, status_code, detail et original_error. Réessayez les erreurs transitoires dans l’application, gérez les refus d’autorisation et excluez les identifiants des journaux.
+Les anciennes API key restent compatibles. Utilisez `get_account` et `confirm_event` pour les nouvelles intégrations et mettez également Core à jour.
 
-Le nouveau code utilise des méthodes snake_case avec arguments nommés et attributs de dataclass. L’API historique credential.v1 reste disponible avec DeprecationWarning. Le SDK version 1 utilise le protocole de l’Agent ; sync_agent accepte KnownRevision pour les révisions conservées et distribuées.
 
 <!-- sdk-doc:end -->

@@ -7,7 +7,7 @@ const { setTimeout: wait } = require('node:timers/promises')
 const { WebSocket, createWebSocketStream } = require('ws')
 const { EventSubscription } = require('./event-dispatcher')
 
-const VERSION = '1.0.1'
+const VERSION = '1.0.2'
 const PROTOCOL_VERSION = 1
 const CONFIG_SCHEMA_VERSION = 1
 const CLIENT_PATH = '/api/v1/accounts/credential-client'
@@ -283,7 +283,7 @@ class Client {
         || (error.statusCode >= 500 && error.statusCode < 600))
       if (denied) { this.#latestCredentials.clear(); this.#credentialGeneration++ }
       const latest = this.#latestCredentials.get(selector)
-      if (allowLocalFallback && key !== undefined && temporary && !denied && !signal?.aborted && !this.#closed.signal.aborted && latest)
+      if (allowLocalFallback && temporary && !denied && !signal?.aborted && !this.#closed.signal.aborted && latest)
         return copyCredential(latest, true)
       throw error
     }
@@ -292,7 +292,10 @@ class Client {
   #reconcileLatestCredentials(event) {
     if (!['snapshot', 'credential.revoked', 'configuration.updated'].includes(event.event)) return
     this.#credentialGeneration++
-    if (event.event === 'configuration.updated') return
+    if (event.event === 'configuration.updated') {
+      for (const selector of this.#latestCredentials.keys()) if (selector.startsWith('account:')) this.#latestCredentials.delete(selector)
+      return
+    }
     if (event.event !== 'snapshot') {
       const rawKey = event.credentialKey || event.key
       const key = typeof rawKey === 'string' && rawKey ? rawKey : undefined
@@ -313,6 +316,23 @@ class Client {
     for (const selector of this.#latestCredentials.keys())
       if (selector.startsWith('key:') && !keys.has(selector.slice(4)))
         this.#latestCredentials.delete(selector)
+  }
+
+  async getAccount({ accountId, signal, allowLocalFallback = true } = {}) {
+    requiredString(accountId, 'accountId')
+    const value = await this.getCredential({ accountId, signal, allowLocalFallback })
+    const account = { ...value.account, asset: value.asset, fromLocal: value.fromLocal }
+    Object.defineProperty(account, inspect.custom, { value: () => ({ ...account, secret: '[REDACTED]' }) })
+    return account
+  }
+
+  confirmEvent({ eventId, status = 'success', errorCode = '', signal }) {
+    requiredString(eventId, 'eventId')
+    if (!['success', 'failed'].includes(status)) throw new TypeError('Invalid event status')
+    return this.#request('POST', '/event-result/', { event_id: eventId, status, error_code: errorCode }, (data) => {
+      if (typeof data.accepted !== 'boolean' || typeof data.status !== 'string') throw new TypeError('Invalid event result')
+      return camelize(data)
+    }, { signal })
   }
 
   confirmCredential({ key, revision: value, accountId, signal }) {

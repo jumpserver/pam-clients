@@ -47,8 +47,8 @@ The signature details and protocol table below are diagnostic references. Use SD
 
 | HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -60,6 +60,6 @@ Sign requests with HMAC-SHA256 in the header order below. Include the encoded pa
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 ```
 
-For alternating rotation, validate a real connection, switch the application connection pool and release old connections before confirming the exact key, revision and account_id. Credential change subscriptions require no confirmation. A failed connection check must prevent confirmation.
+Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
 
 A received receipt only means an event was read. Send received with event_id on the same WebSocket before handling business events; snapshot and pong require no receipt. Reconcile the snapshot on every connection and reconnect, process credential.updated, and handle revocation or configuration changes.

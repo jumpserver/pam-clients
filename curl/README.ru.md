@@ -47,8 +47,8 @@ id обозначает приложение, а не ревизию аккау�
 
 | HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -60,6 +60,6 @@ id обозначает приложение, а не ревизию аккау�
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 ```
 
-При чередующейся ротации проверьте реальное подключение, переключите пул и освободите старые соединения, затем подтвердите точные key, revision и account_id. Подписка на изменение учётных данных подтверждения не требует. При ошибке проверки соединения подтверждать нельзя.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 received означает только чтение события. Перед обработкой события с event_id отправьте received по тому же WebSocket; snapshot и pong квитанции не требуют. При каждом подключении и переподключении сверяйте снимок, обрабатывайте credential.updated, отзыв разрешений и изменения конфигурации.

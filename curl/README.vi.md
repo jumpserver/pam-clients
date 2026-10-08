@@ -47,8 +47,8 @@ Chi tiết chữ ký và bảng giao thức dưới đây dùng để chẩn đo
 
 | HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -60,6 +60,6 @@ Ký HMAC-SHA256 theo thứ tự tiêu đề bên dưới. request-target chứa 
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 ```
 
-Với luân phiên hai tài khoản, xác minh kết nối thật, chuyển nhóm kết nối và giải phóng kết nối cũ trước khi xác nhận đúng key, revision và account_id. Đăng ký thay đổi thông tin xác thực không cần xác nhận. Không xác nhận khi kiểm tra kết nối thất bại.
+Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng thay đổi trước khi báo `success` hoặc `failed` qua `event_id`. Nhận sự kiện hoặc lấy mật khẩu không có nghĩa là áp dụng thành công. Sự kiện và snapshot có `event_id`, `account_id`, `account_revision`; hãy kiểm tra phiên bản. Nhận lệnh bằng `running` và xử lý lặp lại an toàn.
 
 received chỉ có nghĩa là đã đọc sự kiện. Trước khi xử lý sự kiện nghiệp vụ có event_id, gửi received trên cùng WebSocket; snapshot và pong không cần biên nhận. Đồng bộ ảnh chụp mỗi lần kết nối/kết nối lại, xử lý credential.updated, thu hồi quyền và thay đổi cấu hình.

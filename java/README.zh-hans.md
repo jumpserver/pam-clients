@@ -1,6 +1,6 @@
 # JumpServer PAM Java SDK
 
-本 SDK 与 Python 凭据策略 SDK 对齐：获取授权账号或轮换策略凭据、确认生效版本、监听事件、处理应用指令、同步 Agent 状态。请求 URL、HMAC 签名、Digest、UTC 时间、请求 ID 和协议头均由客户端自动生成。
+使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
 
 ## 环境要求
 
@@ -34,7 +34,7 @@ mvn -f /path/to/pam-clients/java/pom.xml install
 <dependency>
   <groupId>org.jumpserver</groupId>
   <artifactId>jms-pam</artifactId>
-  <version>1.0.1</version>
+  <version>1.0.2</version>
 </dependency>
 ```
 
@@ -57,222 +57,84 @@ public final class Demo {
                 System.getenv("JMS_INSTANCE_ID"))
             .orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
-      Models.Credential credential =
-          client.getCredentialByAccountId(System.getenv("JMS_ACCOUNT_ID"));
-      // Pass credential.getAccount().getUsername() / getSecret() to the connection pool.
+      Models.Account account =
+          client.getAccount(System.getenv("JMS_ACCOUNT_ID"));
+      // Pass account.getUsername() / getSecret() to the connection pool.
       System.out.println(
           "Fetched revision "
-              + credential.getRevision()
+              + account.getRevision()
               + "; implement application credential switching.");
     }
   }
 }
 ```
 
-## 事件处理接口
-
-先在本地初始化账号映射或连接池，再显式启动监听。Python 和 Node.js 使用子类钩子，Go 使用 EventHandlers，Java 使用 CredentialEventListener。示例中的连接切换函数必须由业务实现，否则会抛错。原有迭代器或回调接口继续保留。
-
-```java
-package org.jumpserver.pam;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import org.jumpserver.pam.Models.Credential;
-import org.jumpserver.pam.Models.Event;
-
-/** Replace the business hook before running. Listener methods run serially. */
-public final class HooksDemo implements CredentialEventListener {
-  private final Client client;
-  private final Map<String, Credential> credentials = new HashMap<>();
-  private final Map<String, String> modes = new HashMap<>();
-
-  public HooksDemo(Client client) {
-    this.client = client;
-  }
-
-  @Override
-  public void onEvent(Event event) {
-    List<Event> updates = List.of(event);
-    if (event.getEvent().equals("snapshot")) {
-      modes.clear();
-      updates = event.getCredentials();
-    }
-    if (event.getEvent().equals("snapshot") || event.getEvent().equals("credential.updated"))
-      for (Event update : updates) modes.put(update.getKey(), update.getCredentialMode());
-    if (event.getEvent().equals("snapshot"))
-      credentials.keySet().removeIf(key -> !modes.containsKey(key)); // Also release connections.
-    // Use executeApplicationCommand for commands; see EventsDemo.
-  }
-
-  @Override
-  public void onCredentialChanged(Credential credential) {
-    applyCredential(credential);
-    if ("alternating_rotation".equals(modes.get(credential.getKey())))
-      client.confirmCredential(
-          credential.getKey(), credential.getRevision(), credential.getAccount().getId());
-    credentials.put(credential.getKey(), credential);
-  }
-
-  private void applyCredential(Credential credential) {
-    throw new UnsupportedOperationException(
-        "Implement connection validation, pool switching and old connection cleanup");
-  }
-
-  @Override
-  public void onCredentialRevoked(Event event) {
-    credentials.remove(event.getKey()); // Also release affected connections.
-  }
-
-  public static void main(String[] args) throws InterruptedException {
-    Client.Options options =
-        new Client.Options(
-                System.getenv("JMS_ENDPOINT"),
-                System.getenv("JMS_APP_ID"),
-                System.getenv("JMS_APP_SECRET"),
-                System.getenv("JMS_INSTANCE_ID"))
-            .orgId(System.getenv("JMS_ORG_ID"));
-    try (Client client = new Client(options)) {
-      Thread stop = new Thread(client::close, "jms-pam-shutdown");
-      Runtime.getRuntime().addShutdownHook(stop);
-      try {
-        client.watchEvents(new HooksDemo(client));
-      } finally {
-        try {
-          Runtime.getRuntime().removeShutdownHook(stop);
-        } catch (IllegalStateException ignored) {
-        }
-      }
-    }
-  }
-}
-```
-
-首次与重连 snapshot、credential.updated 按策略模式取密，再串行调用凭据处理函数。读取器与业务处理通过容量为 128 的有界队列连接；队列满时产生背压。取密或凭据处理失败按 1–30 秒指数退避重试，每次重新取密。同一目标的新事件替换待重试项；快照重置重试范围，撤销或配置变更取消待重试项。处理函数应支持重复调用。原始事件和撤销钩子的异常进入错误处理，不自动重试；指令仍需通过认领接口执行。received 仅表示读取事件，SDK 不会自动确认轮换。较旧版本事件不会取消较新版本的拉取重试。
-
-`watchEvents(listener)` / `startEvents(listener)`; `stop()` / `close()` / `awaitTermination()`
-
-watchEvents 等待当前线程；startEvents 返回不代表初始同步完成。每个客户端允许一个高层监听器。EventSubscription.close 和 Client.close 停止并等待处理函数；处理函数可以关闭自己的订阅或客户端。awaitTermination 由外部调用。
-
-### 最新凭据与后端不可用
-
-取密始终先请求 API。成功获取新凭据后替换本地保留值，更旧版本不会覆盖已获取的新版本；保留值不按时间过期。只有 API 超时、网络故障或 HTTP 5xx 时，才返回相同查询条件下已获取的最新凭据，并设置本地来源标记。首次获取失败且没有保留值时，抛出原始错误。SDK 在当前客户端内存中保留这些值，直到更新、撤销或关闭；clone 和进程重启从空状态开始。Agent 通过已有受保护的本地状态保留最新凭据。HTTP 401/403/404、client_upgrade_required 清空 SDK 的保留值并报错，成功响应格式错误也会报错。明确撤销删除相应凭据，push 快照移除订阅范围外的 push 项；配置变更通知先保留已有值，由后续快照核对授权范围。Agent 在 HTTP 同步前先执行明确撤销或快照授权范围缩小并保存范围，后端故障期间或重启后也会阻止相应本地取密。credential_not_found（HTTP 400）同样清除 SDK 保留值。 按 account_id 直接 pull 始终需要实时 API 响应；push 快照不能证明缓存的 pull 凭据仍获授权。
-
-- `credential.isFromLocal()`
-- `getCredential(key, false)` / `getCredentialByAccountId(accountId, false)`
-
-启用高层事件监听后，snapshot、credential.updated 会自动获取当前凭据并替换本地保留值，再调用业务处理函数。刷新失败时保留上一份凭据并重试。Agent 同样在更新通知后主动取密，后端故障期间保留已有凭据。事件刷新和手动切换使用下方必须实时获取的调用；保留的密码不能被当成刚获取的新版本，也不会自动确认轮换。
-
-事件连接空闲时每 10 秒发送应用层 ping，约 30 秒收不到消息则重连。重连采用 1–30 秒指数退避并重新签名。重连快照恢复当前状态，不重放历史事件。
-
-
-
 ## 事件与凭据生效
 
-处理首次/重连 snapshot 和 credential.updated。下方完整事件示例分别处理 subscription、alternating_rotation 及应用指令。替换凭据应用函数：验证真实连接、切换连接池并释放旧连接。占位函数会抛出异常，防止确认尚未应用的版本；应用本地状态还须按快照移除已撤销账号，并处理撤销事件。
+使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
 
 ```java
 package org.jumpserver.pam;
 
 import java.util.List;
-import org.jumpserver.pam.Models.Credential;
+import org.jumpserver.pam.Models.Account;
 import org.jumpserver.pam.Models.Event;
 
-/** Replace the business hooks before running; unapplied credentials are never confirmed. */
 public final class EventsDemo {
-  private static void applyCredential(Credential credential) {
-    throw new UnsupportedOperationException(
-        "Implement connection validation, pool switching and old connection cleanup");
+  private static void applyAccount(Account account) {
+    throw new UnsupportedOperationException("Implement connection validation, pool switching and old connection cleanup");
   }
-
-  private static void restartApplication() {
-    throw new UnsupportedOperationException("Implement restart and health check");
+  private static void applyEvent(Client client, Event event) {
+    if (event.getEvent().equals("application.restart.requested"))
+      throw new UnsupportedOperationException("Implement restart and health check");
+    Account account = client.getAccount(event.getAccountId(), false);
+    if (account.getRevision() != event.getAccountRevision())
+      throw new IllegalArgumentException("Event account version is superseded");
+    applyAccount(account);
   }
-
-  private static void handleCommand(Client client, Event event) {
-    if (event.getEvent().equals("application.restart.requested")) {
-      restartApplication();
-      return;
+  private static void handleEvent(Client client, Event event) {
+    if (!event.getCommandId().isEmpty()
+        && !client.reportApplicationCommandResult(event.getCommandId(), "running", null).isAccepted()) return;
+    try { applyEvent(client, event); }
+    catch (RuntimeException error) {
+      client.confirmEvent(event.getEventId(), "failed", "application_failed");
+      throw error;
     }
-    if (!event.getEvent().equals("credential.switch.requested"))
-      throw new IllegalArgumentException("Unsupported application command");
-    Credential credential = client.getCredential(event.getKey(), false);
-    if (credential.getRevision() != event.getRevision()
-        || !credential.getAccount().getId().equals(event.getAccountId()))
-      throw new IllegalArgumentException("Requested account version is superseded");
-    applyCredential(credential);
-    client.confirmCredential(
-        credential.getKey(), credential.getRevision(), credential.getAccount().getId());
+    client.confirmEvent(event.getEventId());
   }
-
   public static void main(String[] args) {
-    Client.Options options =
-        new Client.Options(
-                System.getenv("JMS_ENDPOINT"),
-                System.getenv("JMS_APP_ID"),
-                System.getenv("JMS_APP_SECRET"),
-                System.getenv("JMS_INSTANCE_ID"))
-            .orgId(System.getenv("JMS_ORG_ID"));
+    Client.Options options = new Client.Options(System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+        System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID")).orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
       Thread stop = new Thread(client::close, "jms-pam-shutdown");
       Runtime.getRuntime().addShutdownHook(stop);
       try (EventStream stream = client.watchCredentialEvents()) {
         for (Event event : stream) {
-          if (!event.getCommandId().isEmpty()) {
-            try {
-              client.executeApplicationCommand(event, command -> handleCommand(client, command));
-            } catch (RuntimeException ignored) {
-            }
-            continue;
-          }
-          List<Event> updates =
-              event.getEvent().equals("snapshot")
-                  ? event.getCredentials()
-                  : event.getEvent().equals("credential.updated") ? List.of(event) : List.of();
-          // On snapshots, remove application caches absent from the new authorized scope.
+          List<Event> updates = !event.getCommandId().isEmpty() || event.getEvent().equals("credential.updated")
+              ? List.of(event) : event.getEvent().equals("snapshot") ? event.getCredentials() : List.of();
+          // Reconcile removed connections on snapshots; release revoked accounts.
           for (Event update : updates) {
-            Credential credential;
-            if (update.getCredentialMode().equals("subscription")
-                && !update.getAccountId().isEmpty() && !update.getKey().isEmpty()) {
-              String key = update.getKey();
-              if (!key.endsWith(":" + update.getAccountId())) key += ":" + update.getAccountId();
-              credential = client.getCredential(key, false);
-            }
-            else if (update.getCredentialMode().equals("alternating_rotation")
-                && !update.getKey().isEmpty())
-              credential = client.getCredential(update.getKey(), false);
-            else continue;
-            applyCredential(credential);
-            if (update.getCredentialMode().equals("alternating_rotation"))
-              client.confirmCredential(
-                  credential.getKey(), credential.getRevision(), credential.getAccount().getId());
+            try { handleEvent(client, update); }
+            catch (RuntimeException error) { System.err.println(error.getClass().getSimpleName()); }
           }
         }
-      } finally {
-        try {
-          Runtime.getRuntime().removeShutdownHook(stop);
-        } catch (IllegalStateException ignored) {
-          // The shutdown hook is already closing the client.
-        }
-      }
+      } finally { Runtime.getRuntime().removeShutdownHook(stop); }
     }
   }
 }
 ```
 
-交替轮换需要先验证真实连接、切换应用连接池并释放旧连接，再确认准确的 key、revision 和 account_id。凭据变更订阅无需确认，连接验证失败时不得确认。
+`get_credential` 和基于 key 的确认接口保留兼容旧接入；新接入使用 `get_account` 和 `confirm_event`。事件结果流程需要同步更新 Core，仅升级 SDK 1.0.2 不会增加服务端能力。
 
 ## 应用指令
 
-轮询、指令认领和结果上报均通过 SDK 方法完成，只有认领成功才执行处理函数。切换指令校验请求的版本与账号、应用凭据后再确认；重启指令须完成重启及健康检查。工作完成后才报告成功，失败上报不会掩盖原始业务异常。
+使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
 
 ## 常用方法
 
-- `getCredential(key)`
-- `getCredentialByAccountId(accountId)`
-- `getCredential(key, false) / getCredentialByAccountId(accountId, false)`
-- `confirmCredential(key, revision, accountId)`
+- `getAccount(accountId)`
+- `getAccount(accountId, false)`
+- `confirmEvent(eventId, status, errorCode)`
 - `watchCredentialEvents()`
 - `watchEvents(listener) / startEvents(listener)`
 - `EventSubscription.stop() / close() / awaitTermination()`

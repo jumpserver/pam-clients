@@ -78,6 +78,9 @@ class Account:
     username: str
     secret_type: str
     secret: str = field(repr=False)
+    revision: int = 0
+    asset: Optional[Asset] = None
+    from_local: bool = field(default=False, compare=False)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Account":
@@ -88,6 +91,7 @@ class Account:
             username=_string(data, "username"),
             secret_type=_string(data, "secret_type"),
             secret=_string(data, "secret"),
+            revision=_revision(data) if "revision" in data else 0,
         )
 
 
@@ -113,6 +117,8 @@ class Credential:
         """Return delivery data, including the secret; never log this mapping."""
         data = asdict(self)
         data.pop("from_local")
+        data["account"].pop("asset")
+        data["account"].pop("from_local")
         return data
 
 

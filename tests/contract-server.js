@@ -43,7 +43,7 @@ async function startServer() {
       "SHA-256=" + crypto.createHash("sha256").update(body).digest("base64"),
     );
     assert.equal(headers["x-jms-org"], "contract-org");
-    assert.equal(headers["x-jms-client-version"], "1.0.1");
+    assert.equal(headers["x-jms-client-version"], "1.0.2");
     assert.equal(headers["x-jms-protocol-version"], "1");
     assert.equal(
       headers["x-jms-config-schema-version"],
@@ -187,6 +187,7 @@ async function startServer() {
               name: "db-user",
               username: "app",
               secret_type: "password",
+              revision: control?.revision ?? 2,
               secret: control?.revision ? "LATEST_SECRET_" + control.revision : "DO_NOT_LOG_SECRET",
             },
             future_optional_field: "ignored",
@@ -199,6 +200,12 @@ async function startServer() {
           asset: {id: "asset", name: "database", address: "127.0.0.1", platform: {id: "platform", name: "PostgreSQL", category: "database", type: "postgresql"}},
           credentials: [{key: "db", mode: "alternating_rotation", revision: control?.revision || 2}],
         }]};
+      } else if (route === "/event-result/") {
+        assert.ok(data.event_id);
+        assert.ok(["success", "failed"].includes(data.status));
+        assert.equal(data.key, undefined);
+        assert.equal(data.revision, undefined);
+        result = {accepted: true, status: data.status};
       } else if (route === "/confirm/") {
         assert.equal(data.account_id, "account");
         assert.equal(data.revision, 2);
@@ -216,6 +223,9 @@ async function startServer() {
         if (data.sync_error === "invalid-flag") result.credentials[0].available = "false";
         if (agentControl) {
           result.credentials[0].revision = agentControl.revision || 2;
+          result.credentials[0].account_id = "account";
+          result.credentials[0].account_revision = agentControl.revision || 2;
+          result.credentials[0].event_id = "agent-event-" + (agentControl.revision || 2);
           result.scope = { credential_keys: ["db"], confirmation_keys: ["db"] };
         }
       } else if (route === "/commands/") {

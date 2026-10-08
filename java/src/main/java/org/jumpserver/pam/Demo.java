@@ -10,12 +10,12 @@ public final class Demo {
                 System.getenv("JMS_INSTANCE_ID"))
             .orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
-      Models.Credential credential =
-          client.getCredentialByAccountId(System.getenv("JMS_ACCOUNT_ID"));
-      // Pass credential.getAccount().getUsername() / getSecret() to the connection pool.
+      Models.Account account =
+          client.getAccount(System.getenv("JMS_ACCOUNT_ID"));
+      // Pass account.getUsername() / getSecret() to the connection pool.
       System.out.println(
           "Fetched revision "
-              + credential.getRevision()
+              + account.getRevision()
               + "; implement application credential switching.");
     }
   }

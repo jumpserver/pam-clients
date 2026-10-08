@@ -22,6 +22,8 @@ import (
 )
 
 type fakeRemote struct {
+	eventID                    string
+	accountSelectors           []string
 	value                      pam.Credential
 	metadata                   int64
 	fault                      error
@@ -36,13 +38,19 @@ func (f *fakeRemote) SyncAgent(context.Context, pam.AgentSyncOptions) (pam.Agent
 	if f.unsubscribed {
 		return pam.AgentSync{ConfigDigest: "digest", Scope: pam.AgentScope{Keys: []string{}, ConfirmationKeys: []string{}}, Credentials: []pam.CredentialRevision{}}, f.fault
 	}
-	return pam.AgentSync{ConfigDigest: "digest", Scope: pam.AgentScope{Keys: []string{f.value.Key}, ConfirmationKeys: []string{f.value.Key}}, Credentials: []pam.CredentialRevision{{Key: f.value.Key, Revision: f.metadata, Available: true, AccountSwitch: f.value.AccountSwitch}}}, f.fault
+	return pam.AgentSync{ConfigDigest: "digest", Scope: pam.AgentScope{Keys: []string{f.value.Key}, ConfirmationKeys: []string{f.value.Key}}, Credentials: []pam.CredentialRevision{{Key: f.value.Key, Revision: f.metadata, Available: true, AccountSwitch: f.value.AccountSwitch, EventID: f.eventID, AccountID: func() string {
+		if f.eventID != "" {
+			return f.value.Account.ID
+		}
+		return ""
+	}(), AccountRevision: f.value.Account.Revision}}}, f.fault
 }
 func (f *fakeRemote) ListAuthorizedAccounts(context.Context) ([]pam.AuthorizedAccount, error) {
 	return []pam.AuthorizedAccount{{ID: f.value.Account.ID, Name: f.value.Account.Name, Username: f.value.Account.Username, SecretType: f.value.Account.SecretType, Asset: f.value.Asset, Credentials: []pam.AccountPolicy{{Key: f.value.Key, Revision: f.metadata, Mode: "alternating_rotation"}}}}, f.fault
 }
 func (f *fakeRemote) GetCredentialFresh(_ context.Context, selector pam.CredentialSelector) (pam.Credential, error) {
 	f.fetched++
+	f.accountSelectors = append(f.accountSelectors, selector.AccountID)
 	if f.credentialFault != nil {
 		return f.value, f.credentialFault
 	}
@@ -59,6 +67,12 @@ func (f *fakeRemote) GetCredentialFresh(_ context.Context, selector pam.Credenti
 func (f *fakeRemote) WatchCredentialEvents(ctx context.Context, _ func(pam.Event) error) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+func (f *fakeRemote) ConfirmEvent(_ context.Context, _ string, status string, _ string) (pam.CommandResult, error) {
+	if status == "success" {
+		f.confirmed++
+	}
+	return pam.CommandResult{Accepted: true, Status: "success"}, f.confirmFault
 }
 func (f *fakeRemote) ConfirmCredential(context.Context, string, int64, string) (pam.CredentialConfirmation, error) {
 	f.confirmed++
@@ -1337,7 +1351,7 @@ func TestNativeAgentAutomaticallyRefreshesAndRestartsOffline(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(config.Delivery.Root, "db.json"))
 	var file Credential
 	if err != nil || json.Unmarshal(raw, &file) != nil || file.Revision != 3 || file.Secret != queried.Secret {
-		t.Fatal("native notification did not update the latest password file")
+		t.Fatalf("native notification delivery mismatch: read=%v file_revision=%d queried_revision=%d same_secret=%t",err,file.Revision,queried.Revision,file.Secret==queried.Secret)
 	}
 	control(url.Values{"fault": {"503"}})
 	if service.Sync(context.Background()) == nil {
@@ -1406,5 +1420,57 @@ func TestRevokedCredentialCannotResumeFromStaleMetadataWithoutLiveFetch(t *testi
 	}
 	if _, err := service.LocalCredential("db"); err != nil {
 		t.Fatal("successful live retrieval did not restore authorized access", err)
+	}
+}
+
+func TestEventConfirmationAfterApplicationOnly(t *testing.T) {
+	_, remote, service := fixture(t)
+	remote.eventID = "event-one"
+	remote.value.Account.Revision = 7
+	if err := service.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if remote.confirmed != 0 {
+		t.Fatal("fetch or delivery confirmed an application event")
+	}
+	if len(remote.accountSelectors) != 1 || remote.accountSelectors[0] != "account" {
+		t.Fatal("event credential was not fetched by account ID")
+	}
+	if service.state.Latest["db"].EventID != "event-one" {
+		t.Fatal("delivery omitted event ID")
+	}
+	if _, err := service.ConfirmEvent(context.Background(), "unknown"); err == nil {
+		t.Fatal("unknown event confirmed")
+	}
+	remote.confirmFault = errors.New("offline")
+	if _, err := service.ConfirmEvent(context.Background(), "event-one"); err != nil {
+		t.Fatal(err)
+	}
+	if service.state.Applied["db"].Confirmed {
+		t.Fatal("offline result treated as confirmed")
+	}
+	remote.confirmFault = nil
+	if err := service.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !service.state.Applied["db"].Confirmed {
+		t.Fatal("event result was not retried")
+	}
+}
+func TestFailedDeliveryDoesNotConfirmEvent(t *testing.T) {
+	_, remote, service := fixture(t)
+	remote.eventID = "event-failed"
+	remote.value.Account.Revision = 7
+	service.deliver = func(context.Context, Config, map[string]Credential, map[string]bool) error {
+		return errors.New("application failed")
+	}
+	if err := service.Sync(context.Background()); err == nil {
+		t.Fatal("expected delivery failure")
+	}
+	if remote.confirmed != 0 {
+		t.Fatal("failed application confirmed")
+	}
+	if _, err := service.ConfirmEvent(context.Background(), "event-failed"); err == nil {
+		t.Fatal("undelivered event confirmed")
 	}
 }

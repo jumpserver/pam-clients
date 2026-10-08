@@ -18,17 +18,19 @@ import (
 )
 
 type Credential struct {
-	Key           string             `json:"key"`
-	Revision      int64              `json:"revision"`
-	AssetID       string             `json:"asset_id"`
-	Asset         string             `json:"asset"`
-	Address       string             `json:"address"`
-	AccountID     string             `json:"account_id"`
-	Account       string             `json:"account"`
-	Username      string             `json:"username"`
-	SecretType    string             `json:"secret_type"`
-	Secret        string             `json:"secret"`
-	AccountSwitch *pam.AccountSwitch `json:"account_switch,omitempty"`
+	AccountRevision int64              `json:"account_revision"`
+	EventID         string             `json:"event_id,omitempty"`
+	Key             string             `json:"key"`
+	Revision        int64              `json:"revision"`
+	AssetID         string             `json:"asset_id"`
+	Asset           string             `json:"asset"`
+	Address         string             `json:"address"`
+	AccountID       string             `json:"account_id"`
+	Account         string             `json:"account"`
+	Username        string             `json:"username"`
+	SecretType      string             `json:"secret_type"`
+	Secret          string             `json:"secret"`
+	AccountSwitch   *pam.AccountSwitch `json:"account_switch,omitempty"`
 }
 
 func (c Credential) String() string {
@@ -36,7 +38,7 @@ func (c Credential) String() string {
 }
 func (c Credential) GoString() string { return c.String() }
 func flatten(c pam.Credential) Credential {
-	return Credential{Key: c.Key, Revision: c.Revision, AssetID: c.Asset.ID, Asset: c.Asset.Name, Address: c.Asset.Address, AccountID: c.Account.ID, Account: c.Account.Name, Username: c.Account.Username, SecretType: c.Account.SecretType, Secret: c.Account.Secret, AccountSwitch: c.AccountSwitch}
+	return Credential{AccountRevision: c.Account.Revision, Key: c.Key, Revision: c.Revision, AssetID: c.Asset.ID, Asset: c.Asset.Name, Address: c.Asset.Address, AccountID: c.Account.ID, Account: c.Account.Name, Username: c.Account.Username, SecretType: c.Account.SecretType, Secret: c.Account.Secret, AccountSwitch: c.AccountSwitch}
 }
 
 type Payload struct {
@@ -99,6 +101,7 @@ func environment(c Credential) ([]byte, error) {
 		name  string
 		value string
 	}{
+		{"JMS_PAM_EVENT_ID", c.EventID}, {"JMS_PAM_ACCOUNT_REVISION", strconv.FormatInt(c.AccountRevision, 10)},
 		{"JMS_PAM_CREDENTIAL_KEY", c.Key}, {"JMS_PAM_CREDENTIAL_REVISION", strconv.FormatInt(c.Revision, 10)},
 		{"JMS_PAM_ASSET_ID", c.AssetID}, {"JMS_PAM_ASSET_ADDRESS", c.Address}, {"JMS_PAM_ACCOUNT_ID", c.AccountID},
 		{"JMS_PAM_USERNAME", c.Username}, {"JMS_PAM_SECRET_TYPE", c.SecretType}, {"JMS_PAM_SECRET", c.Secret},

@@ -73,7 +73,7 @@ mvn -f /path/to/pam-clients/java/pom.xml install
 <dependency>
   <groupId>org.jumpserver</groupId>
   <artifactId>jms-pam</artifactId>
-  <version>1.0.1</version>
+  <version>1.0.2</version>
 </dependency>
 ```
 
@@ -186,7 +186,11 @@ CI 也会检查包构建、元数据和 wheel 安装。当前尚未完成首次 
 `id-token: write` 已在发布 job 中声明，临时认证由 GitHub Actions 与 PyPI 完成。
 PyPI 项目名为全局名称，组织归属不改变 `pip install jms-pam` 的命令。
 
-每次发版前更新 `python/jms_pam/_version.py`，例如 `1.0.1`，再打对应的 `v1.0.1` tag。
+每次发版前更新 `python/jms_pam/_version.py`，例如 `1.0.2`，再打对应的 `v1.0.2` tag。
 Python 包版本由该文件统一读取；发布 workflow 会检查包版本与 tag 相符。
 先配置 Trusted Publisher，再发布 GitHub Release。首次发布成功后，企业可同步发行包
 到内部 PyPI 镜像，应用直接使用 `python3 -m pip install jms-pam`。
+
+## 1.0.2 账号与事件接口
+
+普通取密使用 `get_account(account_id=...)` / `GetAccount` / `getAccount`，直接读取账号的用户名、密码、资产及缓存来源。事件处理按 `account_id` 实时取密，校验 `account_revision`，应用成功后通过 `event_id` 上报结果。收到事件、取密或文件投递成功都不表示应用成功。对应的 Core 更新需同步部署。旧 key API 保留兼容。

@@ -267,12 +267,39 @@ func (c *Client) getCredential(ctx context.Context, selector CredentialSelector,
 		}
 		temporary := failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600)
 		latest, found := c.latestCredentials[selector]
-		if allowLocalFallback && selector.Key != "" && temporary && !denied && !c.closed && ctx.Err() == nil && found {
+		if allowLocalFallback && temporary && !denied && !c.closed && ctx.Err() == nil && found {
 			value = latest
 			value.FromLocal = true
 			return value, nil
 		}
 	}
+	return value, err
+}
+
+// GetAccount returns the account and asset metadata without the policy envelope.
+func (c *Client) GetAccount(ctx context.Context, accountID string) (Account, error) {
+	return c.getAccount(ctx, accountID, true)
+}
+func (c *Client) GetAccountFresh(ctx context.Context, accountID string) (Account, error) {
+	return c.getAccount(ctx, accountID, false)
+}
+func (c *Client) getAccount(ctx context.Context, accountID string, fallback bool) (Account, error) {
+	value, err := c.getCredential(ctx, CredentialSelector{AccountID: accountID}, fallback)
+	if err != nil {
+		return Account{}, err
+	}
+	account := value.Account
+	account.Asset, account.FromLocal = value.Asset, value.FromLocal
+	return account, nil
+}
+
+// ConfirmEvent reports application success or failure, independently of delivery receipts.
+func (c *Client) ConfirmEvent(ctx context.Context, eventID, status, errorCode string) (CommandResult, error) {
+	if eventID == "" || (status != "success" && status != "failed") {
+		return CommandResult{}, fmt.Errorf("event ID and success or failed status are required")
+	}
+	var value CommandResult
+	err := c.request(ctx, http.MethodPost, "/event-result/", map[string]any{"event_id": eventID, "status": status, "error_code": errorCode}, &value, func(data map[string]json.RawMessage) error { return required(data, "accepted", "status") })
 	return value, err
 }
 func (c *Client) ConfirmCredential(ctx context.Context, key string, revision int64, accountID string) (CredentialConfirmation, error) {

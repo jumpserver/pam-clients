@@ -27,6 +27,17 @@ class PythonContractTests(unittest.TestCase):
             **options,
         )
 
+    def test_account_projection_and_event_results(self):
+        with self.client("python-account-event") as client:
+            account = client.get_account(account_id="account", allow_local_fallback=False)
+            self.assertEqual(account.username, "app")
+            self.assertEqual(account.asset.address, "127.0.0.1")
+            self.assertFalse(account.from_local)
+            self.assertEqual(account.revision, 2)
+            self.assertNotIn("DO_NOT_LOG_SECRET", repr(account))
+            self.assertTrue(client.confirm_event(event_id="event-one").accepted)
+            self.assertEqual(client.confirm_event(event_id="event-two", status="failed", error_code="application_failed").status, "failed")
+
     def test_signed_credential_and_confirmation(self):
         with self.client() as client:
             credential = client.get_credential(key="db /中文?&=")

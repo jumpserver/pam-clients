@@ -1,83 +1,44 @@
 'use strict'
 const { Client } = require('./index')
 
-async function applyCredential(credential) {
-  // Validate a real connection, switch the pool, then release old connections.
-  throw new Error('Implement application credential switching')
+async function applyAccount(account) {
+  // Validate a new connection, switch the pool, then release old connections.
+  throw new Error('Implement application account switching')
 }
-async function restartApplication() {
-  throw new Error('Implement application restart and health check')
+async function applyEvent(client, event) {
+  if (event.event === 'application.restart.requested')
+    throw new Error('Implement application restart and health check')
+  const account = await client.getAccount({ accountId: event.accountId, allowLocalFallback: false })
+  if (account.revision !== event.accountRevision) throw new Error('Event account version is superseded')
+  await applyAccount(account)
 }
-async function handleCommand(client, event) {
-  if (event.event === 'application.restart.requested') return restartApplication()
-  if (event.event !== 'credential.switch.requested')
-    throw new Error('Unsupported application command')
-  const credential = await client.getCredential({ key: event.credentialKey, allowLocalFallback: false })
-  if (credential.revision !== event.revision || credential.account.id !== event.accountId)
-    throw new Error('Requested account version is superseded')
-  await applyCredential(credential)
-  await client.confirmCredential({
-    key: credential.key,
-    revision: credential.revision,
-    accountId: credential.account.id,
-  })
+async function handleEvent(client, event) {
+  if (event.commandId) {
+    const claim = await client.reportApplicationCommandResult({ commandId: event.commandId, status: 'running' })
+    if (!claim.accepted) return
+  }
+  try { await applyEvent(client, event) }
+  catch (error) {
+    await client.confirmEvent({ eventId: event.eventId, status: 'failed', errorCode: 'application_failed' })
+    throw error
+  }
+  await client.confirmEvent({ eventId: event.eventId })
 }
 async function main() {
-  const client = new Client({
-    endpoint: process.env.JMS_ENDPOINT,
-    appId: process.env.JMS_APP_ID,
-    appSecret: process.env.JMS_APP_SECRET,
-    instanceId: process.env.JMS_INSTANCE_ID,
-    orgId: process.env.JMS_ORG_ID,
-  })
+  const client = new Client({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET, instanceId: process.env.JMS_INSTANCE_ID, orgId: process.env.JMS_ORG_ID })
   const stop = () => client.close()
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
+  process.once('SIGINT', stop); process.once('SIGTERM', stop)
   try {
     for await (const event of client.watchCredentialEvents()) {
-      if (event.commandId) {
-        try {
-          await client.executeApplicationCommand(event, (command) => handleCommand(client, command))
-        } catch {
-          /* Failure is reported; keep secrets out of logs. */
-        }
-        continue
-      }
-      const updates =
-        event.event === 'snapshot'
-          ? event.credentials
-          : event.event === 'credential.updated'
-            ? [event]
-            : []
-      // On snapshots, remove application caches absent from the new authorized scope.
-      for (const update of updates || []) {
-        const mode = update.credentialMode
-        const key = update.credentialKey || update.key
-        let credential
-        if (mode === 'subscription' && update.accountId && key) {
-          const subscriptionKey = key.endsWith(`:${update.accountId}`) ? key : `${key}:${update.accountId}`
-          credential = await client.getCredential({ key: subscriptionKey, allowLocalFallback: false })
-        }
-        else if (mode === 'alternating_rotation' && key)
-          credential = await client.getCredential({ key, allowLocalFallback: false })
-        else continue
-        await applyCredential(credential)
-        if (mode === 'alternating_rotation')
-          await client.confirmCredential({
-            key: credential.key,
-            revision: credential.revision,
-            accountId: credential.account.id,
-          })
+      const updates = event.commandId || event.event === 'credential.updated' ? [event]
+        : event.event === 'snapshot' ? event.credentials || [] : []
+      // Reconcile removed connections on snapshots; release revoked accounts.
+      for (const update of updates) {
+        try { await handleEvent(client, update) }
+        catch (error) { console.error(error.code || error.name) }
       }
     }
-  } finally {
-    client.close()
-    process.removeListener('SIGINT', stop)
-    process.removeListener('SIGTERM', stop)
-  }
+  } finally { await client.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop) }
 }
-if (require.main === module)
-  main().catch((error) => {
-    console.error(error.code || error.name)
-    process.exitCode = 1
-  })
+if (require.main === module) main().catch((error) => { console.error(error.code || error.name); process.exitCode = 1 })

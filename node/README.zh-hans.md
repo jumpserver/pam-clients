@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-本 SDK 与 Python 凭据策略 SDK 对齐：获取授权账号或轮换策略凭据、确认生效版本、监听事件、处理应用指令、同步 Agent 状态。请求 URL、HMAC 签名、Digest、UTC 时间、请求 ID 和协议头均由客户端自动生成。
+使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
 
 ## 环境要求
 
@@ -51,10 +51,10 @@ async function main() {
     orgId: process.env.JMS_ORG_ID,
   })
   try {
-    const credential = await client.getCredential({ accountId: process.env.JMS_ACCOUNT_ID })
-    // Pass credential.account.username / secret to the application connection pool.
+    const account = await client.getAccount({ accountId: process.env.JMS_ACCOUNT_ID })
+    // Pass account.username / secret to the application connection pool.
     console.log(
-      `Fetched revision ${credential.revision}; implement application credential switching.`,
+      `Fetched revision ${account.revision}; implement application credential switching.`,
     )
   } finally {
     client.close()
@@ -68,185 +68,68 @@ if (require.main === module)
   })
 ```
 
-## 事件处理接口
+## 事件与凭据生效
 
-先在本地初始化账号映射或连接池，再显式启动监听。Python 和 Node.js 使用子类钩子，Go 使用 EventHandlers，Java 使用 CredentialEventListener。示例中的连接切换函数必须由业务实现，否则会抛错。原有迭代器或回调接口继续保留。
+使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
 
 ```javascript
 'use strict'
 const { Client } = require('./index')
 
-class MyClient extends Client {
-  constructor(options) {
-    super(options)
-    this.credentials = new Map()
-    this.modes = new Map()
-  }
-  async onEvent(event) {
-    if (event.event === 'snapshot') {
-      this.modes.clear()
-      for (const update of event.credentials || [])
-        this.modes.set(update.credentialKey || update.key, update.credentialMode)
-      for (const key of this.credentials.keys())
-        if (!this.modes.has(key)) this.credentials.delete(key) // Also release connections.
-    } else if (event.event === 'credential.updated') {
-      this.modes.set(event.credentialKey || event.key, event.credentialMode)
-    }
-    // Use executeApplicationCommand for command events; see events.js.
-  }
-  async onCredentialChanged(credential, { signal }) {
-    await this.applyCredential(credential, { signal })
-    if (this.modes.get(credential.key) === 'alternating_rotation')
-      await this.confirmCredential({ key: credential.key, revision: credential.revision,
-        accountId: credential.account.id, signal })
-    this.credentials.set(credential.key, credential)
-  }
-  async applyCredential(credential, { signal }) {
-    throw new Error('Implement connection validation, pool switching and old connection cleanup')
-  }
-  async onCredentialRevoked(event) {
-    this.credentials.delete(event.credentialKey || event.key) // Also release affected connections.
-  }
+async function applyAccount(account) {
+  // Validate a new connection, switch the pool, then release old connections.
+  throw new Error('Implement application account switching')
 }
-
+async function applyEvent(client, event) {
+  if (event.event === 'application.restart.requested')
+    throw new Error('Implement application restart and health check')
+  const account = await client.getAccount({ accountId: event.accountId, allowLocalFallback: false })
+  if (account.revision !== event.accountRevision) throw new Error('Event account version is superseded')
+  await applyAccount(account)
+}
+async function handleEvent(client, event) {
+  if (event.commandId) {
+    const claim = await client.reportApplicationCommandResult({ commandId: event.commandId, status: 'running' })
+    if (!claim.accepted) return
+  }
+  try { await applyEvent(client, event) }
+  catch (error) {
+    await client.confirmEvent({ eventId: event.eventId, status: 'failed', errorCode: 'application_failed' })
+    throw error
+  }
+  await client.confirmEvent({ eventId: event.eventId })
+}
 async function main() {
-  const client = new MyClient({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
+  const client = new Client({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
     appSecret: process.env.JMS_APP_SECRET, instanceId: process.env.JMS_INSTANCE_ID, orgId: process.env.JMS_ORG_ID })
   const stop = () => client.close()
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
-  try { await client.watchEvents() }
-  finally {
-    client.close(); await client.stopEvents()
-    process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop)
-  }
-}
-if (require.main === module) main().catch((error) => {
-  console.error(error.code || error.name); process.exitCode = 1
-})
-module.exports = { MyClient }
-```
-
-首次与重连 snapshot、credential.updated 按策略模式取密，再串行调用凭据处理函数。读取器与业务处理通过容量为 128 的有界队列连接；队列满时产生背压。取密或凭据处理失败按 1–30 秒指数退避重试，每次重新取密。同一目标的新事件替换待重试项；快照重置重试范围，撤销或配置变更取消待重试项。处理函数应支持重复调用。原始事件和撤销钩子的异常进入错误处理，不自动重试；指令仍需通过认领接口执行。received 仅表示读取事件，SDK 不会自动确认轮换。较旧版本事件不会取消较新版本的拉取重试。
-
-`watchEvents({signal})` / `startEvents({signal})`; `stopEvents()` / `await subscription.stop()` / `await subscription.done`
-
-watchEvents 等待完成且不阻塞事件循环；startEvents 返回不代表初始同步完成。每个客户端允许一个高层监听器。异步钩子逐个 await，并收到 AbortSignal。close 同步请求取消，由外部 await subscription.stop() 或 done 等待结束。钩子可 await stopEvents，但不要等待自己的 done。clone 返回新的基础 Client。
-
-### 最新凭据与后端不可用
-
-取密始终先请求 API。成功获取新凭据后替换本地保留值，更旧版本不会覆盖已获取的新版本；保留值不按时间过期。只有 API 超时、网络故障或 HTTP 5xx 时，才返回相同查询条件下已获取的最新凭据，并设置本地来源标记。首次获取失败且没有保留值时，抛出原始错误。SDK 在当前客户端内存中保留这些值，直到更新、撤销或关闭；clone 和进程重启从空状态开始。Agent 通过已有受保护的本地状态保留最新凭据。HTTP 401/403/404、client_upgrade_required 清空 SDK 的保留值并报错，成功响应格式错误也会报错。明确撤销删除相应凭据，push 快照移除订阅范围外的 push 项；配置变更通知先保留已有值，由后续快照核对授权范围。Agent 在 HTTP 同步前先执行明确撤销或快照授权范围缩小并保存范围，后端故障期间或重启后也会阻止相应本地取密。credential_not_found（HTTP 400）同样清除 SDK 保留值。 按 account_id 直接 pull 始终需要实时 API 响应；push 快照不能证明缓存的 pull 凭据仍获授权。
-
-- `credential.fromLocal`
-- `getCredential({key, allowLocalFallback: false})` / `getCredential({accountId, allowLocalFallback: false})`
-
-启用高层事件监听后，snapshot、credential.updated 会自动获取当前凭据并替换本地保留值，再调用业务处理函数。刷新失败时保留上一份凭据并重试。Agent 同样在更新通知后主动取密，后端故障期间保留已有凭据。事件刷新和手动切换使用下方必须实时获取的调用；保留的密码不能被当成刚获取的新版本，也不会自动确认轮换。
-
-事件连接空闲时每 10 秒发送应用层 ping，约 30 秒收不到消息则重连。重连采用 1–30 秒指数退避并重新签名。重连快照恢复当前状态，不重放历史事件。
-
-
-
-## 事件与凭据生效
-
-处理首次/重连 snapshot 和 credential.updated。下方完整事件示例分别处理 subscription、alternating_rotation 及应用指令。替换凭据应用函数：验证真实连接、切换连接池并释放旧连接。占位函数会抛出异常，防止确认尚未应用的版本；应用本地状态还须按快照移除已撤销账号，并处理撤销事件。
-
-```javascript
-'use strict'
-const { Client } = require('./index')
-
-async function applyCredential(credential) {
-  // Validate a real connection, switch the pool, then release old connections.
-  throw new Error('Implement application credential switching')
-}
-async function restartApplication() {
-  throw new Error('Implement application restart and health check')
-}
-async function handleCommand(client, event) {
-  if (event.event === 'application.restart.requested') return restartApplication()
-  if (event.event !== 'credential.switch.requested')
-    throw new Error('Unsupported application command')
-  const credential = await client.getCredential({ key: event.credentialKey, allowLocalFallback: false })
-  if (credential.revision !== event.revision || credential.account.id !== event.accountId)
-    throw new Error('Requested account version is superseded')
-  await applyCredential(credential)
-  await client.confirmCredential({
-    key: credential.key,
-    revision: credential.revision,
-    accountId: credential.account.id,
-  })
-}
-async function main() {
-  const client = new Client({
-    endpoint: process.env.JMS_ENDPOINT,
-    appId: process.env.JMS_APP_ID,
-    appSecret: process.env.JMS_APP_SECRET,
-    instanceId: process.env.JMS_INSTANCE_ID,
-    orgId: process.env.JMS_ORG_ID,
-  })
-  const stop = () => client.close()
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
   try {
     for await (const event of client.watchCredentialEvents()) {
-      if (event.commandId) {
-        try {
-          await client.executeApplicationCommand(event, (command) => handleCommand(client, command))
-        } catch {
-          /* Failure is reported; keep secrets out of logs. */
-        }
-        continue
-      }
-      const updates =
-        event.event === 'snapshot'
-          ? event.credentials
-          : event.event === 'credential.updated'
-            ? [event]
-            : []
-      // On snapshots, remove application caches absent from the new authorized scope.
-      for (const update of updates || []) {
-        const mode = update.credentialMode
-        const key = update.credentialKey || update.key
-        let credential
-        if (mode === 'subscription' && update.accountId && key) {
-          const subscriptionKey = key.endsWith(`:${update.accountId}`) ? key : `${key}:${update.accountId}`
-          credential = await client.getCredential({ key: subscriptionKey, allowLocalFallback: false })
-        }
-        else if (mode === 'alternating_rotation' && key)
-          credential = await client.getCredential({ key, allowLocalFallback: false })
-        else continue
-        await applyCredential(credential)
-        if (mode === 'alternating_rotation')
-          await client.confirmCredential({
-            key: credential.key,
-            revision: credential.revision,
-            accountId: credential.account.id,
-          })
+      const updates = event.commandId || event.event === 'credential.updated' ? [event]
+        : event.event === 'snapshot' ? event.credentials || [] : []
+      // Reconcile removed connections on snapshots; release revoked accounts.
+      for (const update of updates) {
+        try { await handleEvent(client, update) }
+        catch (error) { console.error(error.code || error.name) }
       }
     }
-  } finally {
-    client.close()
-    process.removeListener('SIGINT', stop)
-    process.removeListener('SIGTERM', stop)
-  }
+  } finally { await client.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop) }
 }
-if (require.main === module)
-  main().catch((error) => {
-    console.error(error.code || error.name)
-    process.exitCode = 1
-  })
+if (require.main === module) main().catch((error) => { console.error(error.code || error.name); process.exitCode = 1 })
 ```
 
-交替轮换需要先验证真实连接、切换应用连接池并释放旧连接，再确认准确的 key、revision 和 account_id。凭据变更订阅无需确认，连接验证失败时不得确认。
+`get_credential` 和基于 key 的确认接口保留兼容旧接入；新接入使用 `get_account` 和 `confirm_event`。事件结果流程需要同步更新 Core，仅升级 SDK 1.0.2 不会增加服务端能力。
 
 ## 应用指令
 
-轮询、指令认领和结果上报均通过 SDK 方法完成，只有认领成功才执行处理函数。切换指令校验请求的版本与账号、应用凭据后再确认；重启指令须完成重启及健康检查。工作完成后才报告成功，失败上报不会掩盖原始业务异常。
+使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
 
 ## 常用方法
 
-- `getCredential({key})`
-- `getCredential({accountId})`
-- `getCredential({key, allowLocalFallback: false})`
-- `confirmCredential({key, revision, accountId})`
+- `getAccount({accountId})`
+- `getAccount({accountId, allowLocalFallback: false})`
+- `confirmEvent({eventId, status, errorCode})`
 - `watchCredentialEvents({signal})`
 - `watchEvents({signal}) / startEvents({signal}) / stopEvents()`
 - `EventSubscription.stop() / done`

@@ -30,10 +30,15 @@ export interface Credential {
   }
   account: { id: string; name: string; username: string; secretType: string; secret: string }
 }
+export interface RetrievedAccount {
+  id: string; name: string; username: string; secretType: string; secret: string
+  revision: number; asset: Credential['asset']; readonly fromLocal: boolean
+}
 export interface CredentialConfirmation extends KnownRevision {}
 export interface SnapshotCredential extends KnownRevision {
   credentialMode: string
   accountId?: string
+  accountRevision?: number
 }
 export interface Event {
   event: string
@@ -43,6 +48,7 @@ export interface Event {
   key?: string
   credentialMode?: string
   accountId?: string
+  accountRevision?: number
   revision?: number
   credentials?: SnapshotCredential[]
   [name: string]: unknown
@@ -75,6 +81,8 @@ export class Client {
     options: RequestOptions & { allowLocalFallback?: boolean } &
       ({ key: string; accountId?: never } | { key?: never; accountId: string }),
   ): Promise<Credential>
+  getAccount(options: RequestOptions & { accountId: string; allowLocalFallback?: boolean }): Promise<RetrievedAccount>
+  confirmEvent(options: RequestOptions & { eventId: string; status?: 'success' | 'failed'; errorCode?: string }): Promise<CommandResult>
   confirmCredential(
     options: RequestOptions & { key: string; revision: number; accountId: string },
   ): Promise<CredentialConfirmation>

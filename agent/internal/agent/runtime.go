@@ -25,6 +25,7 @@ type Remote interface {
 	GetCredentialFresh(context.Context, pam.CredentialSelector) (pam.Credential, error)
 	WatchCredentialEvents(context.Context, func(pam.Event) error) error
 	ConfirmCredential(context.Context, string, int64, string) (pam.CredentialConfirmation, error)
+	ConfirmEvent(context.Context, string, string, string) (pam.CommandResult, error)
 	ListApplicationCommands(context.Context) ([]pam.Event, error)
 	ReportApplicationCommandResult(context.Context, string, string, string) (pam.CommandResult, error)
 }
@@ -37,6 +38,7 @@ type Applied struct {
 }
 
 type State struct {
+	Events            map[string]pam.Event  `json:"pending_events"`
 	Identity          string                `json:"identity"`
 	LocalDeliveryHash string                `json:"local_delivery_hash"`
 	Latest            map[string]Credential `json:"credentials"`
@@ -64,7 +66,7 @@ func New(config Config, remote Remote) (*Agent, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	state := State{Latest: map[string]Credential{}, Delivered: map[string]int64{}, Applied: map[string]Applied{}, Authorized: map[string]bool{}, Wanted: map[string]int64{}, Commands: map[string]pam.Event{}}
+	state := State{Events: map[string]pam.Event{}, Latest: map[string]Credential{}, Delivered: map[string]int64{}, Applied: map[string]Applied{}, Authorized: map[string]bool{}, Wanted: map[string]int64{}, Commands: map[string]pam.Event{}}
 	identity, _ := json.Marshal([]string{config.Endpoint, config.AppID, config.OrgID, config.InstanceID})
 	if config.Local {
 		identity = append(identity, []byte("local")...)
@@ -110,6 +112,9 @@ func New(config Config, remote Remote) (*Agent, error) {
 	}
 	if state.Wanted == nil {
 		state.Wanted = map[string]int64{}
+	}
+	if state.Events == nil {
+		state.Events = map[string]pam.Event{}
 	}
 	if state.Commands == nil {
 		state.Commands = map[string]pam.Event{}
@@ -265,6 +270,16 @@ func (a *Agent) synchronize(ctx context.Context) error {
 			return a.failure(err, false)
 		}
 		metadata[item.Key] = item
+		if item.EventID != "" {
+			a.mu.Lock()
+			if a.state.Events[item.Key].EventID != item.EventID {
+				applied := a.state.Applied[item.Key]
+				applied.Confirmed = false
+				a.state.Applied[item.Key] = applied
+			}
+			a.state.Events[item.Key] = pam.Event{Event: "credential.updated", EventID: item.EventID, CredentialKey: item.Key, AccountID: item.AccountID, Revision: item.Revision, AccountRevision: item.AccountRevision}
+			a.mu.Unlock()
+		}
 	}
 	// Signed scope reductions apply even when the delivery configuration is invalid.
 	a.mu.Lock()
@@ -312,10 +327,22 @@ func (a *Agent) synchronize(ctx context.Context) error {
 		if item.Revision > expected {
 			expected = item.Revision
 		}
-		if exists && !item.Changed && !wanted && previous.Revision == item.Revision && sameSwitch(previous.AccountSwitch, item.AccountSwitch) {
+		if exists && !item.Changed && !wanted && previous.Revision == item.Revision && (item.AccountID == "" || previous.AccountRevision == item.AccountRevision) && sameSwitch(previous.AccountSwitch, item.AccountSwitch) {
 			continue
 		}
-		value, fetchErr := a.remote.GetCredentialFresh(ctx, pam.CredentialSelector{Key: key})
+		selector := pam.CredentialSelector{AccountID: item.AccountID}
+		if selector.AccountID == "" {
+			selector.Key = key
+		} // Compatibility with pre-1.0.2 Core.
+		value, fetchErr := a.remote.GetCredentialFresh(ctx, selector)
+		if fetchErr == nil && item.AccountID != "" {
+			if value.Account.ID != item.AccountID || value.Account.Revision != item.AccountRevision {
+				fetchFailed = true
+				continue
+			}
+			// Stable local delivery names remain independent of the account selector.
+			value.Key, value.Revision, value.AccountSwitch = key, item.Revision, item.AccountSwitch
+		}
 		if fetchErr != nil {
 			var failure *pam.PAMError
 			isPAM := errors.As(fetchErr, &failure)
@@ -342,10 +369,13 @@ func (a *Agent) synchronize(ctx context.Context) error {
 			continue
 		}
 		a.mu.Lock()
-		if previous.AccountID != value.Account.ID || !sameSwitch(previous.AccountSwitch, value.AccountSwitch) {
+		if previous.AccountID != value.Account.ID || (item.AccountID != "" && previous.AccountRevision != item.AccountRevision) || !sameSwitch(previous.AccountSwitch, value.AccountSwitch) {
 			delete(a.state.Delivered, key)
+			delete(a.state.Applied, key)
 		}
-		a.state.Latest[key] = flatten(value)
+		saved := flatten(value)
+		saved.EventID = item.EventID
+		a.state.Latest[key] = saved
 		a.state.Authorized[key] = true
 		delete(a.state.Wanted, key)
 		if value.Revision > item.Revision {
@@ -377,13 +407,24 @@ func (a *Agent) synchronize(ctx context.Context) error {
 	a.mu.Unlock()
 	if len(changed) > 0 {
 		if err = a.deliver(ctx, deliveryConfig, latest, changed); err != nil {
+			a.mu.Lock()
+			failedEvents := make([]pam.Event, 0, len(changed))
+			for key := range changed {
+				if event := a.state.Events[key]; event.EventID != "" {
+					failedEvents = append(failedEvents, event)
+				}
+			}
+			a.mu.Unlock()
+			for _, event := range failedEvents {
+				_, _ = a.remote.ConfirmEvent(ctx, event.EventID, "failed", "application_failed")
+			}
 			return a.failure(err, false)
 		}
 		verified := autoConfirmKeys(deliveryConfig.Rules, latest, changed)
 		a.mu.Lock()
 		for key := range changed {
 			a.state.Delivered[key] = latest[key].Revision
-			if verified[key] && contains(a.state.Scope.ConfirmationKeys, key) {
+			if verified[key] && (a.state.Events[key].EventID != "" || contains(a.state.Scope.ConfirmationKeys, key)) {
 				value := latest[key]
 				previous := a.state.Applied[key]
 				if previous.Revision != value.Revision || previous.AccountID != value.AccountID {
@@ -520,12 +561,46 @@ func (a *Agent) removeLegacySubscriptions(metadata map[string]pam.CredentialRevi
 	return err
 }
 
+// ConfirmEvent is called by the application after it has actually applied a delivered event.
+func (a *Agent) ConfirmEvent(ctx context.Context, eventID string) (Applied, error) {
+	a.syncMu.Lock()
+	defer a.syncMu.Unlock()
+	a.mu.Lock()
+	var target pam.Event
+	for _, event := range a.state.Events {
+		if event.EventID == eventID {
+			target = event
+			break
+		}
+	}
+	if target.EventID == "" {
+		for _, event := range a.state.Commands {
+			if event.EventID == eventID {
+				target = event
+				break
+			}
+		}
+	}
+	a.mu.Unlock()
+	if target.EventID == "" {
+		return Applied{}, errors.New("unknown application event")
+	}
+	a.mu.Lock()
+	value := a.state.Latest[eventKey(target)]
+	matches := value.AccountID == target.AccountID && value.AccountRevision == target.AccountRevision
+	a.mu.Unlock()
+	if !matches {
+		return Applied{}, errors.New("event account version is superseded")
+	}
+	return a.confirm(ctx, eventKey(target), target.Revision)
+}
+
 func (a *Agent) Confirm(ctx context.Context, key string, revision int64) (Applied, error) {
 	a.syncMu.Lock()
 	defer a.syncMu.Unlock()
 	a.mu.Lock()
 	value, exists := a.state.Latest[key]
-	if a.state.Denied || !a.state.Authorized[key] || !exists || value.Revision != revision || !contains(a.state.Scope.ConfirmationKeys, key) {
+	if a.state.Denied || !a.state.Authorized[key] || !exists || a.state.Delivered[key] != revision || value.Revision != revision || (a.state.Events[key].EventID == "" && !contains(a.state.Scope.ConfirmationKeys, key)) {
 		a.mu.Unlock()
 		return Applied{}, errors.New("confirm an authorized alternating-rotation revision actually applied by the application")
 	}
@@ -547,14 +622,32 @@ func (a *Agent) reportPending(ctx context.Context) error {
 	var applied []Applied
 	for key, value := range a.state.Applied {
 		current := a.state.Latest[key]
-		if !a.state.Denied && a.state.Authorized[key] && contains(a.state.Scope.ConfirmationKeys, key) && !value.Confirmed && current.Revision == value.Revision && current.AccountID == value.AccountID {
+		if !a.state.Denied && a.state.Authorized[key] && (a.state.Events[key].EventID != "" || contains(a.state.Scope.ConfirmationKeys, key)) && !value.Confirmed && current.Revision == value.Revision && current.AccountID == value.AccountID {
 			applied = append(applied, value)
 		}
 	}
 	a.mu.Unlock()
 	for _, value := range applied {
-		if _, err := a.remote.ConfirmCredential(ctx, value.Key, value.Revision, value.AccountID); err != nil {
-			return a.failure(err, true)
+		a.mu.Lock()
+		event := a.state.Events[value.Key]
+		accountRevision := a.state.Latest[value.Key].AccountRevision
+		a.mu.Unlock()
+		if event.EventID != "" {
+			if event.Revision != value.Revision || event.AccountID != value.AccountID || accountRevision != event.AccountRevision {
+				continue
+			}
+			result, err := a.remote.ConfirmEvent(ctx, event.EventID, "success", "")
+			if err != nil {
+				return a.failure(err, true)
+			}
+			if result.Status != "success" {
+				return errors.New("Core rejected the event application result")
+			}
+		} else {
+			// Compatibility only: new Core supplies durable event IDs.
+			if _, err := a.remote.ConfirmCredential(ctx, value.Key, value.Revision, value.AccountID); err != nil {
+				return a.failure(err, true)
+			}
 		}
 		a.mu.Lock()
 		value.Confirmed = true
@@ -584,17 +677,23 @@ func (a *Agent) finishSwitch(ctx context.Context, event pam.Event) error {
 	a.mu.Lock()
 	applied := a.state.Applied[key]
 	latest := a.state.Latest[key]
-	ready := !a.state.Denied && a.state.Authorized[key] && applied.Confirmed && applied.Revision == event.Revision && applied.AccountID == event.AccountID && latest.Revision == event.Revision && latest.AccountID == event.AccountID
+	ready := !a.state.Denied && a.state.Authorized[key] && applied.Revision == event.Revision && applied.AccountID == event.AccountID && latest.Revision == event.Revision && latest.AccountID == event.AccountID
 	a.mu.Unlock()
 	if !ready {
 		return nil
 	}
-	if _, err := a.remote.ReportApplicationCommandResult(ctx, event.CommandID, "success", ""); err != nil {
+	var err error
+	if event.EventID != "" {
+		_, err = a.remote.ConfirmEvent(ctx, event.EventID, "success", "")
+	} else {
+		_, err = a.remote.ReportApplicationCommandResult(ctx, event.CommandID, "success", "")
+	}
+	if err != nil {
 		return err
 	}
 	a.mu.Lock()
 	delete(a.state.Commands, event.CommandID)
-	err := a.persist()
+	err = a.persist()
 	a.mu.Unlock()
 	return err
 }
@@ -652,7 +751,11 @@ func (a *Agent) command(ctx context.Context, event pam.Event) error {
 		_, _ = a.remote.ReportApplicationCommandResult(ctx, event.CommandID, "failed", "execution_failed")
 		return err
 	}
-	_, err = a.remote.ReportApplicationCommandResult(ctx, event.CommandID, "success", "")
+	if event.EventID != "" {
+		_, err = a.remote.ConfirmEvent(ctx, event.EventID, "success", "")
+	} else {
+		_, err = a.remote.ReportApplicationCommandResult(ctx, event.CommandID, "success", "")
+	}
 	return err
 }
 

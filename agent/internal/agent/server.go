@@ -99,14 +99,21 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Key      string `json:"key"`
 			Revision int64  `json:"revision"`
+			EventID  string `json:"event_id"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&request) != nil || request.Key == "" || request.Revision < 0 {
+		if decoder.Decode(&request) != nil || (request.EventID == "" && (request.Key == "" || request.Revision < 0)) || (request.EventID != "" && request.Key != "") {
 			reply(400, map[string]string{"code": "invalid_confirmation"})
 			return
 		}
-		applied, err := a.Confirm(r.Context(), request.Key, request.Revision)
+		var applied Applied
+		var err error
+		if request.EventID != "" {
+			applied, err = a.ConfirmEvent(r.Context(), request.EventID)
+		} else {
+			applied, err = a.Confirm(r.Context(), request.Key, request.Revision)
+		}
 		if err != nil {
 			reply(400, map[string]string{"code": "confirmation_rejected"})
 			return

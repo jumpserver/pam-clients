@@ -35,6 +35,9 @@ func (r windowsRemote) WatchCredentialEvents(ctx context.Context, _ func(pam.Eve
 	<-ctx.Done()
 	return ctx.Err()
 }
+func (r windowsRemote) ConfirmEvent(context.Context, string, string, string) (pam.CommandResult, error) {
+	return pam.CommandResult{}, nil
+}
 func (r windowsRemote) ConfirmCredential(context.Context, string, int64, string) (pam.CredentialConfirmation, error) {
 	return pam.CredentialConfirmation{}, nil
 }

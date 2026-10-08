@@ -17,13 +17,15 @@ Python 的 `clone()` 重新构造同类型实例和本地状态；额外构造�
 
 ## 处理和恢复
 
-- 首次及重连 `snapshot`、`credential.updated` 按策略模式取密：订阅按 `account_id`，交替轮换按 key。
+1.0.2 的规范接入示例使用原始事件流显式处理账号与结果；以下高层凭据钩子的队列和自动重试说明适用于兼容接口。
+
+- 新接入处理首次及重连 `snapshot`、`credential.updated` 时，统一按事件的 `account_id` 取密，校验 `account_revision` 后应用。
 - 原始事件钩子先执行，再执行凭据变更或撤销处理函数。生命周期事件不取密，指令仍通过 SDK 的认领接口执行业务处理。
 - 独立读取器与串行处理函数使用容量 128 的有界队列，满载时产生背压。Node.js 钩子逐个 await；CPU 密集任务仍需要应用安排 worker。
 - 取密或凭据处理失败按 1、2、4…30 秒退避重试，每次重新取密。同一目标的新事件替换重试，较旧版本事件不会取消较新版本的拉取重试；快照重置重试范围，撤销或配置变化取消待重试项。处理函数应支持重复调用。
 - 原始事件和撤销处理函数的错误进入错误处理函数，不自动重试任意指令。默认日志仅输出错误类型，避免日志包含凭据。
 - 事件连接空闲时每 10 秒发送应用层 ping，约 30 秒没有收到消息则重连。重连采用 1–30 秒指数退避并重新签名；快照恢复当前状态，不重放历史事件。
-- `received` 仅表示读取事件。业务成功验证并切换连接后，由应用显式确认准确的 key、revision、account_id；订阅无需确认，SDK 不自动确认轮换。
+- `received` 仅表示读取事件。业务成功验证并切换连接后，通过 `event_id` 上报成功或失败；Core 根据事件更新轮换状态。SDK 不因收到事件或取密成功而自动确认。旧凭据钩子和 key API 仅保留兼容，新接入使用各语言事件示例与 `confirm_event` / `ConfirmEvent` / `confirmEvent`。
 
 ## 保留已获取的最新凭据
 
@@ -33,10 +35,10 @@ Python 的 `clone()` 重新构造同类型实例和本地状态；额外构造�
 
 | 语言 | 本地来源标记 | 必须实时取密 |
 | --- | --- | --- |
-| Python | `from_local` | `get_credential(..., allow_local_fallback=False)` |
-| Go | `FromLocal` | `GetCredentialFresh(ctx, selector)` |
-| Java | `isFromLocal()` | `getCredential(key, false)` / `getCredentialByAccountId(id, false)` |
-| Node.js | `fromLocal` | `getCredential({...selector, allowLocalFallback: false})` |
+| Python | `from_local` | `get_account(account_id=..., allow_local_fallback=False)` |
+| Go | `FromLocal` | `GetAccountFresh(ctx, accountID)` |
+| Java | `isFromLocal()` | `getAccount(accountId, false)` |
+| Node.js | `fromLocal` | `getAccount({accountId, allowLocalFallback: false})` |
 
 SDK 在当前客户端进程内存中保留最新值，关闭后释放；clone 和进程重启从空状态开始。Agent 使用已有受保护的本地状态保存凭据，收到更新通知后主动获取最新值，后端故障期间保留已有值。
 

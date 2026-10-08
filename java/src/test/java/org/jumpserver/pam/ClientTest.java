@@ -34,6 +34,20 @@ class ClientTest {
   }
 
   @Test
+  void accountProjectionAndEventResult() {
+    try (Client sdk = client("java-account-event", "jms-pam")) {
+      Account account = sdk.getAccount("account", false);
+      assertEquals("app", account.getUsername());
+      assertEquals("127.0.0.1", account.getAsset().getAddress());
+      assertEquals(2, account.getRevision());
+      assertFalse(account.isFromLocal());
+      assertFalse(account.toString().contains("DO_NOT_LOG_SECRET"));
+      assertTrue(sdk.confirmEvent("event-one").isAccepted());
+      assertEquals("failed", sdk.confirmEvent("event-two", "failed", "application_failed").getStatus());
+    }
+  }
+
+  @Test
   void automaticSigningAndStructuredResponses() {
     try (Client sdk = client("java", "jms-pam")) {
       for (Credential item :

@@ -130,13 +130,14 @@ function control(instance, options) {
   return fetch(url).then((response) => response.json())
 }
 
-test('application pull requires the live API after a successful fetch', async () => {
+test('account cache fallback exposes provenance and can be disabled', async () => {
   const id = 'node-live-pull'
   const sdk = client(id)
   try {
     await sdk.getCredential({ accountId: 'account' })
     await control(id, { fault: 503 })
-    await assert.rejects(sdk.getCredential({ accountId: 'account' }), PAMError)
+    assert.equal((await sdk.getAccount({ accountId: 'account' })).fromLocal, true)
+    await assert.rejects(sdk.getAccount({ accountId: 'account', allowLocalFallback: false }), PAMError)
   } finally { sdk.close() }
 })
 

@@ -1,6 +1,6 @@
 # JumpServer PAM Go SDK
 
-SDK соответствует функциям Python SDK политик учётных данных: получение по разрешённому аккаунту или политике ротации, подтверждение применённых версий, события, команды и синхронизация Agent. URL, HMAC-подпись, Digest, дата UTC, ID запроса и заголовки формируются автоматически.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 ## Требования
 
@@ -27,8 +27,7 @@ go run ./cmd/demo
 SDK устанавливаются из исходного кода этого репозитория и ещё не опубликованы в общедоступных реестрах пакетов. Замените /path/to/jumpserver абсолютным путём. Команды установки Go и Node.js выполняйте в каталоге приложения; зависимость Java добавьте в pom.xml приложения. Локальные импорты из примеров замените импортами пакетов ниже.
 
 ```bash
-go mod edit -replace=github.com/jumpserver/pam-clients/go=/path/to/pam-clients/go
-go get github.com/jumpserver/pam-clients/go@v0.0.0
+go get github.com/jumpserver/pam-clients/go@v1.0.2
 ```
 
 ```go
@@ -61,122 +60,18 @@ func main() {
 		log.Fatal("Invalid SDK configuration")
 	}
 	defer client.Close()
-	credential, err := client.GetCredential(context.Background(), pam.CredentialSelector{AccountID: os.Getenv("JMS_ACCOUNT_ID")})
+	account, err := client.GetAccount(context.Background(), os.Getenv("JMS_ACCOUNT_ID"))
 	if err != nil {
 		log.Fatalf("Credential fetch failed: %T", err)
 	}
-	// Pass credential.Account.Username / Secret to the application connection pool.
-	fmt.Printf("Fetched revision %d; implement application credential switching.\n", credential.Revision)
+	// Pass account.Username / Secret to the application connection pool.
+	fmt.Printf("Fetched revision %d; implement application credential switching.\n", account.Revision)
 }
 ```
-
-## Обработчики событий
-
-Инициализируйте локальное состояние перед запуском подписки. Python и Node.js используют подкласс, Go — EventHandlers, Java — CredentialEventListener. Реализуйте переключение соединений в примере. Прежний API сохранён.
-
-```go
-package main
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-
-	pam "github.com/jumpserver/pam-clients/go"
-)
-
-type application struct {
-	client      *pam.Client
-	credentials map[string]pam.Credential
-	modes       map[string]string
-}
-
-func (a *application) observe(ctx context.Context, event pam.Event) error {
-	updates := []pam.Event{event}
-	if event.Event == "snapshot" {
-		clear(a.modes)
-		updates = event.Credentials
-	}
-	for _, update := range updates {
-		key := update.CredentialKey
-		if key == "" {
-			key = update.Key
-		}
-		if key != "" && (event.Event == "snapshot" || event.Event == "credential.updated") {
-			a.modes[key] = update.CredentialMode
-		}
-	}
-	if event.Event == "snapshot" {
-		for key := range a.credentials {
-			if _, ok := a.modes[key]; !ok {
-				delete(a.credentials, key) /* Also release connections. */
-			}
-		}
-	}
-	// Use ExecuteApplicationCommand for command events; see cmd/events/main.go.
-	return nil
-}
-func applyCredential(ctx context.Context, credential pam.Credential) error {
-	return fmt.Errorf("implement connection validation, pool switching and old connection cleanup")
-}
-func (a *application) changed(ctx context.Context, credential pam.Credential) error {
-	if err := applyCredential(ctx, credential); err != nil {
-		return err
-	}
-	if a.modes[credential.Key] == "alternating_rotation" {
-		if _, err := a.client.ConfirmCredential(ctx, credential.Key, credential.Revision, credential.Account.ID); err != nil {
-			return err
-		}
-	}
-	a.credentials[credential.Key] = credential
-	return nil
-}
-func (a *application) revoked(ctx context.Context, event pam.Event) error {
-	delete(a.credentials, event.CredentialKey) // Also release affected connections.
-	return nil
-}
-func main() {
-	client, err := pam.NewClient(pam.Options{Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"), AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"), OrgID: os.Getenv("JMS_ORG_ID")})
-	if err != nil {
-		log.Fatal("Invalid SDK configuration")
-	}
-	defer client.Close()
-	app := &application{client: client, credentials: make(map[string]pam.Credential), modes: make(map[string]string)}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	err = client.WatchEvents(ctx, pam.EventHandlers{OnEvent: app.observe, OnCredentialChanged: app.changed, OnCredentialRevoked: app.revoked})
-	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("Event processing failed: %T", err)
-	}
-}
-```
-
-Начальный snapshot, snapshot после переподключения и credential.updated получают данные по режиму политики и последовательно вызывают обработчик. Чтение использует очередь на 128 событий; заполнение создаёт обратное давление. Ошибки получения и применения повторяются с экспоненциальной задержкой 1–30 секунд и новым запросом. Новое событие заменяет повтор для той же цели; snapshot обновляет область, отзыв и изменение конфигурации отменяют повторы. Обработчики должны быть идемпотентными. Наблюдатели и отзыв автоматически не повторяются; команды требуют захвата выполнения. received означает чтение; SDK не подтверждает ротацию автоматически. События старых ревизий не отменяют ожидающее получение более новой ревизии.
-
-`WatchEvents(ctx, handlers)` / `StartEvents(ctx, handlers)`; `Stop()` / `Wait()`; `context.CancelFunc`
-
-WatchEvents ждёт в вызывающей goroutine; StartEvents не гарантирует синхронизацию. Один слушатель на клиент. Stop и Close отменяют работу; вызывайте Wait вне обработчика. Учитывайте отмену context.
-
-### Последние учётные данные и недоступность сервера
-
-Сначала выполняется запрос API. Успешный ответ заменяет сохранённые последние данные; старая версия не заменяет новую, срок истечения по времени отсутствует. Только тайм-аут, сетевой сбой или HTTP 5xx позволяют вернуть последний успешный результат того же селектора с признаком локального источника. Без прежнего значения возвращается исходная ошибка. SDK хранит данные в памяти клиента до обновления, отзыва или закрытия; clone и перезапуск начинают с пустого состояния. Agent использует защищённое локальное состояние. HTTP 401/403/404 или client_upgrade_required очищают данные SDK и вызывают ошибку; некорректный успешный ответ также ошибочен. Отзыв удаляет соответствующие данные, snapshot — данные вне разрешений. Изменение конфигурации сохраняет значения до проверки следующего snapshot. Agent применяет явный отзыв и сокращение области snapshot до HTTP-синхронизации, сохраняет эту область и блокирует соответствующую локальную выдачу даже при сбое сервера или после перезапуска. Ответ credential_not_found (HTTP 400) также удаляет сохранённые значения SDK. Прямой pull по account_id всегда требует ответа API; снимок push не подтверждает право на кешированное значение pull.
-
-- `credential.FromLocal`
-- `GetCredentialFresh(ctx, selector)`
-
-При управляемой подписке snapshot и credential.updated автоматически получают данные, заменяют локальное значение и вызывают обработчик. Ошибка обновления сохраняет прежнее значение и запускает повтор. Agent также получает данные по уведомлениям и сохраняет их при сбоях сервера. Для обновления и ручного переключения используйте вызовы с обязательным запросом API ниже. Сохранённое значение не считается новой полученной версией и не подтверждает ротацию автоматически.
-
-При простое ping отправляется каждые 10 секунд. Около 30 секунд без сообщений вызывают переподключение с задержкой 1–30 секунд и новой подписью. snapshot восстанавливает текущее состояние без воспроизведения истории.
-
-
 
 ## События и применение учётных данных
 
-Обрабатывайте начальный snapshot, снимки переподключения и credential.updated. Полный пример поддерживает subscription, alternating_rotation и команды. Реализуйте проверку реального подключения, переключение пула и освобождение прежних соединений. Заглушка вызывает исключение и запрещает подтверждение до применения. Удаляйте из состояния приложения отсутствующие в снимках аккаунты и обрабатывайте отзыв доступа.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 ```go
 package main
@@ -185,37 +80,44 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-
-	pam "github.com/jumpserver/pam-clients/go"
 )
 
-func applyCredential(credential pam.Credential) error {
+func applyAccount(account pam.Account) error {
 	return fmt.Errorf("implement connection validation, pool switching and old connection cleanup")
 }
-func restartApplication() error { return fmt.Errorf("implement application restart and health check") }
-func handleCommand(ctx context.Context, client *pam.Client, event pam.Event) error {
+func applyEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
 	if event.Event == "application.restart.requested" {
-		return restartApplication()
+		return fmt.Errorf("implement restart and health check")
 	}
-	if event.Event != "credential.switch.requested" {
-		return fmt.Errorf("unsupported application command")
-	}
-	credential, err := client.GetCredentialFresh(ctx, pam.CredentialSelector{Key: event.CredentialKey})
+	account, err := client.GetAccountFresh(ctx, event.AccountID)
 	if err != nil {
 		return err
 	}
-	if credential.Revision != event.Revision || credential.Account.ID != event.AccountID {
-		return fmt.Errorf("requested account version is superseded")
+	if account.Revision != event.AccountRevision {
+		return fmt.Errorf("event account version is superseded")
 	}
-	if err = applyCredential(credential); err != nil {
+	return applyAccount(account)
+}
+func handleEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
+	if event.CommandID != "" {
+		claim, err := client.ReportApplicationCommandResult(ctx, event.CommandID, "running", "")
+		if err != nil {
+			return err
+		}
+		if !claim.Accepted {
+			return nil
+		}
+	}
+	if err := applyEvent(ctx, client, event); err != nil {
+		_, _ = client.ConfirmEvent(ctx, event.EventID, "failed", "application_failed")
 		return err
 	}
-	_, err = client.ConfirmCredential(ctx, credential.Key, credential.Revision, credential.Account.ID)
+	_, err := client.ConfirmEvent(ctx, event.EventID, "success", "")
 	return err
 }
 func main() {
@@ -227,66 +129,37 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = client.WatchCredentialEvents(ctx, func(event pam.Event) error {
-		if event.CommandID != "" {
-			client.ExecuteApplicationCommand(ctx, event, func(command pam.Event) error { return handleCommand(ctx, client, command) })
-			return nil
-		}
-		updates := []pam.Event{}
-		if event.Event == "snapshot" {
-			updates = event.Credentials
-		} else if event.Event == "credential.updated" {
+		var updates []pam.Event
+		if event.CommandID != "" || event.Event == "credential.updated" {
 			updates = []pam.Event{event}
+		} else if event.Event == "snapshot" {
+			updates = event.Credentials /* Reconcile removed connections. */
 		}
-		// On snapshots, remove application caches absent from the new authorized scope.
+		// Release affected connections on credential.revoked.
 		for _, update := range updates {
-			key := update.CredentialKey
-			if key == "" {
-				key = update.Key
-			}
-			selector := pam.CredentialSelector{}
-			if update.CredentialMode == "subscription" && update.AccountID != "" && key != "" {
-				if !strings.HasSuffix(key, ":"+update.AccountID) {
-					key += ":" + update.AccountID
-				}
-				selector.Key = key
-			} else if update.CredentialMode == "alternating_rotation" && key != "" {
-				selector.Key = key
-			} else {
-				continue
-			}
-			credential, err := client.GetCredentialFresh(ctx, selector)
-			if err != nil {
-				return err
-			}
-			if err = applyCredential(credential); err != nil {
-				return err
-			}
-			if update.CredentialMode == "alternating_rotation" {
-				if _, err = client.ConfirmCredential(ctx, credential.Key, credential.Revision, credential.Account.ID); err != nil {
-					return err
-				}
+			if err := handleEvent(ctx, client, update); err != nil {
+				log.Printf("Event processing failed: %T", err)
 			}
 		}
 		return nil
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatalf("Credential processing failed: %T", err)
+		log.Printf("Event stream failed: %T", err)
 	}
 }
 ```
 
-При чередующейся ротации проверьте реальное подключение, переключите пул и освободите старые соединения, затем подтвердите точные key, revision и account_id. Подписка на изменение учётных данных подтверждения не требует. При ошибке проверки соединения подтверждать нельзя.
+Старые API key сохранены для совместимости. Новые интеграции используют `get_account` и `confirm_event` и требуют обновления Core.
 
 ## Команды приложения
 
-Опрос, получение права выполнения и отчёт о результате используют методы SDK. Обработчик выполняется только после принятия заявки. Переключение проверяет версию и аккаунт, применяет и подтверждает; перезапуск проверяет работоспособность после запуска. Сообщайте об успехе после завершения. Ошибка отчёта сохраняет исходное исключение обработчика.
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 ## Основные методы
 
-- `GetCredential(ctx, CredentialSelector{Key: ...})`
-- `GetCredential(ctx, CredentialSelector{AccountID: ...})`
-- `GetCredentialFresh(ctx, selector)`
-- `ConfirmCredential(ctx, key, revision, accountID)`
+- `GetAccount(ctx, accountID)`
+- `GetAccountFresh(ctx, accountID)`
+- `ConfirmEvent(ctx, eventID, status, errorCode)`
 - `WatchEvents(ctx, EventHandlers{...}) / StartEvents(ctx, handlers)`
 - `EventWatcher.Stop() / EventWatcher.Wait()`
 - `WatchCredentialEvents(ctx, handler)`

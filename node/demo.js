@@ -11,10 +11,10 @@ async function main() {
     orgId: process.env.JMS_ORG_ID,
   })
   try {
-    const credential = await client.getCredential({ accountId: process.env.JMS_ACCOUNT_ID })
-    // Pass credential.account.username / secret to the application connection pool.
+    const account = await client.getAccount({ accountId: process.env.JMS_ACCOUNT_ID })
+    // Pass account.username / secret to the application connection pool.
     console.log(
-      `Fetched revision ${credential.revision}; implement application credential switching.`,
+      `Fetched revision ${account.revision}; implement application credential switching.`,
     )
   } finally {
     client.close()

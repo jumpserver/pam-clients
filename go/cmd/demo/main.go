@@ -21,10 +21,10 @@ func main() {
 		log.Fatal("Invalid SDK configuration")
 	}
 	defer client.Close()
-	credential, err := client.GetCredential(context.Background(), pam.CredentialSelector{AccountID: os.Getenv("JMS_ACCOUNT_ID")})
+	account, err := client.GetAccount(context.Background(), os.Getenv("JMS_ACCOUNT_ID"))
 	if err != nil {
 		log.Fatalf("Credential fetch failed: %T", err)
 	}
-	// Pass credential.Account.Username / Secret to the application connection pool.
-	fmt.Printf("Fetched revision %d; implement application credential switching.\n", credential.Revision)
+	// Pass account.Username / Secret to the application connection pool.
+	fmt.Printf("Fetched revision %d; implement application credential switching.\n", account.Revision)
 }

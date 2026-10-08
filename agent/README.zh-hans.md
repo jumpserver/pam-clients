@@ -15,18 +15,21 @@ journalctl -u jms-pam-agent
 
 ## 安装
 
-在仓库的 `go` 或下载的 Go SDK 源码目录构建。构建需要 Go 1.23+；目标 Linux 主机只需要二进制和 systemd。
+从应用接入向导下载引导配置，从 [GitHub Release](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2) 下载对应架构的 Agent 和 SHA256SUMS；无需本地编译。
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o jms-pam-agent ./cmd/jms-pam-agent
-# ARM64 主机使用 GOARCH=arm64。
-sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
-sudo /usr/local/bin/jms-pam-agent install \
-  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
-sudo systemctl start jms-pam-agent
+VERSION=1.0.2
+ARCH=amd64  # ARM64 使用 arm64
+BASE="https://github.com/jumpserver/pam-clients/releases/download/v$VERSION"
+curl -fLO "$BASE/jms-pam-agent-linux-$ARCH"
+curl -fLO "$BASE/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+sudo install -m 0755 "jms-pam-agent-linux-$ARCH" /usr/local/bin/jms-pam-agent
+chmod 0600 jms_pam_agent.json
+sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
 ```
 
-引导文件从应用接入向导下载，包含 AK/SK。安装时通过签名同步获取并固定交付能力，配置写入 `/etc/jms-pam-agent/agent.json`，最新凭据和运行状态写入 `/var/lib/jms-pam-agent/state.json`，均为 `0600`。安装启用并启动固定服务；重复安装核对身份，不更换已有身份。构建产物需要匹配目标架构。
+引导文件包含应用 AK/SK。本机配置和状态文件以 0600 保存；每个副本使用稳定且唯一的实例 ID。
 
 ## 运行流程
 
@@ -144,7 +147,7 @@ Socket 归 `app_user` 所有，权限 `0600`，父目录为 root 管理的 `0750
 ```bash
 curl --unix-socket '<socket-path>' http://localhost/v1/health
 curl --unix-socket '<socket-path>' http://localhost/v1/credentials/orders-db
-jms-pam-agent confirm orders-db --revision 3 --socket '<socket-path>'
+jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
 ```
 
 应用验证真实连接并成功切换后，才确认准确版本：业务可通过本机接口显式确认，也可使用通过检查脚本验证的 `confirm_on_success`。同步运行的检查脚本不应反向调用 Agent 的确认接口。交替轮换需要确认，凭据订阅无需确认。确认先持久化，Core 不可用时返回 `pending` 并重试；Core 接受后为 `confirmed`。手动切换指令只在相应版本已确认生效后报告成功。重启指令只操作本机已经固定为 restart 的 systemd 服务。
@@ -220,3 +223,13 @@ go build ./cmd/jms-pam-agent
 ```
 
 单测验证文件渲染、原子替换、脚本标准输入和超时、更新取密、离线重启、撤销、失败重试、生效确认与 Socket 生命周期。Linux systemd 安装和真实业务 reload/restart 应在目标主机验证。
+
+## 事件应用结果
+
+Core 事件及 Agent 的交付数据包含 `event_id`、`account_id` 和 `account_revision`。Agent 按账号 ID 取密；本地 key 仅用于保持文件与规则名称稳定。取密或写文件成功不代表应用成功。配置 `application_check.confirm_on_success` 后，只有全部应用检查成功才按事件 ID 上报成功；失败上报失败并保留重试状态。没有应用检查时，由业务完成实际切换后执行确认：
+
+```bash
+jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
+```
+
+本地先持久化结果，Core 暂时不可用时重试。未知事件、未投递事件和过期账号版本不能确认。旧 KEY/--revision 命令仅保留兼容。

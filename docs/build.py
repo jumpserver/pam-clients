@@ -25,10 +25,10 @@ EXAMPLES = {
 }
 NATIVE_METHODS = {
     "go": [
-        "GetCredential(ctx, CredentialSelector{Key: ...})",
-        "GetCredential(ctx, CredentialSelector{AccountID: ...})",
-        "GetCredentialFresh(ctx, selector)",
-        "ConfirmCredential(ctx, key, revision, accountID)",
+        "GetAccount(ctx, accountID)",
+        "GetAccountFresh(ctx, accountID)",
+
+        "ConfirmEvent(ctx, eventID, status, errorCode)",
         "WatchEvents(ctx, EventHandlers{...}) / StartEvents(ctx, handlers)",
         "EventWatcher.Stop() / EventWatcher.Wait()",
         "WatchCredentialEvents(ctx, handler)",
@@ -39,10 +39,10 @@ NATIVE_METHODS = {
         "Clone() / Close()",
     ],
     "java": [
-        "getCredential(key)",
-        "getCredentialByAccountId(accountId)",
-        "getCredential(key, false) / getCredentialByAccountId(accountId, false)",
-        "confirmCredential(key, revision, accountId)",
+        "getAccount(accountId)",
+        "getAccount(accountId, false)",
+
+        "confirmEvent(eventId, status, errorCode)",
         "watchCredentialEvents()",
         "watchEvents(listener) / startEvents(listener)",
         "EventSubscription.stop() / close() / awaitTermination()",
@@ -53,10 +53,10 @@ NATIVE_METHODS = {
         "clone() / close()",
     ],
     "node": [
-        "getCredential({key})",
-        "getCredential({accountId})",
-        "getCredential({key, allowLocalFallback: false})",
-        "confirmCredential({key, revision, accountId})",
+        "getAccount({accountId})",
+        "getAccount({accountId, allowLocalFallback: false})",
+
+        "confirmEvent({eventId, status, errorCode})",
         "watchCredentialEvents({signal})",
         "watchEvents({signal}) / startEvents({signal}) / stopEvents()",
         "EventSubscription.stop() / done",
@@ -84,7 +84,7 @@ HOOK_EXAMPLES = {
 }
 LATEST_CREDENTIAL_APIS = {
     "python": """- `credential.from_local`
-- `get_credential(key=..., allow_local_fallback=False)` / `get_credential(account_id=..., allow_local_fallback=False)`""",
+- `get_account(account_id=..., allow_local_fallback=False)`""",
     "go": """- `credential.FromLocal`
 - `GetCredentialFresh(ctx, selector)`""",
     "java": """- `credential.isFromLocal()`
@@ -136,8 +136,7 @@ def managed_section(language, texts):
 
 NATIVE_INSTALL = {
     "go": """```bash
-go mod edit -replace=github.com/jumpserver/pam-clients/go=/path/to/pam-clients/go
-go get github.com/jumpserver/pam-clients/go@v0.0.0
+go get github.com/jumpserver/pam-clients/go@v1.0.2
 ```
 
 ```go
@@ -151,7 +150,7 @@ mvn -f /path/to/pam-clients/java/pom.xml install
 <dependency>
   <groupId>org.jumpserver</groupId>
   <artifactId>jms-pam</artifactId>
-  <version>1.0.1</version>
+  <version>1.0.2</version>
 </dependency>
 ```
 
@@ -177,8 +176,8 @@ export JMS_ACCOUNT_ID='<account-id>'
 
 API_TABLE = """| HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -287,17 +286,15 @@ cd {language}
 {(directory / quickstart).read_text(encoding="utf-8").rstrip()}
 ```
 
-{managed_section(language, texts)}
-
 ## {texts["events"]}
 
-{texts["native_events"]}
+{texts["event_results"]}
 
 ```{syntax}
 {(directory / events).read_text(encoding="utf-8").rstrip()}
 ```
 
-{texts["confirmation"]}
+{texts["event_compatibility"]}
 
 ## {texts["commands"]}
 
@@ -404,8 +401,7 @@ curl --fail --silent --show-error \\
 {texts["confirmation"]}
 
 ```bash
-/usr/local/bin/jms-pam-agent confirm '<credential-key>' \\
-  --revision '<revision>' \\
+/usr/local/bin/jms-pam-agent confirm '<event-id>' \\
   --socket '/run/jms-pam-agent/agent.sock'
 ```
 
@@ -436,76 +432,34 @@ python3 -m pip install jms-pam
 
 {texts["sdk_config"]}
 
+<!-- python-account-example:start -->
 ```python
 {(CLIENTS / "python" / "account_demo.py").read_text().rstrip()}
 ```
+<!-- python-account-example:end -->
 
 ### {texts["events"]}
 
-{texts["event_processing"]}
+{texts["event_results"]}
 
+<!-- python-events-example:start -->
 ```python
-from jms_pam import Client
-from jms_pam_config import client_options, instance_id
-
-
-def apply_credential(credential):
-    raise NotImplementedError({texts["apply_error"]!r})
-
-
-with Client(instance_id=instance_id, **client_options) as client:
-    for event in client.watch_credential_events():
-        if event.get("event") == "snapshot":
-            updates = event.get("credentials", [])
-        elif event.get("event") == "credential.updated":
-            updates = [event]
-        else:
-            continue
-        for update in updates:
-            mode = update.get("credential_mode")
-            key = update.get("credential_key") or update.get("key")
-            account_id = update.get("account_id")
-            if mode == "subscription" and account_id and key:
-                policy_key = key if key.endswith(f":{{account_id}}") else f"{{key}}:{{account_id}}"
-                credential = client.get_credential(key=policy_key, allow_local_fallback=False)
-            elif mode == "alternating_rotation" and key:
-                credential = client.get_credential(key=key, allow_local_fallback=False)
-            else:
-                continue
-            apply_credential(credential)
-            if mode == "alternating_rotation":
-                client.confirm_credential(
-                    key=credential.key,
-                    revision=credential.revision,
-                    account_id=credential.account.id,
-                )
+{(CLIENTS / "python" / "subclass_demo.py").read_text().rstrip()}
 ```
-
-{texts["confirmation"]}
-
-{texts["sdk_receipts"]}
-
-{managed_section("python", texts)}
-
-### {texts["commands"]}
-
-{texts["command_processing"]}
+<!-- python-events-example:end -->
 
 ### {texts["methods"]}
 
-- `get_credential(key=...)` / `get_credential(account_id=...)`
-- `confirm_credential(key=..., revision=..., account_id=...)`
+- `get_account(account_id=..., allow_local_fallback=True)`
+- `account.username` / `account.secret` / `account.asset` / `account.from_local`
+- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
 - `watch_credential_events(stop_event=...)`
-- `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
 - `list_application_commands()`
-- `report_application_command_result(command_id=..., status=...)`
-- `execute_application_command(event, handler)`
-- `sync_agent(credentials=..., delivered_credentials=...)`
+- `report_application_command_result(command_id=..., status="running")`
 - `clone()` / `close()`
 
-{texts["sdk_errors"]}
+{texts["event_compatibility"]}
 
-{texts["compatibility"]}
 
 <!-- sdk-doc:end -->
 """
@@ -536,6 +490,8 @@ def main():
         else:
             path = CLIENTS / "python" / f"README.{locale}.md"
             content = path.read_text(encoding="utf-8")
+            sdk = python_guide(texts).split("<!-- sdk-doc:start -->", 1)[1].split("<!-- sdk-doc:end -->", 1)[0]
+            content = re.sub(r"(?<=<!-- sdk-doc:start -->).*?(?=<!-- sdk-doc:end -->)", lambda _: sdk, content, flags=re.S)
             for kind, example in (("account", "account_demo.py"), ("events", "subclass_demo.py")):
                 start = f"<!-- python-{kind}-example:start -->"
                 end = f"<!-- python-{kind}-example:end -->"

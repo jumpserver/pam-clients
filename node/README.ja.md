@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-本 SDK は Python の認証情報ポリシー SDK と同じ機能を提供します。許可されたアカウントやローテーションポリシーの認証情報取得、適用済み版の確認、イベント購読、アプリケーションコマンド処理、Agent 同期を行います。URL、HMAC 署名、Digest、UTC 日時、リクエスト ID、プロトコルヘッダーは自動生成されます。
+`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
 
 ## 動作要件
 
@@ -51,10 +51,10 @@ async function main() {
     orgId: process.env.JMS_ORG_ID,
   })
   try {
-    const credential = await client.getCredential({ accountId: process.env.JMS_ACCOUNT_ID })
-    // Pass credential.account.username / secret to the application connection pool.
+    const account = await client.getAccount({ accountId: process.env.JMS_ACCOUNT_ID })
+    // Pass account.username / secret to the application connection pool.
     console.log(
-      `Fetched revision ${credential.revision}; implement application credential switching.`,
+      `Fetched revision ${account.revision}; implement application credential switching.`,
     )
   } finally {
     client.close()
@@ -68,185 +68,68 @@ if (require.main === module)
   })
 ```
 
-## イベントハンドラー
+## イベントと認証情報の適用
 
-ローカル状態を初期化してから監視を開始します。Python と Node.js はサブクラス、Go は EventHandlers、Java は CredentialEventListener を使用します。例の接続切替処理を実装してください。従来の API も利用できます。
+`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
 
 ```javascript
 'use strict'
 const { Client } = require('./index')
 
-class MyClient extends Client {
-  constructor(options) {
-    super(options)
-    this.credentials = new Map()
-    this.modes = new Map()
-  }
-  async onEvent(event) {
-    if (event.event === 'snapshot') {
-      this.modes.clear()
-      for (const update of event.credentials || [])
-        this.modes.set(update.credentialKey || update.key, update.credentialMode)
-      for (const key of this.credentials.keys())
-        if (!this.modes.has(key)) this.credentials.delete(key) // Also release connections.
-    } else if (event.event === 'credential.updated') {
-      this.modes.set(event.credentialKey || event.key, event.credentialMode)
-    }
-    // Use executeApplicationCommand for command events; see events.js.
-  }
-  async onCredentialChanged(credential, { signal }) {
-    await this.applyCredential(credential, { signal })
-    if (this.modes.get(credential.key) === 'alternating_rotation')
-      await this.confirmCredential({ key: credential.key, revision: credential.revision,
-        accountId: credential.account.id, signal })
-    this.credentials.set(credential.key, credential)
-  }
-  async applyCredential(credential, { signal }) {
-    throw new Error('Implement connection validation, pool switching and old connection cleanup')
-  }
-  async onCredentialRevoked(event) {
-    this.credentials.delete(event.credentialKey || event.key) // Also release affected connections.
-  }
+async function applyAccount(account) {
+  // Validate a new connection, switch the pool, then release old connections.
+  throw new Error('Implement application account switching')
 }
-
+async function applyEvent(client, event) {
+  if (event.event === 'application.restart.requested')
+    throw new Error('Implement application restart and health check')
+  const account = await client.getAccount({ accountId: event.accountId, allowLocalFallback: false })
+  if (account.revision !== event.accountRevision) throw new Error('Event account version is superseded')
+  await applyAccount(account)
+}
+async function handleEvent(client, event) {
+  if (event.commandId) {
+    const claim = await client.reportApplicationCommandResult({ commandId: event.commandId, status: 'running' })
+    if (!claim.accepted) return
+  }
+  try { await applyEvent(client, event) }
+  catch (error) {
+    await client.confirmEvent({ eventId: event.eventId, status: 'failed', errorCode: 'application_failed' })
+    throw error
+  }
+  await client.confirmEvent({ eventId: event.eventId })
+}
 async function main() {
-  const client = new MyClient({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
+  const client = new Client({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
     appSecret: process.env.JMS_APP_SECRET, instanceId: process.env.JMS_INSTANCE_ID, orgId: process.env.JMS_ORG_ID })
   const stop = () => client.close()
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
-  try { await client.watchEvents() }
-  finally {
-    client.close(); await client.stopEvents()
-    process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop)
-  }
-}
-if (require.main === module) main().catch((error) => {
-  console.error(error.code || error.name); process.exitCode = 1
-})
-module.exports = { MyClient }
-```
-
-初回・再接続の snapshot と credential.updated はモード別に認証情報を取得し、ハンドラーを順番に呼び出します。受信と処理は上限 128 件のキューで接続され、満杯時は受信を待機します。取得・適用の失敗は 1–30 秒の指数バックオフで再試行し、毎回取得し直します。同じ対象の更新は再試行を置換し、snapshot は範囲を更新、失効・設定変更は再試行を解除します。処理は繰り返し可能にしてください。観測・失効フックは自動再試行しません。コマンドは実行権の取得が必要です。received は受信のみを示し、SDK はローテーションを自動確認しません。古いリビジョンのイベントは、新しいリビジョンの取得の再試行を取り消しません。
-
-`watchEvents({signal})` / `startEvents({signal})`; `stopEvents()` / `await subscription.stop()` / `await subscription.done`
-
-watchEvents はイベントループをブロックしません。startEvents は同期完了を保証しません。監視は 1 つです。async フックは順次 await され AbortSignal を受け取ります。close 後、外部から stop() または done を待ってください。自身の done は待たないでください。clone は基底 Client を返します。
-
-### 最新の認証情報とバックエンド障害
-
-取得はまず API を呼びます。取得成功時に保持値を更新し、古いバージョンで新しい値を上書きせず、時間による有効期限も設けません。タイムアウト、ネットワーク障害、HTTP 5xx の場合だけ、同じ検索条件の最後に取得した値をローカル由来のフラグ付きで返します。保持値がなければ元のエラーです。SDK は更新・失効・終了までクライアントのメモリに保持し、clone や再起動は空から始まります。Agent は保護された既存のローカル状態に保存します。HTTP 401/403/404 または client_upgrade_required は SDK の保持値を消去して失敗し、不正な成功応答も失敗します。失効は対象を、snapshot は認可範囲外を削除します。設定変更時は次の snapshot で範囲を確認するまで保持します。Agent は HTTP 同期の前に明示的な取り消しと snapshot の範囲縮小を適用して保存し、バックエンド障害中や再起動後も該当するローカル取得を停止します。credential_not_found（HTTP 400）でも SDK の保持値を削除します。 account_id による直接 pull には常にライブ API 応答が必要です。push の snapshot はキャッシュされた pull 認可を示しません。
-
-- `credential.fromLocal`
-- `getCredential({key, allowLocalFallback: false})` / `getCredential({accountId, allowLocalFallback: false})`
-
-管理された監視を有効にすると、snapshot と credential.updated が自動で取得し、保持値を更新してから業務フックを呼びます。更新失敗時は前の値を保持し再試行します。Agent も更新通知で取得し、障害時は既存値を保持します。更新や手動切替には下記の API 取得必須の呼び出しを使用してください。保持値を新しく取得したバージョンと見なしたり、ローテーションを自動確認したりしません。
-
-アイドル時は 10 秒ごとに ping を送り、約 30 秒メッセージがなければ再接続します。待機は 1–30 秒の指数バックオフで毎回再署名します。snapshot は現在の状態を復元し、履歴イベントは再送しません。
-
-
-
-## イベントと認証情報の適用
-
-初回・再接続 snapshot と credential.updated を処理します。下記の完全な例は subscription、alternating_rotation、アプリケーションコマンドを扱います。実接続の検証、接続プールの切替、旧接続の解放を適用関数に実装してください。未実装関数は例外を投げ、未適用版の確認を防ぎます。快照から削除されたアカウントや取り消しイベントをアプリケーションの状態にも反映します。
-
-```javascript
-'use strict'
-const { Client } = require('./index')
-
-async function applyCredential(credential) {
-  // Validate a real connection, switch the pool, then release old connections.
-  throw new Error('Implement application credential switching')
-}
-async function restartApplication() {
-  throw new Error('Implement application restart and health check')
-}
-async function handleCommand(client, event) {
-  if (event.event === 'application.restart.requested') return restartApplication()
-  if (event.event !== 'credential.switch.requested')
-    throw new Error('Unsupported application command')
-  const credential = await client.getCredential({ key: event.credentialKey, allowLocalFallback: false })
-  if (credential.revision !== event.revision || credential.account.id !== event.accountId)
-    throw new Error('Requested account version is superseded')
-  await applyCredential(credential)
-  await client.confirmCredential({
-    key: credential.key,
-    revision: credential.revision,
-    accountId: credential.account.id,
-  })
-}
-async function main() {
-  const client = new Client({
-    endpoint: process.env.JMS_ENDPOINT,
-    appId: process.env.JMS_APP_ID,
-    appSecret: process.env.JMS_APP_SECRET,
-    instanceId: process.env.JMS_INSTANCE_ID,
-    orgId: process.env.JMS_ORG_ID,
-  })
-  const stop = () => client.close()
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
   try {
     for await (const event of client.watchCredentialEvents()) {
-      if (event.commandId) {
-        try {
-          await client.executeApplicationCommand(event, (command) => handleCommand(client, command))
-        } catch {
-          /* Failure is reported; keep secrets out of logs. */
-        }
-        continue
-      }
-      const updates =
-        event.event === 'snapshot'
-          ? event.credentials
-          : event.event === 'credential.updated'
-            ? [event]
-            : []
-      // On snapshots, remove application caches absent from the new authorized scope.
-      for (const update of updates || []) {
-        const mode = update.credentialMode
-        const key = update.credentialKey || update.key
-        let credential
-        if (mode === 'subscription' && update.accountId && key) {
-          const subscriptionKey = key.endsWith(`:${update.accountId}`) ? key : `${key}:${update.accountId}`
-          credential = await client.getCredential({ key: subscriptionKey, allowLocalFallback: false })
-        }
-        else if (mode === 'alternating_rotation' && key)
-          credential = await client.getCredential({ key, allowLocalFallback: false })
-        else continue
-        await applyCredential(credential)
-        if (mode === 'alternating_rotation')
-          await client.confirmCredential({
-            key: credential.key,
-            revision: credential.revision,
-            accountId: credential.account.id,
-          })
+      const updates = event.commandId || event.event === 'credential.updated' ? [event]
+        : event.event === 'snapshot' ? event.credentials || [] : []
+      // Reconcile removed connections on snapshots; release revoked accounts.
+      for (const update of updates) {
+        try { await handleEvent(client, update) }
+        catch (error) { console.error(error.code || error.name) }
       }
     }
-  } finally {
-    client.close()
-    process.removeListener('SIGINT', stop)
-    process.removeListener('SIGTERM', stop)
-  }
+  } finally { await client.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop) }
 }
-if (require.main === module)
-  main().catch((error) => {
-    console.error(error.code || error.name)
-    process.exitCode = 1
-  })
+if (require.main === module) main().catch((error) => { console.error(error.code || error.name); process.exitCode = 1 })
 ```
 
-交互ローテーションでは実際の接続を検証し、接続プールを切り替えて古い接続を解放した後に、正確な key、revision、account_id を確認します。認証情報変更の購読では確認は不要です。接続検証に失敗した場合は確認してはいけません。
+従来の key API は互換用です。新規連携は `get_account` と `confirm_event` を使い、Core も更新してください。
 
 ## アプリケーションコマンド
 
-ポーリング、実行権の取得、結果報告は SDK のメソッドで行います。承認された実行権でのみハンドラーを実行します。切替では要求された版とアカウントを検証し、適用後に確認します。再起動では再起動と正常性確認を行い、完了後に成功を報告します。失敗報告のエラーは元の業務例外を置き換えません。
+`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
 
 ## 主なメソッド
 
-- `getCredential({key})`
-- `getCredential({accountId})`
-- `getCredential({key, allowLocalFallback: false})`
-- `confirmCredential({key, revision, accountId})`
+- `getAccount({accountId})`
+- `getAccount({accountId, allowLocalFallback: false})`
+- `confirmEvent({eventId, status, errorCode})`
 - `watchCredentialEvents({signal})`
 - `watchEvents({signal}) / startEvents({signal}) / stopEvents()`
 - `EventSubscription.stop() / done`

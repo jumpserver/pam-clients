@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-Este SDK sigue las funciones del SDK Python de políticas de credenciales: obtener por cuenta autorizada o política de rotación, confirmar versiones aplicadas, escuchar eventos, procesar comandos y sincronizar Agent. URL, firma HMAC, Digest, fecha UTC, ID de solicitud y cabeceras se generan automáticamente.
+Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
 
 ## Requisitos
 
@@ -51,10 +51,10 @@ async function main() {
     orgId: process.env.JMS_ORG_ID,
   })
   try {
-    const credential = await client.getCredential({ accountId: process.env.JMS_ACCOUNT_ID })
-    // Pass credential.account.username / secret to the application connection pool.
+    const account = await client.getAccount({ accountId: process.env.JMS_ACCOUNT_ID })
+    // Pass account.username / secret to the application connection pool.
     console.log(
-      `Fetched revision ${credential.revision}; implement application credential switching.`,
+      `Fetched revision ${account.revision}; implement application credential switching.`,
     )
   } finally {
     client.close()
@@ -68,185 +68,68 @@ if (require.main === module)
   })
 ```
 
-## Manejadores de eventos
+## Eventos y aplicación de credenciales
 
-Inicialice el estado local antes de escuchar. Python y Node.js usan métodos de subclase, Go EventHandlers y Java CredentialEventListener. Implemente el cambio real de conexiones del ejemplo. La API anterior sigue disponible.
+Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
 
 ```javascript
 'use strict'
 const { Client } = require('./index')
 
-class MyClient extends Client {
-  constructor(options) {
-    super(options)
-    this.credentials = new Map()
-    this.modes = new Map()
-  }
-  async onEvent(event) {
-    if (event.event === 'snapshot') {
-      this.modes.clear()
-      for (const update of event.credentials || [])
-        this.modes.set(update.credentialKey || update.key, update.credentialMode)
-      for (const key of this.credentials.keys())
-        if (!this.modes.has(key)) this.credentials.delete(key) // Also release connections.
-    } else if (event.event === 'credential.updated') {
-      this.modes.set(event.credentialKey || event.key, event.credentialMode)
-    }
-    // Use executeApplicationCommand for command events; see events.js.
-  }
-  async onCredentialChanged(credential, { signal }) {
-    await this.applyCredential(credential, { signal })
-    if (this.modes.get(credential.key) === 'alternating_rotation')
-      await this.confirmCredential({ key: credential.key, revision: credential.revision,
-        accountId: credential.account.id, signal })
-    this.credentials.set(credential.key, credential)
-  }
-  async applyCredential(credential, { signal }) {
-    throw new Error('Implement connection validation, pool switching and old connection cleanup')
-  }
-  async onCredentialRevoked(event) {
-    this.credentials.delete(event.credentialKey || event.key) // Also release affected connections.
-  }
+async function applyAccount(account) {
+  // Validate a new connection, switch the pool, then release old connections.
+  throw new Error('Implement application account switching')
 }
-
+async function applyEvent(client, event) {
+  if (event.event === 'application.restart.requested')
+    throw new Error('Implement application restart and health check')
+  const account = await client.getAccount({ accountId: event.accountId, allowLocalFallback: false })
+  if (account.revision !== event.accountRevision) throw new Error('Event account version is superseded')
+  await applyAccount(account)
+}
+async function handleEvent(client, event) {
+  if (event.commandId) {
+    const claim = await client.reportApplicationCommandResult({ commandId: event.commandId, status: 'running' })
+    if (!claim.accepted) return
+  }
+  try { await applyEvent(client, event) }
+  catch (error) {
+    await client.confirmEvent({ eventId: event.eventId, status: 'failed', errorCode: 'application_failed' })
+    throw error
+  }
+  await client.confirmEvent({ eventId: event.eventId })
+}
 async function main() {
-  const client = new MyClient({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
+  const client = new Client({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
     appSecret: process.env.JMS_APP_SECRET, instanceId: process.env.JMS_INSTANCE_ID, orgId: process.env.JMS_ORG_ID })
   const stop = () => client.close()
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
-  try { await client.watchEvents() }
-  finally {
-    client.close(); await client.stopEvents()
-    process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop)
-  }
-}
-if (require.main === module) main().catch((error) => {
-  console.error(error.code || error.name); process.exitCode = 1
-})
-module.exports = { MyClient }
-```
-
-Los snapshot iniciales y de reconexión y credential.updated obtienen credenciales por modo y llaman al manejador en serie. La lectura usa una cola limitada a 128 eventos; al llenarse aplica contrapresión. Los fallos de obtención o aplicación se reintentan con espera exponencial de 1–30 segundos y una nueva consulta. Las actualizaciones sustituyen reintentos del mismo destino; snapshot restablece el ámbito y revocaciones o cambios de configuración cancelan reintentos. Los manejadores deben ser idempotentes. Los observadores y revocaciones no se reintentan; los comandos requieren reclamar su ejecución. received indica lectura; el SDK no confirma rotaciones automáticamente. Los eventos de revisiones anteriores no cancelan la obtención pendiente de una revisión más reciente.
-
-`watchEvents({signal})` / `startEvents({signal})`; `stopEvents()` / `await subscription.stop()` / `await subscription.done`
-
-watchEvents no bloquea el bucle de eventos; startEvents no garantiza la sincronización inicial. Un listener por cliente. Los métodos async se esperan en serie y reciben AbortSignal. close cancela; espere stop() o done desde fuera. El manejador no debe esperar su propio done. clone devuelve Client.
-
-### Credenciales más recientes y fallos del servidor
-
-La consulta solicita primero la API. Una respuesta exitosa reemplaza la credencial retenida; versiones antiguas no sobrescriben una nueva y no hay caducidad por tiempo. Solo un tiempo de espera, fallo de red o HTTP 5xx permite devolver el último valor del mismo selector con la marca de origen local. Sin valor previo se propaga el error. El SDK lo conserva en memoria hasta actualización, revocación o cierre; clone y reinicio comienzan vacíos. El Agent conserva sus credenciales en su estado local protegido. HTTP 401/403/404 o client_upgrade_required borran los valores del SDK y fallan; una respuesta exitosa inválida también falla. La revocación elimina las credenciales afectadas; snapshot elimina entradas fuera de autorización. Un cambio de configuración conserva los valores hasta comprobar el snapshot siguiente. El Agent aplica las revocaciones explícitas y las reducciones del ámbito del snapshot antes de sincronizar por HTTP, guarda ese ámbito y bloquea las lecturas locales afectadas incluso durante una caída o tras reiniciar. Una respuesta credential_not_found (HTTP 400) también elimina los valores conservados del SDK. La consulta pull directa por account_id siempre requiere una respuesta activa de la API; los snapshots de push no autorizan valores pull en caché.
-
-- `credential.fromLocal`
-- `getCredential({key, allowLocalFallback: false})` / `getCredential({accountId, allowLocalFallback: false})`
-
-Con la escucha gestionada activa, snapshot y credential.updated consultan automáticamente la credencial actual, reemplazan el valor y llaman al manejador. Un fallo de actualización conserva el valor anterior y reintenta. El Agent también consulta tras una notificación y conserva sus datos durante fallos del servidor. Use las llamadas que requieren la API siguientes para actualizar o cambiar conexiones; un valor retenido no es una versión recién obtenida ni confirma rotaciones automáticamente.
-
-En reposo se envía ping cada 10 segundos; unos 30 segundos sin mensajes provocan reconexión, con espera exponencial de 1–30 segundos y firma nueva. El snapshot restaura el estado actual, sin reproducir eventos históricos.
-
-
-
-## Eventos y aplicación de credenciales
-
-Procese snapshot inicial o de reconexión y credential.updated. El ejemplo completo maneja subscription, alternating_rotation y comandos. Implemente la validación de una conexión real, el cambio del pool y el cierre de conexiones anteriores. El marcador genera una excepción e impide confirmar antes de aplicar. Retire del estado de la aplicación las cuentas ausentes de los snapshots y procese las revocaciones.
-
-```javascript
-'use strict'
-const { Client } = require('./index')
-
-async function applyCredential(credential) {
-  // Validate a real connection, switch the pool, then release old connections.
-  throw new Error('Implement application credential switching')
-}
-async function restartApplication() {
-  throw new Error('Implement application restart and health check')
-}
-async function handleCommand(client, event) {
-  if (event.event === 'application.restart.requested') return restartApplication()
-  if (event.event !== 'credential.switch.requested')
-    throw new Error('Unsupported application command')
-  const credential = await client.getCredential({ key: event.credentialKey, allowLocalFallback: false })
-  if (credential.revision !== event.revision || credential.account.id !== event.accountId)
-    throw new Error('Requested account version is superseded')
-  await applyCredential(credential)
-  await client.confirmCredential({
-    key: credential.key,
-    revision: credential.revision,
-    accountId: credential.account.id,
-  })
-}
-async function main() {
-  const client = new Client({
-    endpoint: process.env.JMS_ENDPOINT,
-    appId: process.env.JMS_APP_ID,
-    appSecret: process.env.JMS_APP_SECRET,
-    instanceId: process.env.JMS_INSTANCE_ID,
-    orgId: process.env.JMS_ORG_ID,
-  })
-  const stop = () => client.close()
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
   try {
     for await (const event of client.watchCredentialEvents()) {
-      if (event.commandId) {
-        try {
-          await client.executeApplicationCommand(event, (command) => handleCommand(client, command))
-        } catch {
-          /* Failure is reported; keep secrets out of logs. */
-        }
-        continue
-      }
-      const updates =
-        event.event === 'snapshot'
-          ? event.credentials
-          : event.event === 'credential.updated'
-            ? [event]
-            : []
-      // On snapshots, remove application caches absent from the new authorized scope.
-      for (const update of updates || []) {
-        const mode = update.credentialMode
-        const key = update.credentialKey || update.key
-        let credential
-        if (mode === 'subscription' && update.accountId && key) {
-          const subscriptionKey = key.endsWith(`:${update.accountId}`) ? key : `${key}:${update.accountId}`
-          credential = await client.getCredential({ key: subscriptionKey, allowLocalFallback: false })
-        }
-        else if (mode === 'alternating_rotation' && key)
-          credential = await client.getCredential({ key, allowLocalFallback: false })
-        else continue
-        await applyCredential(credential)
-        if (mode === 'alternating_rotation')
-          await client.confirmCredential({
-            key: credential.key,
-            revision: credential.revision,
-            accountId: credential.account.id,
-          })
+      const updates = event.commandId || event.event === 'credential.updated' ? [event]
+        : event.event === 'snapshot' ? event.credentials || [] : []
+      // Reconcile removed connections on snapshots; release revoked accounts.
+      for (const update of updates) {
+        try { await handleEvent(client, update) }
+        catch (error) { console.error(error.code || error.name) }
       }
     }
-  } finally {
-    client.close()
-    process.removeListener('SIGINT', stop)
-    process.removeListener('SIGTERM', stop)
-  }
+  } finally { await client.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop) }
 }
-if (require.main === module)
-  main().catch((error) => {
-    console.error(error.code || error.name)
-    process.exitCode = 1
-  })
+if (require.main === module) main().catch((error) => { console.error(error.code || error.name); process.exitCode = 1 })
 ```
 
-En la rotación alternada, valide una conexión real, cambie el pool y cierre las conexiones anteriores antes de confirmar exactamente key, revision y account_id. Las suscripciones a cambios de credenciales no requieren confirmación. Un fallo de conexión debe impedir la confirmación.
+Las API con key se conservan por compatibilidad. Use `get_account` y `confirm_event` para nuevas integraciones y actualice también Core.
 
 ## Comandos de aplicación
 
-La consulta, reclamación de comandos y comunicación de resultados usan métodos SDK. Solo una reclamación aceptada ejecuta el handler. El cambio verifica versión y cuenta, aplica y confirma; el reinicio reinicia y comprueba el estado. Informe de éxito al terminar. Un fallo al informar conserva la excepción original del handler.
+Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
 
 ## Métodos habituales
 
-- `getCredential({key})`
-- `getCredential({accountId})`
-- `getCredential({key, allowLocalFallback: false})`
-- `confirmCredential({key, revision, accountId})`
+- `getAccount({accountId})`
+- `getAccount({accountId, allowLocalFallback: false})`
+- `confirmEvent({eventId, status, errorCode})`
 - `watchCredentialEvents({signal})`
 - `watchEvents({signal}) / startEvents({signal}) / stopEvents()`
 - `EventSubscription.stop() / done`

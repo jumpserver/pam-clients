@@ -173,3 +173,15 @@ test(
     clone.close()
   },
 )
+
+ test('account projection and event results use signed account and event IDs', async () => {
+   const sdk = client('node-account-event')
+   try {
+     const account = await sdk.getAccount({ accountId: 'account', allowLocalFallback: false })
+     assert.equal(account.username, 'app'); assert.equal(account.asset.address, '127.0.0.1')
+     assert.equal(account.fromLocal, false); assert.equal(account.revision, 2)
+     assert.ok(!inspect(account).includes('DO_NOT_LOG_SECRET'))
+     assert.equal((await sdk.confirmEvent({ eventId: 'event-one' })).accepted, true)
+     assert.equal((await sdk.confirmEvent({ eventId: 'event-two', status: 'failed', errorCode: 'application_failed' })).status, 'failed')
+   } finally { sdk.close() }
+ })

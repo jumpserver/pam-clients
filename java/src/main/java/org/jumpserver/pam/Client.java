@@ -36,7 +36,7 @@ import org.jumpserver.pam.Models.*;
 
 /** Signed credential client for one stable application replica. */
 public final class Client implements AutoCloseable {
-  public static final String VERSION = "1.0.1";
+  public static final String VERSION = "1.0.2";
   public static final int PROTOCOL_VERSION = 1, CONFIG_SCHEMA_VERSION = 1;
   private static final String PATH = "/api/v1/accounts/credential-client";
   private static final List<String> SIGNED =
@@ -344,7 +344,6 @@ public final class Client implements AutoCloseable {
         }
         Credential latest = latestCredentials.get(selector);
         if (allowLocalFallback
-            && field.equals("key")
             && temporary
             && !denied
             && !closed
@@ -362,7 +361,10 @@ public final class Client implements AutoCloseable {
         && !name.equals("configuration.updated")) return;
     synchronized (credentialsLock) {
       credentialGeneration++;
-      if (name.equals("configuration.updated")) return;
+      if (name.equals("configuration.updated")) {
+        latestCredentials.keySet().removeIf(selector -> selector.startsWith("account_id:"));
+        return;
+      }
       if (!name.equals("snapshot")) {
         String key = event.getKey(), accountId = event.getAccountId();
         if (key.isEmpty() && accountId.isEmpty()) latestCredentials.clear();
@@ -396,6 +398,18 @@ public final class Client implements AutoCloseable {
               selector ->
                   selector.startsWith("key:") && !keys.contains(selector.substring(4)));
     }
+  }
+
+  public Account getAccount(String accountId) { return getAccount(accountId, true); }
+  public Account getAccount(String accountId, boolean allowLocalFallback) {
+    Credential value = getCredentialByAccountId(accountId, allowLocalFallback);
+    return new Account(value.getAccount(), value.getAsset(), value.isFromLocal());
+  }
+
+  public CommandResult confirmEvent(String eventId) { return confirmEvent(eventId, "success", ""); }
+  public CommandResult confirmEvent(String eventId, String status, String errorCode) {
+    if (!java.util.Set.of("success", "failed").contains(status)) throw new IllegalArgumentException("Invalid event status");
+    return request("POST", "/event-result/", Map.of("event_id", nonempty(eventId, "eventId"), "status", status, "error_code", errorCode), CommandResult::new);
   }
 
   public CredentialConfirmation confirmCredential(String key, long revision, String accountId) {

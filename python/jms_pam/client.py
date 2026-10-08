@@ -18,6 +18,7 @@ from ._transport import Transport
 from ._version import CONFIG_SCHEMA_VERSION, PROTOCOL_VERSION, __version__
 from .exceptions import PAMError
 from .models import (
+    Account,
     AgentSync,
     CommandResult,
     Credential,
@@ -198,7 +199,6 @@ class Client:
                 latest = self._latest_credentials.get(selector)
                 if (
                     allow_local_fallback
-                    and key is not None
                     and temporary
                     and not denied
                     and not self._closed
@@ -225,7 +225,8 @@ class Client:
         with self._credentials_lock:
             self._credential_generation += 1
             if name == "configuration.updated":
-                # Retain known credentials until a snapshot reconciles authorization.
+                # Push snapshots cannot prove the full pull authorization scope.
+                self._latest_credentials = {selector: value for selector, value in self._latest_credentials.items() if selector[0] != "account_id"}
                 return
             if name != "snapshot":
                 key = event.get("credential_key") or event.get("key")
@@ -274,6 +275,21 @@ class Client:
                 for selector, credential in self._latest_credentials.items()
                 if selector[0] != "key" or selector[1] in keys
             }
+
+    def get_account(self, *, account_id: str, allow_local_fallback: bool = True) -> Account:
+        """Fetch an authorized account, including asset and cache provenance."""
+        value = self.get_credential(account_id=account_id, allow_local_fallback=allow_local_fallback)
+        return replace(value.account, asset=value.asset, from_local=value.from_local)
+
+    def confirm_event(self, *, event_id: str, status: str = "success", error_code: str = "") -> CommandResult:
+        """Report only after applying the event; receiving or fetching is insufficient."""
+        if not isinstance(event_id, str) or not event_id or status not in ("success", "failed"):
+            raise ValueError("event_id and a success or failed status are required")
+        return self._request(
+            "POST", f"{CLIENT_PATH}/event-result/",
+            {"event_id": event_id, "status": status, "error_code": error_code},
+            CommandResult.from_dict,
+        )
 
     def confirm_credential(
         self,

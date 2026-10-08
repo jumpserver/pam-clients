@@ -13,15 +13,15 @@ from jms_pam_config import client_options, instance_id
 
 
 with Client(instance_id=instance_id, **client_options) as client:
-    credential = client.get_credential(account_id="<account-id>")
-    username = credential.account.username
-    password = credential.account.secret
+    account = client.get_account(account_id="<account-id>")
+    username = account.username
+    password = account.secret
 ```
 <!-- python-account-example:end -->
 
-`get_credential` returns a complete credential response, including the account, secret, asset and revision. Use `account_id` for account retrieval and the event key for event handling.
+`get_account` returns the account directly, including the secret, asset and cache provenance.
 
-For account-based retrieval, set `account_id` to an account ID authorized for the application. When handling subscription or rotation events, use `credential_key` from the event or `key` from the snapshot; do not construct it or use the application AK/SK. Supply exactly one of `account_id` and `key`.
+Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
 
 The original request-object API under `jms_pam.credential.v1` remains available for compatibility and emits `DeprecationWarning`. New integrations use the `Client` API shown here. Regenerate SDK access configuration when migrating to it.
 
@@ -29,7 +29,7 @@ The original request-object API under `jms_pam.credential.v1` remains available 
 
 Use **Start new cycle** in the policy's Basic settings or Event reception. The new cycle's timeline opens automatically:
 
-- Credential subscriptions publish `credential.updated` again for currently authorized accounts, sharing a new `operation_id`. Passwords and revisions stay unchanged, and no secret-change start, success or failure events are generated. SDK clients fetch using the event key. The Agent also refetches unchanged revisions without repeating delivery or restarting services. Receipts indicate notification reception. Offline clients obtain the current snapshot when reconnecting.
+- Credential subscriptions publish `credential.updated` again for currently authorized accounts, sharing a new `operation_id`. Passwords and revisions stay unchanged, and no secret-change start, success or failure events are generated. SDK clients fetch using the event account ID. The Agent also refetches unchanged revisions without repeating delivery or restarting services. Receipts indicate notification reception. Offline clients obtain the current snapshot when reconnecting.
 - Account rotation starts a new cycle after the previous cycle has completed or been cancelled. JumpServer verifies the backup account, then publishes the switch. Clients apply and confirm the backup. Applications that recently used the original account through the legacy secret API must also fetch the backup after publication. The original account must have no successful JumpServer secret fetches for the configured period (7 days by default) after publication before its secret can be changed. Another source-account fetch restarts the window. Verification, switching, observation, and secret change share one cycle.
 
 Administrator API: `POST /api/v1/accounts/application-credentials/<policy-id>/start-cycle/` requires policy change permission and, for account rotation, account verification permission. It returns `credential` and `cycle_id`. Disabled policies and unfinished rotations cannot start another cycle. Subscription accounts must finish any running secret changes before republishing.
@@ -38,7 +38,7 @@ Administrator API: `POST /api/v1/accounts/application-credentials/<policy-id>/st
 
 Use **More > Send event** in the application list or **Event processing > Send event** in application details. Select the event, connection instances and deadline.
 
-- `credential.switch.requested` asks an application to apply the currently published account and version. It does not change the policy's active account; use the rotation workflow for that. Fetch the credential, verify the requested account and revision, apply it, call `confirm_credential`, then report success.
+- `credential.switch.requested` asks an application to apply the currently published account and version. It does not change the policy's active account; use the rotation workflow for that. Fetch the credential, verify the requested account and revision, apply it, call `confirm_event(event_id=...)`, then report success.
 - `application.restart.requested` invokes an SDK application's own restart handler and health check. The Agent only restarts the systemd service configured for EnvironmentFile delivery with the restart action, then checks that it is active.
 
 The WebSocket receipt means received, not executed. `execute_application_command(event, handler)` claims the request before calling the handler. Only an `accepted: true` claim runs it; duplicate delivery never repeats the handler. A normal return reports success; an exception reports failure. Implement application-level idempotency and health checks in the handler. Agent switch requests succeed only after the application confirms the actual account version.
@@ -156,15 +156,14 @@ curl --fail --silent --show-error \
   'http://localhost/v1/credentials/<credential-key>'
 ```
 
-For alternating rotation, validate a real connection, switch the application connection pool and release old connections before confirming the exact key, revision and account_id. Credential change subscriptions require no confirmation. A failed connection check must prevent confirmation.
+For alternating rotation, validate a real connection, switch the application connection pool and release old connections before reporting success using the event ID. A failed connection check must prevent confirmation.
 
 ```bash
-/usr/local/bin/jms-pam-agent confirm '<credential-key>' \
-  --revision '<revision>' \
+/usr/local/bin/jms-pam-agent confirm '<event-id>' \
   --socket '/run/jms-pam-agent/agent.sock'
 ```
 
-Only alternating rotation uses confirm. A local confirmation is persisted first; status confirmed means Core accepted it, while pending means it will be retried. Do not confirm merely because a file was written or a service restarted.
+Use the event ID to report application results. A local confirmation is persisted first; status confirmed means Core accepted it, while pending means it will be retried. Do not confirm merely because a file was written or a service restarted.
 
 ### Troubleshooting
 
@@ -181,32 +180,32 @@ The Agent reconciles on startup, on relevant events and every 300 seconds. Netwo
 
 <!-- sdk-doc:start -->
 
-## Complete Python SDK integration
+## Python SDK integration
 
-The SDK uses the application’s AK/SK and receives every active policy bound to that application. One connection can handle both subscriptions and rotation. The application access wizard provides an example that dispatches by policy mode; binding changes take effect automatically.
-
-### Prerequisites
-
-1. Create a **Credential change subscription** or **Account rotation** policy under **PAM Integration > Credential Policies** and bind the application. Select the accounts that should trigger subscription notifications; account rotation currently selects two accounts on the same asset.
-2. Create or open the target application and authorize its asset accounts from the **Accounts** page. For alternating rotation, authorize both policy accounts.
-3. Open the application’s **Access and connections** page, select **Access wizard**, and choose **SDK access**.
-4. Generate and download `jms_pam_config.py` and use the example code. No configuration ID or policy list is required.
-
-The wizard writes a generated `instance_id` into `jms_pam_config.py`. Reuse that file when recreating a container to preserve its identity. Generate separate materials for each replica, or set a distinct, stable `JMS_INSTANCE_ID` for each one.
-
-### Install and configure
-
-The SDK requires Python 3.9 or later. Install from PyPI or your internal PyPI mirror using the application’s Python interpreter or virtual environment:
+Requires Python 3.9+. Install jms-pam from PyPI or your internal mirror using the application Python or virtual environment, then download the application identity configuration from the access wizard.
 
 ```bash
 python3 -m pip install jms-pam
 ```
 
-Place `jms_pam_config.py` where the application can import it. It contains application identity material and the generated instance ID; never commit it to source control or write it to logs.
+Place jms_pam_config.py next to the application. Its client_options contain application identity material: do not commit or log it. Use one stable, unique instance_id per replica.
 
-### Subclass event handlers
+<!-- python-account-example:start -->
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
 
-Applications with account mappings or connection pools can subclass `Client` and override its hooks. Keep `__init__` for local state; `watch_events()` receives the initial snapshot, fetches credentials by policy mode and calls `on_credential_changed`. Updates and reconnect snapshots use the same hook.
+
+with Client(instance_id=instance_id, **client_options) as client:
+    account = client.get_account(account_id="<account-id>")
+    username = account.username
+    password = account.secret
+```
+<!-- python-account-example:end -->
+
+### Events and credential application
+
+Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
 
 <!-- python-events-example:start -->
 ```python
@@ -214,220 +213,83 @@ from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-def apply_credential(response):
-    # Replace this function with your application's connection update:
-    # build and verify a new connection, switch to it, then release the old one.
-    # Never write response.account.secret or authentication headers to logs.
-    raise NotImplementedError("Implement the application connection update first")
+def apply_account(account):
+    # Validate a new connection, switch the pool, then release old connections.
+    # Never log account.secret or authentication headers.
+    raise NotImplementedError("Implement the application's account update first")
 
 
 def restart_application():
-    # Implement restart and its health check, then return only after it succeeds.
-    raise NotImplementedError("Implement the application restart first")
-
-
-def handle_command(client, event):
-    if event["event"] == "application.restart.requested":
-        restart_application()
-    elif event["event"] == "credential.switch.requested":
-        response = client.get_credential(key=event["credential_key"], allow_local_fallback=False)
-        if (
-            response.revision != event["revision"]
-            or response.account.id != event["account_id"]
-        ):
-            raise ValueError("Requested account version is superseded")
-        apply_credential(response)
-        client.confirm_credential(
-            key=response.key, revision=response.revision, account_id=response.account.id
-        )
-    else:
-        raise ValueError("Unsupported application command")
+    raise NotImplementedError("Implement application restart and health check first")
 
 
 class ApplicationClient(Client):
-    def __init__(self, *args, **options):
-        super().__init__(*args, **options)
-        self.credentials = {}
-        self.credential_modes = {}
+    def apply_event(self, event):
+        if event.get("event") == "application.restart.requested":
+            restart_application()
+            return
+        account = self.get_account(
+            account_id=event["account_id"], allow_local_fallback=False,
+        )
+        if account.revision != event["account_revision"]:
+            raise ValueError("The event account version is superseded")
+        apply_account(account)
 
-    def on_event(self, event):
+    def handle_event(self, event):
+        event_id = event["event_id"]
         if event.get("command_id"):
-            self.execute_application_command(
-                event, lambda command: handle_command(self, command)
+            claim = self.report_application_command_result(
+                command_id=event["command_id"], status="running",
             )
-        elif event.get("event") == "snapshot":
-            self.credential_modes = {
-                item["key"]: item["credential_mode"]
-                for item in event.get("credentials", [])
-            }
-            for key in self.credentials.keys() - self.credential_modes.keys():
-                # Also release the application's connections for the removed key.
-                del self.credentials[key]
-        elif event.get("event") == "credential.updated":
-            key = event.get("credential_key") or event.get("key")
-            if key:
-                self.credential_modes[key] = event.get("credential_mode")
-
-    def on_credential_changed(self, credential):
-        apply_credential(credential)
-        if self.credential_modes.get(credential.key) == "alternating_rotation":
-            self.confirm_credential(
-                key=credential.key,
-                revision=credential.revision,
-                account_id=credential.account.id,
+            if not claim.accepted:
+                return
+        try:
+            self.apply_event(event)
+        except Exception:
+            self.confirm_event(
+                event_id=event_id, status="failed", error_code="application_failed",
             )
-        self.credentials[credential.key] = credential
+            raise
+        # A fetch or delivery receipt never confirms application success.
+        self.confirm_event(event_id=event_id)
 
-    def on_credential_revoked(self, event):
-        key = event.get("credential_key")
-        self.credentials.pop(key, None)
-        # Release affected connections. The following snapshot reconciles all keys.
+    def run(self):
+        for event in self.watch_credential_events():
+            if event.get("command_id"):
+                updates = [event]
+            elif event.get("event") == "snapshot":
+                updates = event.get("credentials", [])
+                # Release application connections absent from the new scope.
+            elif event.get("event") == "credential.updated":
+                updates = [event]
+            elif event.get("event") == "credential.revoked":
+                # Release connections for event["account_id"].
+                continue
+            else:
+                continue
+            for update in updates:
+                try:
+                    self.handle_event(update)
+                except Exception as error:
+                    self.on_event_error(error, update)
 
 
 with ApplicationClient(instance_id=instance_id, **client_options) as client:
-    client.watch_events()
+    client.run()
 ```
 <!-- python-events-example:end -->
 
-Use `start_events()` instead to start a background listener and return immediately. `stop_events()` stops the listener and waits for an active hook, while leaving the HTTP client usable. Exiting `with` or calling `close()` stops event streams and waits for hooks before closing HTTP resources. Each client allows one hook listener; it can restart after `stop_events()`. Hooks may also stop or close their own client.
+### Common methods
 
-The reader and serial hook worker use a bounded queue of 128 events. Slow hooks do not immediately pause reading; a full queue applies backpressure. Failed credential fetches or `on_credential_changed` calls retry with 1–30 second exponential backoff, fetching the current credential again. Newer updates replace pending retries for the same account or key. Snapshots replace the retry scope; revocation/configuration changes clear pending retries until the following snapshot. Handlers must be idempotent, and reconnect snapshots may call them again even at the same revision.
+- `get_account(account_id=..., allow_local_fallback=True)`
+- `account.username` / `account.secret` / `account.asset` / `account.from_local`
+- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
+- `watch_credential_events(stop_event=...)`
+- `list_application_commands()`
+- `report_application_command_result(command_id=..., status="running")`
+- `clone()` / `close()`
 
-`on_event(event)` observes each raw event before credential hooks. Override it for snapshot state reconciliation, configuration/lifecycle events or commands; command handlers must still use `execute_application_command`. `on_credential_revoked(event)` handles revocation. `on_event_error(error, event)` receives failures, with `event=None` for a fatal reader error; its default logs only the exception type. Observer and revocation hooks are not automatically retried. See `subclass_demo.py` for snapshot state reconciliation.
+`get_credential` and key-based confirmation remain available for older integrations. New integrations use `get_account` and `confirm_event`. The event-result workflow requires the corresponding Core update; SDK 1.0.2 alone cannot add this server capability.
 
-`start_events()` returning does not mean initial credentials are ready. If startup depends on them, use a `threading.Event` in the subclass and wait before serving requests. Background hooks run concurrently with the main application; protect shared application state as needed. The SDK never automatically confirms rotation: call `confirm_credential` inside your successful business handler only for rotation policies. `clone()` constructs fresh subclass state with an independent HTTP session; override it if your subclass requires additional constructor arguments.
-
-The existing `watch_credential_events(stop_event=...)` iterator remains available with its original receipts, blocking and cancellation semantics. The examples below retain that calling style.
-
-### Credential change subscription
-
-Look up an account ID under Application Management, then fetch any authorized account directly:
-
-```python
-from jms_pam import Client
-from jms_pam_config import client_options, instance_id
-
-
-with Client(instance_id=instance_id, **client_options) as client:
-    response = client.get_credential(
-        account_id="<account-id>",
-    )
-    password = response.account.secret
-```
-
-Long-running applications listen to the Credential Event Stream. Initial and reconnect snapshots also provide the current accounts:
-
-```python
-from jms_pam import Client
-from jms_pam_config import client_options, instance_id
-
-
-def fetch_credential(client, key):
-    response = client.get_credential(key=key, allow_local_fallback=False)
-    address = response.asset.address
-    username = response.account.username
-    secret_type = response.account.secret_type
-    secret = response.account.secret
-    # Update the application connection with the new credential. Never log secret.
-
-
-with Client(instance_id=instance_id, **client_options) as client:
-    for event in client.watch_credential_events():
-        if event.get("event") == "snapshot":
-            updates = event.get("credentials", [])
-        elif event.get("event") == "credential.updated":
-            updates = [event]
-        else:
-            continue
-        for update in updates:
-            account_id = update.get("account_id")
-            key = update.get("credential_key") or update.get("key")
-            if update.get("credential_mode") == "subscription" and account_id and key:
-                if not key.endswith(f":{account_id}"):
-                    key = f"{key}:{account_id}"
-                fetch_credential(client, key)
-```
-
-Subscriptions need neither `credential_keys` nor `confirm_credential`. Lifecycle events are informational and do not trigger a fetch.
-
-### Alternating dual-account rotation
-
-The event snapshot supplies one stable key per rotation policy. Fetch after the initial snapshot and after update events or reconnect snapshots. Confirm only after the application validates and activates the new connection:
-
-```python
-from jms_pam import Client
-from jms_pam_config import client_options, instance_id
-
-
-def apply_credential(credential):
-    raise NotImplementedError("Implement connection validation, pool switching and old connection cleanup")
-
-
-def switch_credential(client, key):
-    response = client.get_credential(key=key, allow_local_fallback=False)
-    apply_credential(response)
-    client.confirm_credential(
-        key=response.key,
-        revision=response.revision,
-        account_id=response.account.id,
-    )
-
-
-with Client(instance_id=instance_id, **client_options) as client:
-    for event in client.watch_credential_events():
-        if event.get("event") == "snapshot":
-            updates = event.get("credentials", [])
-        elif event.get("event") == "credential.updated":
-            updates = [event]
-        else:
-            continue
-        for update in updates:
-            key = update.get("credential_key") or update.get("key")
-            if key and update.get("credential_mode") == "alternating_rotation":
-                switch_credential(client, key)
-```
-
-`Account.secret` contains the password or key material identified by `Account.secret_type`. Never log secrets or authentication headers.
-
-### Complete one credential rotation
-
-1. Open the policy under **PAM Integration > Credential Policies** and select **Start new cycle**. Applications confirm the current account, then wait for the standby account to receive no Secret API access for the configured interval (7 days by default). After the readiness notification, the administrator manually selects **Start rotation**.
-2. JumpServer switches the active account and sends `credential.updated`.
-3. Call `get_credential` for the event key, build and validate a connection with the new account, switch successfully, then call `confirm_credential`. Lifecycle events are informational and do not trigger a fetch.
-4. After every participating instance confirms, select **Continue rotation**, then create and run the password-change task for the previous account.
-5. Check the password-change result. On success, the rotation completes with the current account unchanged; the next rotation switches in the opposite direction.
-
-### Application commands
-
-Use `list_application_commands()` to poll outstanding requests and `execute_application_command(event, handler)` to claim and execute them. The handler runs only when the claim is accepted. For a switch request, verify the requested account and revision, validate and apply the credential, then confirm it. For a restart request, restart the application and verify its health before returning. Handler exceptions report failure; a failed result report preserves the original exception.
-
-### Common SDK methods
-
-The synchronous client provides these common methods:
-
-- `get_credential`: use `account_id` for application-authorized pull, `key=account:<account-id>` for push subscriptions, or a policy key for alternating rotation; provide exactly one selector.
-- `confirm_credential`: for alternating rotation only, confirm that the application has validated and is using a revision.
-- `watch_events` / `start_events` / `stop_events`: run subclass hooks in the foreground or background and stop them.
-- `watch_credential_events`: block while listening for credential events and reconnect snapshots.
-- `list_application_commands` / `execute_application_command`: poll, claim and report application commands.
-- `sync_agent`: reconcile retained and delivered `KnownRevision` values with Core.
-- `clone`: create an independent HTTP session; `close` or a `with` statement releases sessions and event streams.
-
-Before yielding a business event, the SDK automatically sends a best-effort receipt. The receipt only means the SDK/Agent has read the event; it does not mean credentials were fetched or applied, and it does not replace `confirm_credential`. Receipt failures do not prevent event processing. Update and restart existing SDK/Agent deployments to report receipts. Reconnect snapshots restore current credential versions; they do not replay past events or create receipts for them.
-
-WebSocket Ping/Pong maintains connection liveness; there is no HTTP heartbeat endpoint. Keep low-frequency revision reconciliation only as a recovery path.
-
-HTTP, authentication, network, and response parsing failures are raised as `jms_pam.PAMError`. Use its `code`, `status_code`, `detail`, and `original_error` fields at the application's retry boundary. Never log credentials or authentication headers.
-
-### Latest credentials and backend outages
-
-Credential getters always request the API first. A successful fetch replaces the retained latest credential; older revisions never overwrite a newer one. The retained value has no time expiry. Only a timeout, network failure or HTTP 5xx may return this value for the same selector, marked as coming from local state. Without a previously fetched value, the original error is raised. SDK values stay in the current client’s memory until replacement, revocation or close; clones and process restarts start empty. The Agent retains its latest credentials in its existing protected local state. HTTP 401/403/404 or client_upgrade_required clear SDK retained values and raise; malformed successful responses also raise. Explicit revocations remove affected credentials, and snapshots remove push entries outside the subscribed scope. A configuration notification retains existing values until the following snapshot reconciles scope. The Agent applies explicit revocation and reduced snapshot scope before HTTP synchronization, persists the reduced scope, and blocks affected local reads even during a backend outage or after restart. A credential_not_found response (HTTP 400) also clears retained SDK values. Direct account_id pull always requires a live API response; push snapshots do not authorize cached pull values.
-
-- `credential.from_local`
-- `get_credential(key=..., allow_local_fallback=False)` / `get_credential(account_id=..., allow_local_fallback=False)`
-
-With managed event listening enabled, snapshot and credential.updated automatically fetch the current credential, replace the retained value and then invoke the business hook. A failed refresh leaves the previous value in place and retries. The Agent also refetches on update notifications and retains its previous credentials during backend outages. Refresh and manual switching use the live-only calls below; a retained password must not be treated as a newly fetched revision or automatically confirmed.
-
-Event connections send application ping messages at 10-second intervals while idle and reconnect after approximately 30 seconds without messages. Reconnect uses 1–30 second exponential backoff and fresh signatures. Reconnect snapshots restore current state; past events are not replayed.
 
 <!-- sdk-doc:end -->

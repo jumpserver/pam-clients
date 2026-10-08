@@ -99,6 +99,9 @@ public final class Models {
 
   public static final class Account {
     private final String id, name, username, secretType, secret;
+    private Asset asset;
+    private boolean fromLocal;
+    private long revision;
 
     Account(JsonNode value) {
       id = string(value, "id");
@@ -106,6 +109,7 @@ public final class Models {
       username = string(value, "username");
       secretType = string(value, "secret_type");
       secret = string(value, "secret");
+      revision = value.has("revision") ? revision(value) : 0;
     }
 
     public String getId() {
@@ -123,6 +127,14 @@ public final class Models {
     public String getSecretType() {
       return secretType;
     }
+
+    Account(Account value, Asset asset, boolean fromLocal) {
+      id=value.id; name=value.name; username=value.username; secretType=value.secretType;
+      secret=value.secret; revision=value.revision; this.asset=asset; this.fromLocal=fromLocal;
+    }
+    public Asset getAsset() { return asset; }
+    public boolean isFromLocal() { return fromLocal; }
+    public long getRevision() { return revision; }
 
     public String getSecret() {
       return secret;
@@ -341,6 +353,8 @@ public final class Models {
     public String getEventId() {
       return data.path("event_id").asText("");
     }
+
+    public long getAccountRevision() { return data.path("account_revision").asLong(-1); }
 
     public String getCommandId() {
       return data.path("command_id").asText("");

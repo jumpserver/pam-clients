@@ -1,3 +1,3 @@
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 PROTOCOL_VERSION = 1
 CONFIG_SCHEMA_VERSION = 1

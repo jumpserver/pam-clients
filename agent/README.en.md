@@ -24,7 +24,7 @@ A rule can select `"accounts":[{"account_id":"<account-A-id>","allow_account_swi
 
 The execution order is optional `credential_check`, backup of existing business configuration targets, `config_update`, `service_action`, then `application_check`. Backups are stored privately under `backups/` next to `state_file`, grouped by target path and named with a UTC timestamp. The Agent keeps at most 10 per target, skips identical consecutive contents, and stops delivery if backup fails. Targets larger than 32 MiB need their own backup handling. Restoring a backup and reloading the application are explicit operator actions. `config_update.file` edits declared top-level fields in an existing flat `.txt`, `.env`, `.yml` or `.yaml` file, preserving unrelated settings, permissions and ownership. Every mapped field must already exist exactly once. Use `files` with `template_file` to render a complete file, or `script` for complex formats. A fixed script receives `{"event":"credentials.updated","credentials":{...}}` on stdin. It has no implicit arguments; `args` supplies fixed ones. Script updates declare their destination with `target` or `targets`; neither is passed automatically. Actions infer script from `path` and systemd from `unit`, so `type` can be omitted.
 
-The `application_check` must prove the running business uses the new database account, rather than just checking process liveness. Set `confirm_on_success` to confirm the exact alternating-rotation revision after this check. A failed step leaves delivery pending for retry; the Agent does not automatically roll business files back after an activation or check failure. JumpServer installer `config.txt` needs recreation of the readers, including Core and Celery containers. Direct `config.yml` deployment needs restart of its actual readers. The installer format cannot represent passwords containing quotes; such credentials require a custom updater. Old-account password changes must wait until JumpServer credential retrieval records show no old-account traffic after switching.
+The `application_check` must prove the running business uses the new database account, rather than just checking process liveness. Set `confirm_on_success` to report the event application result after this check. A failed step leaves delivery pending for retry; the Agent does not automatically roll business files back after an activation or check failure. JumpServer installer `config.txt` needs recreation of the readers, including Core and Celery containers. Direct `config.yml` deployment needs restart of its actual readers. The installer format cannot represent passwords containing quotes; such credentials require a custom updater. Old-account password changes must wait until JumpServer credential retrieval records show no old-account traffic after switching.
 
 Scripts must be idempotent, use protected paths, and keep secrets out of arguments, environment variables and logs. The default action timeout is 120 seconds, with a maximum of 300 seconds. To apply changed local rules, run `sudo jms-pam-agent check-config` and restart the fixed service. An active systemd service alone does not prove the business database connection changed.
 
@@ -86,3 +86,17 @@ Put this object inside `rules`. The Agent edits only `DB_USER` and `DB_PASSWORD`
 For a test file that already contains `VERSION`, add `"VERSION":"revision"` to `fields_map` to keep the delivered policy revision visible. This is the credential delivery revision, not an account password history version.
 
 To update two accounts in one file, write two rules, each with one account and its own flat `config_update.fields_map`. Their mapped fields must not overlap. The Agent applies all file updates before service actions and application checks. For a custom update script, stdin `credentials` is keyed by the configured account ID even when the active account changes. Check the [Chinese Agent guide](README.zh-hans.md) for full `config.txt` and `config.yml` behavior and the script input example.
+
+## Download 1.0.2
+
+Download the Agent binary for your architecture and SHA256SUMS from [v1.0.2](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2). Verify the checksum before installing. Obtain `jms_pam_agent.json` from the application access wizard. No source build is required.
+
+## Event application results
+
+Core events and Agent delivery data include `event_id`, `account_id` and `account_revision`. Credentials are fetched by account ID; internal keys retain stable local file and rule names. Fetching or writing files never proves application success. With `application_check.confirm_on_success`, all application checks must succeed before the Agent reports the event as successful. Otherwise, the application explicitly confirms after applying the change:
+
+```bash
+jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
+```
+
+Results are persisted locally and retried when Core is unavailable. Unknown events, undelivered events and superseded account versions cannot be confirmed. KEY/--revision is retained for compatibility only.

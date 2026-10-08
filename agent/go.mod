@@ -3,7 +3,7 @@ module github.com/jumpserver/pam-clients/agent
 go 1.23
 
 require (
-	github.com/jumpserver/pam-clients/go v1.0.1
+	github.com/jumpserver/pam-clients/go v1.0.2
 	golang.org/x/sys v0.29.0
 )
 

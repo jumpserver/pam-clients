@@ -47,8 +47,8 @@ Os detalhes de assinatura e a tabela de protocolo abaixo são referências de di
 
 | HTTP | API | JSON / query |
 | --- | --- | --- |
-| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `key` / `account_id` |
-| POST | `/api/v1/accounts/credential-client/confirm/` | `instance_id`, `key`, `revision`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
 | WebSocket | `/ws/accounts/credential-events/` | `instance_id` |
@@ -60,6 +60,6 @@ Assine com HMAC-SHA256 na ordem de cabeçalhos abaixo. Inclua caminho e consulta
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 ```
 
-Na rotação alternada, valide uma conexão real, troque o pool e libere conexões antigas antes de confirmar exatamente key, revision e account_id. Assinaturas de alterações de credenciais não exigem confirmação. Falhas na verificação de conexão devem impedir a confirmação.
+Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `success` ou `failed` com `event_id`. Receber ou buscar não significa aplicar. Eventos e snapshots incluem `event_id`, `account_id` e `account_revision`; verifique a versão. Reivindique comandos com `running` e use operações idempotentes.
 
 Um recibo received indica apenas que um evento foi lido. Envie received com event_id no mesmo WebSocket antes de processar eventos de negócio; snapshot e pong não exigem recibo. Reconcilie snapshot em cada conexão ou reconexão, processe credential.updated e trate revogações e alterações de configuração.
