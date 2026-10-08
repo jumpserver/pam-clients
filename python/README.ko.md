@@ -19,7 +19,6 @@ sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
 ```
 
-애플리케이션 관리의 연결 마법사에서 Agent를 선택하고 구성을 다운로드한 후 생성된 배포 명령을 실행하세요. 인스턴스마다 고유하고 안정적인 ID를 사용하세요. systemd 서비스 설치에는 Linux, systemd 및 관리자 권한이 필요합니다. 시작 후 마법사에서 온라인 상태를 확인하세요.
 
 내장 설치에는 Linux와 root가 필요합니다. macOS, 비 root Linux 또는 Windows에서는 접속 마법사에서 JSON 또는 Socket을 선택하고 init-local 및 run --local --config 명령을 실행하세요. 한 번만 초기화하고 생성된 비공개 로컬 설정을 재사용하세요. 포그라운드 모드는 systemd 작업을 수행하지 않습니다.
 

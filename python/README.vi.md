@@ -19,7 +19,6 @@ sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
 ```
 
-Trong trình hướng dẫn kết nối ứng dụng, chọn Agent, tải cấu hình và thực hiện các lệnh triển khai được tạo. Dùng ID ổn định và duy nhất cho mỗi phiên bản. Cài đặt dịch vụ systemd cần Linux, systemd và quyền quản trị. Sau khi khởi động, kiểm tra trạng thái trực tuyến trong trình hướng dẫn.
 
 Trình cài đặt tích hợp cần Linux và root. Trên macOS, Linux không có root hoặc Windows, chọn JSON hoặc Socket trong trình hướng dẫn và chạy init-local cùng run --local --config. Chỉ khởi tạo một lần rồi dùng lại cấu hình cục bộ riêng tư; chế độ chạy trực tiếp không thực hiện thao tác systemd.
 

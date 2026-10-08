@@ -19,7 +19,6 @@ sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
 ```
 
-アプリケーション管理の接続ウィザードで Agent を選択して設定をダウンロードし、生成されたデプロイコマンドを実行します。各インスタンスには固定の一意な ID を使用します。systemd サービスには Linux、systemd と管理者権限が必要です。起動後、ウィザードでオンライン状態を確認します。
 
 組み込みインストーラーには Linux と root が必要です。macOS、非 root Linux、Windows ではウィザードで JSON または Socket を選び、init-local と run --local --config を実行してください。初期化は一度だけ行い、生成された非公開のローカル設定を再利用します。フォアグラウンドモードでは systemd 操作を行いません。
 

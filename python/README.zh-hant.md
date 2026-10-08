@@ -19,7 +19,6 @@ sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
 ```
 
-從目前的 JumpServer 下載與應用主機 CPU 架構相符的 Agent：在應用管理中開啟應用接入精靈，選擇 Agent 並下載設定，按照精靈產生的部署命令操作，每個執行個體使用穩定且唯一的 ID。以 systemd 服務安裝時，需要 Linux、systemd 和管理員權限。啟動後，在精靈中確認執行個體已上線。
 
 內建安裝需要 Linux/root。macOS、非 root Linux 或 Windows 請在接入精靈中選擇 JSON 或 Socket 交付，依照 init-local 與 run --local --config 命令執行。只初始化一次，後續重複使用產生的私有本機設定；前景模式不執行 systemd 動作。
 

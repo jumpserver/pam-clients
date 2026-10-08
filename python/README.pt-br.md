@@ -19,7 +19,6 @@ sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
 ```
 
-No assistente de conexão do aplicativo, selecione Agent, baixe a configuração e siga os comandos de implantação gerados. Use um ID estável e exclusivo por instância. A instalação systemd exige Linux, systemd e privilégios de administrador. Depois, confirme no assistente que a instância está online.
 
 O instalador integrado requer Linux e root. Em macOS, Linux sem root ou Windows, escolha JSON ou Socket no assistente e siga os comandos init-local e run --local --config. Inicialize uma vez e reutilize a configuração local privada; o modo em primeiro plano não executa ações systemd.
 

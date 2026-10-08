@@ -373,14 +373,6 @@ def python_guide(texts):
 
 {texts["agent_setup"]}
 
-```bash
-cd go
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o jms-pam-agent ./cmd/jms-pam-agent
-sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
-chmod 0600 ./jms_pam_agent.json
-sudo /usr/local/bin/jms-pam-agent install \\
-  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
-```
 
 {texts["agent_portable"]}
 
@@ -445,7 +437,7 @@ sudo systemctl restart jms-pam-agent
 {texts["sdk_setup"]}
 
 ```bash
-python3 -m pip install ./python
+python3 -m pip install .
 ```
 
 {texts["sdk_config"]}
