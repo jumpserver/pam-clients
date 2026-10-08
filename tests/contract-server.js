@@ -43,7 +43,7 @@ async function startServer() {
       "SHA-256=" + crypto.createHash("sha256").update(body).digest("base64"),
     );
     assert.equal(headers["x-jms-org"], "contract-org");
-    assert.equal(headers["x-jms-client-version"], "1.0.0");
+    assert.equal(headers["x-jms-client-version"], "1.0.1");
     assert.equal(headers["x-jms-protocol-version"], "1");
     assert.equal(
       headers["x-jms-config-schema-version"],

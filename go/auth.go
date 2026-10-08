@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "1.0.0"
+const Version = "1.0.1"
 const ProtocolVersion = 1
 const ConfigSchemaVersion = 1
 const clientPath = "/api/v1/accounts/credential-client"

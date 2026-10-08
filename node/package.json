@@ -1,6 +1,6 @@
 {
   "name": "@jumpserver/pam",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "JumpServer credential policy SDK",
   "main": "index.js",
   "types": "index.d.ts",
