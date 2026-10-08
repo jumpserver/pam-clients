@@ -273,9 +273,10 @@ func (a *Agent) synchronize(ctx context.Context) error {
 		if item.EventID != "" {
 			a.mu.Lock()
 			if a.state.Events[item.Key].EventID != item.EventID {
-				applied := a.state.Applied[item.Key]
-				applied.Confirmed = false
-				a.state.Applied[item.Key] = applied
+				if applied, exists := a.state.Applied[item.Key]; exists {
+					applied.Confirmed = false
+					a.state.Applied[item.Key] = applied
+				}
 			}
 			a.state.Events[item.Key] = pam.Event{Event: "credential.updated", EventID: item.EventID, CredentialKey: item.Key, AccountID: item.AccountID, Revision: item.Revision, AccountRevision: item.AccountRevision}
 			a.mu.Unlock()
@@ -604,7 +605,8 @@ func (a *Agent) Confirm(ctx context.Context, key string, revision int64) (Applie
 func (a *Agent) confirm(ctx context.Context, key string, revision int64) (Applied, error) {
 	a.mu.Lock()
 	value, exists := a.state.Latest[key]
-	if a.state.Denied || !a.state.Authorized[key] || !exists || a.state.Delivered[key] != revision || value.Revision != revision || (a.state.Events[key].EventID == "" && !contains(a.state.Scope.ConfirmationKeys, key)) {
+	deliveredRevision, delivered := a.state.Delivered[key]
+	if a.state.Denied || !a.state.Authorized[key] || !exists || !delivered || deliveredRevision != revision || value.Revision != revision || (a.state.Events[key].EventID == "" && !contains(a.state.Scope.ConfirmationKeys, key)) {
 		a.mu.Unlock()
 		return Applied{}, errors.New("confirm an authorized alternating-rotation revision actually applied by the application")
 	}

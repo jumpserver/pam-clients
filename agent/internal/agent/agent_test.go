@@ -1351,7 +1351,7 @@ func TestNativeAgentAutomaticallyRefreshesAndRestartsOffline(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(config.Delivery.Root, "db.json"))
 	var file Credential
 	if err != nil || json.Unmarshal(raw, &file) != nil || file.Revision != 3 || file.Secret != queried.Secret {
-		t.Fatalf("native notification delivery mismatch: read=%v file_revision=%d queried_revision=%d same_secret=%t",err,file.Revision,queried.Revision,file.Secret==queried.Secret)
+		t.Fatalf("native notification delivery mismatch: read=%v file_revision=%d queried_revision=%d same_secret=%t", err, file.Revision, queried.Revision, file.Secret == queried.Secret)
 	}
 	control(url.Values{"fault": {"503"}})
 	if service.Sync(context.Background()) == nil {
@@ -1460,7 +1460,7 @@ func TestEventConfirmationAfterApplicationOnly(t *testing.T) {
 func TestFailedDeliveryDoesNotConfirmEvent(t *testing.T) {
 	_, remote, service := fixture(t)
 	remote.eventID = "event-failed"
-	remote.value.Account.Revision = 7
+	remote.metadata, remote.value.Revision, remote.value.Account.Revision = 0, 0, 0
 	service.deliver = func(context.Context, Config, map[string]Credential, map[string]bool) error {
 		return errors.New("application failed")
 	}
