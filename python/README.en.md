@@ -15,10 +15,12 @@ with Client(
     app_secret="<app-secret>",
     instance_id="orders-worker-1",
 ) as client:
-    credential = client.get_credential(key="<credential-key>")
+    credential = client.get_credential(account_id="<account-id>")
     username = credential.account.username
     password = credential.account.secret
 ```
+
+For account-based retrieval, set `account_id` to an account ID authorized for the application. When handling subscription or rotation events, use `credential_key` from the event or `key` from the snapshot; do not construct it or use the application AK/SK. Supply exactly one of `account_id` and `key`.
 
 The original request-object API under `jms_pam.credential.v1` remains available for compatibility and emits `DeprecationWarning`. New integrations use the `Client` API shown here. Regenerate SDK access configuration when migrating to it.
 

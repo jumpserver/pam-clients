@@ -15,10 +15,12 @@ with Client(
     app_secret="<app-secret>",
     instance_id="orders-worker-1",
 ) as client:
-    credential = client.get_credential(key="<credential-key>")
+    credential = client.get_credential(account_id="<account-id>")
     username = credential.account.username
     password = credential.account.secret
 ```
+
+普通按账号取密时，`account_id` 填写应用已授权的账号 ID。处理凭据订阅或轮换事件时，使用事件中的 `credential_key` 或快照中的 `key`；不要自行构造，也不要填应用 AK/SK。`account_id` 和 `key` 只能选一个。
 
 旧的 `jms_pam.credential.v1` 请求对象接口作为兼容入口保留，并发出 `DeprecationWarning`。新代码使用本页示例中的 `Client` 接口；升级时同步重新生成 SDK 接入配置。
 
