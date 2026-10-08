@@ -6,19 +6,20 @@
 
 方法、参数和响应属性使用 `snake_case`；类名使用 `CapWords`。客户端通过关键字参数配置，取密、确认等操作直接传参，响应具有类型提示。使用 `with` 自动关闭 HTTP 会话：
 
+<!-- python-account-example:start -->
 ```python
 from jms_pam import Client
+from jms_pam_config import client_options, instance_id
 
-with Client(
-    "https://jumpserver.example.com",
-    app_id="<app-id>",
-    app_secret="<app-secret>",
-    instance_id="orders-worker-1",
-) as client:
+
+with Client(instance_id=instance_id, **client_options) as client:
     credential = client.get_credential(account_id="<account-id>")
     username = credential.account.username
     password = credential.account.secret
 ```
+<!-- python-account-example:end -->
+
+`get_credential` 返回完整凭据，包含账号、密码、资产和版本信息。按账号取密使用 `account_id`，处理事件使用事件中的凭据 key。
 
 普通按账号取密时，`account_id` 填写应用已授权的账号 ID。处理凭据订阅或轮换事件时，使用事件中的 `credential_key` 或快照中的 `key`；不要自行构造，也不要填应用 AK/SK。`account_id` 和 `key` 只能选一个。
 
@@ -207,29 +208,86 @@ python3 -m pip install jms-pam
 
 需要维护账号映射、连接池等状态的应用可以继承 `Client` 并重写钩子方法。`__init__` 初始化本地状态；`watch_events()` 收到首次快照后，按策略类型取密，再调用 `on_credential_changed`。后续更新和重连快照也使用同一个钩子。
 
+<!-- python-events-example:start -->
 ```python
 from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-class MyClient(Client):
+def apply_credential(response):
+    # Replace this function with your application's connection update:
+    # build and verify a new connection, switch to it, then release the old one.
+    # Never write response.account.secret or authentication headers to logs.
+    raise NotImplementedError("Implement the application connection update first")
+
+
+def restart_application():
+    # Implement restart and its health check, then return only after it succeeds.
+    raise NotImplementedError("Implement the application restart first")
+
+
+def handle_command(client, event):
+    if event["event"] == "application.restart.requested":
+        restart_application()
+    elif event["event"] == "credential.switch.requested":
+        response = client.get_credential(key=event["credential_key"], allow_local_fallback=False)
+        if (
+            response.revision != event["revision"]
+            or response.account.id != event["account_id"]
+        ):
+            raise ValueError("Requested account version is superseded")
+        apply_credential(response)
+        client.confirm_credential(
+            key=response.key, revision=response.revision, account_id=response.account.id
+        )
+    else:
+        raise ValueError("Unsupported application command")
+
+
+class ApplicationClient(Client):
     def __init__(self, *args, **options):
         super().__init__(*args, **options)
         self.credentials = {}
+        self.credential_modes = {}
+
+    def on_event(self, event):
+        if event.get("command_id"):
+            self.execute_application_command(
+                event, lambda command: handle_command(self, command)
+            )
+        elif event.get("event") == "snapshot":
+            self.credential_modes = {
+                item["key"]: item["credential_mode"]
+                for item in event.get("credentials", [])
+            }
+            for key in self.credentials.keys() - self.credential_modes.keys():
+                # Also release the application's connections for the removed key.
+                del self.credentials[key]
+        elif event.get("event") == "credential.updated":
+            key = event.get("credential_key") or event.get("key")
+            if key:
+                self.credential_modes[key] = event.get("credential_mode")
 
     def on_credential_changed(self, credential):
-        # 验证新连接并切换应用连接池。
-        raise NotImplementedError("请实现应用连接切换")
-        # 切换成功后再保存：self.credentials[credential.key] = credential
+        apply_credential(credential)
+        if self.credential_modes.get(credential.key) == "alternating_rotation":
+            self.confirm_credential(
+                key=credential.key,
+                revision=credential.revision,
+                account_id=credential.account.id,
+            )
+        self.credentials[credential.key] = credential
 
     def on_credential_revoked(self, event):
-        # 释放受影响的连接；随后的快照会重新核对完整授权范围。
-        self.credentials.pop(event.get("credential_key"), None)
+        key = event.get("credential_key")
+        self.credentials.pop(key, None)
+        # Release affected connections. The following snapshot reconciles all keys.
 
 
-with MyClient(instance_id=instance_id, **client_options) as client:
-    client.watch_events()  # 阻塞运行，事件交给子类钩子处理。
+with ApplicationClient(instance_id=instance_id, **client_options) as client:
+    client.watch_events()
 ```
+<!-- python-events-example:end -->
 
 嵌入现有服务时使用 `start_events()`，启动后台监听后立即返回。`stop_events()` 停止监听并等待当前钩子结束，HTTP 客户端仍可使用。退出 `with` 或调用 `close()` 会停止事件流，等待钩子结束，再释放 HTTP 资源。每个客户端只允许一个钩子监听器；停止后可以重新启动。钩子内也可以停止或关闭自己的客户端。
 

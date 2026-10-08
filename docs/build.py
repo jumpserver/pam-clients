@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 CLIENTS = Path(__file__).resolve().parents[1]
@@ -436,14 +437,7 @@ python3 -m pip install jms-pam
 {texts["sdk_config"]}
 
 ```python
-from jms_pam import Client
-from jms_pam_config import client_options, instance_id
-
-
-with Client(instance_id=instance_id, **client_options) as client:
-    credential = client.get_credential(account_id="<account-id>")
-    username = credential.account.username
-    secret = credential.account.secret
+{(CLIENTS / "python" / "account_demo.py").read_text().rstrip()}
 ```
 
 ### {texts["events"]}
@@ -539,6 +533,22 @@ def main():
         # The complete English and Simplified Chinese Python references are maintained directly.
         if locale not in ("en", "zh-hans"):
             documents[CLIENTS / "python" / f"README.{locale}.md"] = python_guide(texts)
+        else:
+            path = CLIENTS / "python" / f"README.{locale}.md"
+            content = path.read_text(encoding="utf-8")
+            for kind, example in (("account", "account_demo.py"), ("events", "subclass_demo.py")):
+                start = f"<!-- python-{kind}-example:start -->"
+                end = f"<!-- python-{kind}-example:end -->"
+                snippet = (CLIENTS / "python" / example).read_text().rstrip()
+                replacement = f"{start}\n```python\n{snippet}\n```\n{end}"
+                # Keep prose hand-maintained while checking shared examples for drift.
+                content, count = re.subn(
+                    re.escape(start) + r".*?" + re.escape(end),
+                    lambda _: replacement, content, flags=re.S,
+                )
+                if not count:
+                    raise ValueError(f"Missing shared {kind} example in {path}")
+            documents[path] = content
         for path, content in documents.items():
             content = content.rstrip() + "\n"
             if args.check:

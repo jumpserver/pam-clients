@@ -6,19 +6,20 @@ Applications can connect to JumpServer directly with the Python SDK or run the G
 
 Methods, parameters, and response attributes use `snake_case`; classes use `CapWords`. Configure the client with keyword arguments, pass operation arguments directly, and use typed responses. A context manager closes the HTTP session:
 
+<!-- python-account-example:start -->
 ```python
 from jms_pam import Client
+from jms_pam_config import client_options, instance_id
 
-with Client(
-    "https://jumpserver.example.com",
-    app_id="<app-id>",
-    app_secret="<app-secret>",
-    instance_id="orders-worker-1",
-) as client:
+
+with Client(instance_id=instance_id, **client_options) as client:
     credential = client.get_credential(account_id="<account-id>")
     username = credential.account.username
     password = credential.account.secret
 ```
+<!-- python-account-example:end -->
+
+`get_credential` returns a complete credential response, including the account, secret, asset and revision. Use `account_id` for account retrieval and the event key for event handling.
 
 For account-based retrieval, set `account_id` to an account ID authorized for the application. When handling subscription or rotation events, use `credential_key` from the event or `key` from the snapshot; do not construct it or use the application AK/SK. Supply exactly one of `account_id` and `key`.
 
@@ -207,29 +208,86 @@ Place `jms_pam_config.py` where the application can import it. It contains appli
 
 Applications with account mappings or connection pools can subclass `Client` and override its hooks. Keep `__init__` for local state; `watch_events()` receives the initial snapshot, fetches credentials by policy mode and calls `on_credential_changed`. Updates and reconnect snapshots use the same hook.
 
+<!-- python-events-example:start -->
 ```python
 from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-class MyClient(Client):
+def apply_credential(response):
+    # Replace this function with your application's connection update:
+    # build and verify a new connection, switch to it, then release the old one.
+    # Never write response.account.secret or authentication headers to logs.
+    raise NotImplementedError("Implement the application connection update first")
+
+
+def restart_application():
+    # Implement restart and its health check, then return only after it succeeds.
+    raise NotImplementedError("Implement the application restart first")
+
+
+def handle_command(client, event):
+    if event["event"] == "application.restart.requested":
+        restart_application()
+    elif event["event"] == "credential.switch.requested":
+        response = client.get_credential(key=event["credential_key"], allow_local_fallback=False)
+        if (
+            response.revision != event["revision"]
+            or response.account.id != event["account_id"]
+        ):
+            raise ValueError("Requested account version is superseded")
+        apply_credential(response)
+        client.confirm_credential(
+            key=response.key, revision=response.revision, account_id=response.account.id
+        )
+    else:
+        raise ValueError("Unsupported application command")
+
+
+class ApplicationClient(Client):
     def __init__(self, *args, **options):
         super().__init__(*args, **options)
         self.credentials = {}
+        self.credential_modes = {}
+
+    def on_event(self, event):
+        if event.get("command_id"):
+            self.execute_application_command(
+                event, lambda command: handle_command(self, command)
+            )
+        elif event.get("event") == "snapshot":
+            self.credential_modes = {
+                item["key"]: item["credential_mode"]
+                for item in event.get("credentials", [])
+            }
+            for key in self.credentials.keys() - self.credential_modes.keys():
+                # Also release the application's connections for the removed key.
+                del self.credentials[key]
+        elif event.get("event") == "credential.updated":
+            key = event.get("credential_key") or event.get("key")
+            if key:
+                self.credential_modes[key] = event.get("credential_mode")
 
     def on_credential_changed(self, credential):
-        # Validate the new connection and switch the application's connection pool.
-        raise NotImplementedError("Implement the application connection update first")
-        # Save after a successful switch: self.credentials[credential.key] = credential
+        apply_credential(credential)
+        if self.credential_modes.get(credential.key) == "alternating_rotation":
+            self.confirm_credential(
+                key=credential.key,
+                revision=credential.revision,
+                account_id=credential.account.id,
+            )
+        self.credentials[credential.key] = credential
 
     def on_credential_revoked(self, event):
-        # Release affected connections; the next snapshot reconciles the full scope.
-        self.credentials.pop(event.get("credential_key"), None)
+        key = event.get("credential_key")
+        self.credentials.pop(key, None)
+        # Release affected connections. The following snapshot reconciles all keys.
 
 
-with MyClient(instance_id=instance_id, **client_options) as client:
-    client.watch_events()  # Blocks until stopped; dispatches to the subclass hooks.
+with ApplicationClient(instance_id=instance_id, **client_options) as client:
+    client.watch_events()
 ```
+<!-- python-events-example:end -->
 
 Use `start_events()` instead to start a background listener and return immediately. `stop_events()` stops the listener and waits for an active hook, while leaving the HTTP client usable. Exiting `with` or calling `close()` stops event streams and waits for hooks before closing HTTP resources. Each client allows one hook listener; it can restart after `stop_events()`. Hooks may also stop or close their own client.
 
