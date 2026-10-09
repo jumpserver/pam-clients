@@ -42,7 +42,7 @@ sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders
 - 获取或交付失败按 1–30 秒指数退避重试，并每 300 秒对账。读取器使用有界队列，业务动作串行执行；WebSocket 心跳与重连由 Go SDK 管理。
 - 最新成功获取的密码不按时间过期，刷新失败不丢失，Agent 重启可恢复。更旧的 API 响应不会覆盖新版本。
 - 明确撤销或授权快照缩小会先停用相应本地取密并保存范围，再尝试 HTTP 同步；HTTP 身份拒绝阻断本地访问。已写入业务文件不会因网络错误被删除。
-- `received`、保存最新值、文件交付和业务生效分别记录。文件写入、脚本退出或服务重启本身不会确认轮换；只有本机 `application_check` 显式配置 `confirm_on_success` 且成功验证运行中的应用，Agent 才确认准确版本。
+- `received`、保存最新值、文件交付和业务生效分别记录。文件写入、脚本退出或服务重启本身不会确认轮换；只有本机 `application_check` 显式配置 `confirm_on_success` 且成功验证运行中的应用，Agent 才按 event_id 上报成功。
 
 ## 本机配置
 
@@ -86,7 +86,7 @@ sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders
 
 调试文件若有 `VERSION` 字段，可在 `fields_map` 中增加 `"VERSION":"revision"`，随凭据版本自动更新。这里的 `revision` 是凭据策略的交付版本，不是账号密码历史版本；正式业务文件没有该字段时不需要添加。
 
-规则按以下顺序执行。只有业务实际使用新连接后，`application_check` 才应成功；`confirm_on_success` 才会确认准确的轮换版本。失败会保留待交付状态并重试。
+规则按以下顺序执行。只有业务实际使用新连接后，`application_check` 才应成功；`confirm_on_success` 才会按事件 ID 上报成功。失败会保留待交付状态并重试。
 
 | 配置块 | 作用 |
 | --- | --- |
@@ -150,7 +150,7 @@ curl --unix-socket '<socket-path>' http://localhost/v1/credentials/orders-db
 jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
 ```
 
-应用验证真实连接并成功切换后，才确认准确版本：业务可通过本机接口显式确认，也可使用通过检查脚本验证的 `confirm_on_success`。同步运行的检查脚本不应反向调用 Agent 的确认接口。交替轮换需要确认，凭据订阅无需确认。确认先持久化，Core 不可用时返回 `pending` 并重试；Core 接受后为 `confirmed`。手动切换指令只在相应版本已确认生效后报告成功。重启指令只操作本机已经固定为 restart 的 systemd 服务。
+应用验证真实连接并成功切换后，才按事件 ID 确认成功：业务可通过本机接口显式确认，也可使用通过检查脚本验证的 `confirm_on_success`。同步运行的检查脚本不应反向调用 Agent 的确认接口。交替轮换和凭据订阅均通过事件结果记录实际应用情况。确认先持久化，Core 不可用时返回 `pending` 并重试；Core 接受后为 `confirmed`。手动切换指令只在对应事件确认成功后完成。重启指令只操作本机已经固定为 restart 的 systemd 服务。
 
 旧 Python Agent 和旧配置格式已移除。修改旧安装时先停止旧进程，按新格式重新生成配置并完成在线同步，再接管交付位置；旧状态不自动转换。
 
@@ -172,12 +172,11 @@ jms-pam-agent get_secret '<account-id>' --socket '<socket-path>'
 
 输出为 JSON，`source` 为 `api` 或 `local`。只有网络错误、超时或 HTTP 5xx 才允许返回仍授权的 push 凭据缓存；仅 pull 的凭据在离线时不可用。授权拒绝、撤销、错误响应和版本回退都返回失败。离线账号列表仅包含已经保留凭据且仍授权的账号。取密命令会将密码输出到 stdout，Agent 自身日志和事件文件不会记录密码。查询不会上报业务生效确认。
 
-## Linux / macOS / Windows 前台运行
+## Linux 前台运行
 
-本地开发无需 root 或 systemd。先从现有应用的 Agent 接入向导下载引导 JSON，设置 `0600`，选择 JSON 或 Socket 交付。在 agent 目录执行：
+前台运行无需 root 或 systemd。下载 Linux Release 二进制并保存为 `jms-pam-agent`；从应用接入向导下载引导 JSON，设置 `0600`，选择 JSON 或 Socket 交付。执行：
 
 ```bash
-go build -o jms-pam-agent ./cmd/jms-pam-agent
 chmod 600 /private/path/jms_pam_agent.json
 ./jms-pam-agent init-local \
   --bootstrap /private/path/jms_pam_agent.json \
@@ -186,15 +185,7 @@ chmod 600 /private/path/jms_pam_agent.json
 ./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
 ```
 
-Windows 从 agent 目录构建 `GOOS=windows GOARCH=amd64 go build -o jms-pam-agent.exe ./cmd/jms-pam-agent`，然后在引导文件所在目录用 PowerShell 运行：
-
-```powershell
-$agentDir = Join-Path $HOME 'jms-pam\orders'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id $env:COMPUTERNAME
-.\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
-```
-
-Windows 需要支持 AF_UNIX 流套接字。
+1.0.2 发行包提供 Linux amd64 / arm64 二进制；macOS / Windows 需要开发者自行构建，参见[开发说明](../docs/agent-development.md)。
 
 `init-local` 通过签名同步确认现有应用范围，生成当前用户的本机路径；只需初始化一次，后续启动复用 `agent.json`。Windows 的引导文件与凭据路径须位于当前用户主目录下，并具有私有 ACL；Agent 拒绝链接和重解析点。本地 Socket 路径需短于 108 字节。Windows 默认凭据文件名使用 key 的 SHA-256 哈希，JSON 内容仍保留原 key。前台模式使用应用授权范围和本机交付规则，支持 JSON 或 Socket，拒绝 EnvironmentFile 与 systemd 动作；Windows 可信脚本动作仅接受 `.exe`。模板、脚本和显式文件规则需自行指定受保护的本机路径。Linux 生产服务仍使用固定 `systemctl start jms-pam-agent`。
 
@@ -214,15 +205,6 @@ Windows 需要支持 AF_UNIX 流套接字。
 ./jms-pam-agent get_accounts --config "$HOME/.jms-pam-agent/orders/agent.json"
 ./jms-pam-agent get_secret '<account-id>' --config "$HOME/.jms-pam-agent/orders/agent.json"
 ```
-
-## 本地验证
-
-```bash
-go test -race ./agent
-go build ./cmd/jms-pam-agent
-```
-
-单测验证文件渲染、原子替换、脚本标准输入和超时、更新取密、离线重启、撤销、失败重试、生效确认与 Socket 生命周期。Linux systemd 安装和真实业务 reload/restart 应在目标主机验证。
 
 ## 事件应用结果
 

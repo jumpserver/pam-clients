@@ -5,14 +5,12 @@
 ## 환경 요구 사항
 
 - JDK 11+ / Maven / Jackson
-- `src/main/java/org/jumpserver/pam/Demo.java`
 
 ## 설정 및 실행
 
-소스 SDK를 설치하고 아래 설정을 입력하세요. 애플리케이션 관리에서 pull 대상 계정을 허용하고, push 또는 순환이 필요한 경우에만 정책을 연결합니다. 접속 자료에서 AK/SK와 조직 ID를 가져옵니다. 자리표시자를 교체하고 인증 자료를 안전하게 보관하세요. 복제본마다 안정적이고 고유한 인스턴스 ID를 사용하며 계정 ID 또는 정책 key 중 하나만 지정합니다.
+SDK를 설치하고 아래 설정을 입력하세요. 애플리케이션 관리에서 pull 대상 계정을 허용하고, push 또는 순환이 필요한 경우에만 정책을 연결합니다. 접속 자료에서 AK/SK와 조직 ID를 가져옵니다. 자리표시자를 교체하고 인증 자료를 안전하게 보관하세요. 복제본마다 안정적이고 고유한 인스턴스 ID를 사용합니다. 조회에는 계정 ID를 지정합니다.
 
 ```bash
-cd java
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-mvn package dependency:copy-dependencies
-java -cp 'target/classes:target/dependency/*' org.jumpserver.pam.Demo
 ```
 
-SDK는 현재 이 저장소의 소스로 설치하며 공개 패키지 저장소에는 배포되지 않았습니다. /path/to/jumpserver를 절대 경로로 바꾸세요. Go와 Node.js 설치 명령은 애플리케이션 디렉터리에서 실행하고 Java 의존성은 애플리케이션 pom.xml에 추가하세요. 저장소 예제의 로컬 가져오기는 아래 패키지 가져오기로 바꾸세요.
+Go는 모듈 버전 태그로 배포합니다. Java와 Node.js는 Release 1.0.2의 SDK 소스 패키지를 사용하며 설치에 Maven 또는 Node.js가 필요합니다. 다음 명령은 애플리케이션 디렉터리에서 실행하고 Java 의존성은 pom.xml에 추가합니다. 예제는 설치된 패키지를 가져옵니다.
 
 ```bash
-mvn -f /path/to/pam-clients/java/pom.xml install
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
+tar -xzf jms-pam-java.tar.gz
+mvn -f ./java/pom.xml install
 ```
 
 ```xml

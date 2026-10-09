@@ -5,14 +5,12 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 ## Requirements
 
 - Node.js 20.3+ / ws
-- `demo.js`
 
 ## Configure and run
 
-Install the source SDK and use the configuration below. Authorize accounts for pull in Application Management; bind policies only when push or rotation is needed. Obtain the application AK/SK and organization ID from its access materials. Replace placeholders and keep identity material in deployment secrets. Use a stable, unique instance ID for each replica. Fetch with exactly one selector: account ID or policy key.
+Install the SDK and use the configuration below. Authorize accounts for pull in Application Management; bind policies only when push or rotation is needed. Obtain the application AK/SK and organization ID from its access materials. Replace placeholders and keep identity material in deployment secrets. Use a stable, unique instance ID for each replica. Fetch by account ID.
 
 ```bash
-cd node
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-npm ci
-node demo.js
 ```
 
-The SDK packages are currently installed from this repository; they are not published to public package registries. Replace /path/to/jumpserver with an absolute path. Run the Go and Node.js install commands in your application directory, or add the Java dependency to your application pom.xml. Local imports in the runnable repository examples should be replaced by the package imports below.
+Go is distributed with versioned module tags. Java and Node.js are available as SDK source archives in Release 1.0.2; Maven and Node.js are required to install them. Run the following installation commands from your application directory. Add the Java dependency to pom.xml. The examples below use the installed package imports.
 
 ```bash
-npm install /path/to/pam-clients/node
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-node.tar.gz
+tar -xzf jms-pam-node.tar.gz
+npm install ./node
 ```
 
 ```javascript
@@ -40,7 +38,7 @@ const { Client } = require('@jumpserver/pam')
 ```javascript
 'use strict'
 
-const { Client } = require('./index')
+const { Client } = require('@jumpserver/pam')
 
 async function main() {
   const client = new Client({
@@ -74,7 +72,7 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 
 ```javascript
 'use strict'
-const { Client } = require('./index')
+const { Client } = require('@jumpserver/pam')
 
 async function applyAccount(account) {
   // Validate a new connection, switch the pool, then release old connections.

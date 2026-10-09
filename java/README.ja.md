@@ -5,14 +5,12 @@
 ## 動作要件
 
 - JDK 11+ / Maven / Jackson
-- `src/main/java/org/jumpserver/pam/Demo.java`
 
 ## 設定と実行
 
-ソース SDK をインストールし、下記を設定します。アプリケーション管理で pull 対象のアカウントを許可し、push またはローテーションが必要な場合だけポリシーを関連付けます。接続資料から AK/SK と組織 ID を取得してください。プレースホルダーを置き換え、認証資料を安全に保管します。各レプリカには安定した一意のインスタンス ID を使い、取得にはアカウント ID またはポリシー key の一方だけを指定します。
+SDK をインストールし、下記を設定します。アプリケーション管理で pull 対象のアカウントを許可し、push またはローテーションが必要な場合だけポリシーを関連付けます。接続資料から AK/SK と組織 ID を取得してください。プレースホルダーを置き換え、認証資料を安全に保管します。各レプリカには安定した一意のインスタンス ID を使います。 取得にはアカウント ID を指定します。
 
 ```bash
-cd java
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-mvn package dependency:copy-dependencies
-java -cp 'target/classes:target/dependency/*' org.jumpserver.pam.Demo
 ```
 
-SDK は現在このリポジトリのソースからインストールし、公開パッケージレジストリには未公開です。/path/to/jumpserver を絶対パスに置き換えます。Go と Node.js のインストールはアプリケーションのディレクトリで実行し、Java の依存関係は pom.xml に追加します。リポジトリの実行例のローカルインポートは以下のパッケージインポートに置き換えてください。
+Go はモジュールのバージョンタグで配布します。Java と Node.js は Release 1.0.2 の SDK ソースを利用し、インストールに Maven または Node.js が必要です。以下はアプリケーションのディレクトリで実行し、Java の依存関係は pom.xml に追加します。例はインストール済みパッケージを読み込みます。
 
 ```bash
-mvn -f /path/to/pam-clients/java/pom.xml install
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
+tar -xzf jms-pam-java.tar.gz
+mvn -f ./java/pom.xml install
 ```
 
 ```xml

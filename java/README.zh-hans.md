@@ -5,14 +5,12 @@
 ## 环境要求
 
 - JDK 11+ / Maven / Jackson
-- `src/main/java/org/jumpserver/pam/Demo.java`
 
 ## 配置与运行
 
-安装源码 SDK，填写下方配置。在应用管理中授权可 pull 的账号；只有需要 push 或轮换时才绑定凭据策略。从应用接入材料获取应用 AK/SK 和组织 ID。替换占位符，将身份材料保存在部署密钥中，每个副本使用稳定、唯一的实例 ID。取密只能选择账号 ID 或策略 key 中的一种。
+安装 SDK，填写下方配置。在应用管理中授权可 pull 的账号；只有需要 push 或轮换时才绑定凭据策略。从应用接入材料获取应用 AK/SK 和组织 ID。替换占位符，将身份材料保存在部署密钥中，每个副本使用稳定、唯一的实例 ID。按账号 ID 取密。
 
 ```bash
-cd java
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-mvn package dependency:copy-dependencies
-java -cp 'target/classes:target/dependency/*' org.jumpserver.pam.Demo
 ```
 
-SDK 当前从本仓库源码安装，尚未发布到公共包仓库。将 /path/to/jumpserver 替换为绝对路径；Go 和 Node.js 安装命令在应用目录执行，Java 依赖添加到应用 pom.xml。仓库运行示例的本地导入在应用中应替换为下方包导入。
+Go 通过模块版本标签分发。Java 和 Node.js 可从 1.0.2 Release 获取 SDK 源码包，安装需要 Maven 或 Node.js。以下安装命令在应用目录执行；Java 依赖添加到 pom.xml。下方示例使用安装后的包导入。
 
 ```bash
-mvn -f /path/to/pam-clients/java/pom.xml install
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
+tar -xzf jms-pam-java.tar.gz
+mvn -f ./java/pom.xml install
 ```
 
 ```xml

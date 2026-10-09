@@ -5,14 +5,12 @@
 ## Требования
 
 - JDK 11+ / Maven / Jackson
-- `src/main/java/org/jumpserver/pam/Demo.java`
 
 ## Настройка и запуск
 
-Установите исходный SDK и задайте параметры ниже. Разрешите аккаунты для pull в управлении приложениями; привязывайте политики только при необходимости push или ротации. Получите AK/SK и ID организации из материалов подключения. Замените шаблонные значения и защитите секреты развёртывания. Каждой реплике нужен стабильный уникальный ID. Укажите только один селектор: ID аккаунта или key политики.
+Установите SDK и задайте параметры ниже. Разрешите аккаунты для pull в управлении приложениями; привязывайте политики только при необходимости push или ротации. Получите AK/SK и ID организации из материалов подключения. Замените шаблонные значения и защитите секреты развёртывания. Каждой реплике нужен стабильный уникальный ID. Получайте по ID учётной записи.
 
 ```bash
-cd java
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-mvn package dependency:copy-dependencies
-java -cp 'target/classes:target/dependency/*' org.jumpserver.pam.Demo
 ```
 
-SDK устанавливаются из исходного кода этого репозитория и ещё не опубликованы в общедоступных реестрах пакетов. Замените /path/to/jumpserver абсолютным путём. Команды установки Go и Node.js выполняйте в каталоге приложения; зависимость Java добавьте в pom.xml приложения. Локальные импорты из примеров замените импортами пакетов ниже.
+Go распространяется через теги модуля. Java и Node.js доступны в исходных архивах SDK Release 1.0.2; нужны Maven или Node.js. Выполняйте команды в каталоге приложения и добавьте зависимость Java в pom.xml. Примеры импортируют установленные пакеты.
 
 ```bash
-mvn -f /path/to/pam-clients/java/pom.xml install
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
+tar -xzf jms-pam-java.tar.gz
+mvn -f ./java/pom.xml install
 ```
 
 ```xml

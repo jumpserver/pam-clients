@@ -5,14 +5,12 @@ Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `
 ## Requisitos
 
 - Node.js 20.3+ / ws
-- `demo.js`
 
 ## Configurar e executar
 
-Instale o SDK fonte e configure os valores abaixo. Autorize contas para pull em Gerenciamento de aplicações; vincule políticas somente quando precisar de push ou rotação. Obtenha AK/SK e ID da organização nos materiais de acesso. Substitua os exemplos e proteja os segredos de implantação. Cada réplica precisa de um ID estável e único. Use um só seletor: ID da conta ou key da política.
+Instale o SDK e configure os valores abaixo. Autorize contas para pull em Gerenciamento de aplicações; vincule políticas somente quando precisar de push ou rotação. Obtenha AK/SK e ID da organização nos materiais de acesso. Substitua os exemplos e proteja os segredos de implantação. Cada réplica precisa de um ID estável e único. Obtenha por ID da conta.
 
 ```bash
-cd node
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-npm ci
-node demo.js
 ```
 
-Os SDKs são instalados a partir deste repositório e ainda não foram publicados em registros públicos. Substitua /path/to/jumpserver por um caminho absoluto. Execute a instalação Go e Node.js no diretório da aplicação ou adicione a dependência Java ao pom.xml da aplicação. Substitua as importações locais dos exemplos pelas importações de pacote abaixo.
+Go é distribuído por tags de módulo. Java e Node.js estão disponíveis como arquivos fonte do SDK no Release 1.0.2; exigem Maven ou Node.js. Execute os comandos no diretório da aplicação e adicione a dependência Java ao pom.xml. Os exemplos importam os pacotes instalados.
 
 ```bash
-npm install /path/to/pam-clients/node
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-node.tar.gz
+tar -xzf jms-pam-node.tar.gz
+npm install ./node
 ```
 
 ```javascript
@@ -40,7 +38,7 @@ const { Client } = require('@jumpserver/pam')
 ```javascript
 'use strict'
 
-const { Client } = require('./index')
+const { Client } = require('@jumpserver/pam')
 
 async function main() {
   const client = new Client({
@@ -74,7 +72,7 @@ Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `
 
 ```javascript
 'use strict'
-const { Client } = require('./index')
+const { Client } = require('@jumpserver/pam')
 
 async function applyAccount(account) {
   // Validate a new connection, switch the pool, then release old connections.

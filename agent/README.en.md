@@ -2,17 +2,26 @@
 
 The standalone Agent is implemented in Go and requires no Python runtime. The built-in systemd installer requires Linux and root; foreground runs use the current user on Linux, macOS and Windows. The Linux service stores private configuration in `/etc/jms-pam-agent/agent.json` and retained state in `/var/lib/jms-pam-agent/state.json` (0600). A subscription credential uses `account:<account-id>` as its key, independent of the policy that selected the account. Multiple matching push policies deliver one account credential. Rotation keeps its policy key. Local `rules.files.path` can give business files stable, readable names.
 
+## Install
+
+Download the bootstrap JSON from the application access wizard and the matching Linux binary and SHA256SUMS from [v1.0.2 Release](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2).
+
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o jms-pam-agent ./cmd/jms-pam-agent
-sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
-chmod 0600 ./jms_pam_agent.json
+VERSION=1.0.2
+ARCH=amd64  # Use arm64 on ARM64 hosts
+BASE="https://github.com/jumpserver/pam-clients/releases/download/v$VERSION"
+curl -fLO "$BASE/jms-pam-agent-linux-$ARCH"
+curl -fLO "$BASE/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+sudo install -m 0755 "jms-pam-agent-linux-$ARCH" /usr/local/bin/jms-pam-agent
+chmod 0600 jms_pam_agent.json
 sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
 sudo systemctl start jms-pam-agent
-sudo systemctl restart jms-pam-agent
+sudo systemctl status jms-pam-agent
 sudo journalctl -u jms-pam-agent
 ```
 
-Run the build from the agent directory; use GOARCH=arm64 for ARM64 targets. The fixed service is `jms-pam-agent.service`. Application AK/SK and a stable `instance_id` identify the Agent. Application account authorization defines on-demand pull access; bound credential policies define proactive sync and push.
+The fixed service is `jms-pam-agent.service`. Application AK/SK and a stable `instance_id` identify the Agent. Application account authorization defines on-demand pull access; bound credential policies define proactive sync and push. Release 1.0.2 supplies Linux amd64 / arm64 binaries. Other platforms require a developer-built binary; see [development](../docs/agent-development.md).
 
 New applications and account-scope updates may select specific accounts, all accounts, or accounts by attribute. The matched scope must stay within the system-wide application account limit (default 10), configured with `APPLICATION_ACCOUNT_SCOPE_LIMIT` in Core's `config.yml`. Restart Core after changing it. Existing scopes retain their current retrieval access until their account authorization is changed. If a newly limited dynamic scope later grows past the limit, account listing and credential retrieval fail until the scope is narrowed or the limit is raised; the server never silently selects the first 10 accounts. After a new scope is saved, the Agent revokes push account keys outside that scope on its next synchronization.
 
@@ -30,7 +39,7 @@ Scripts must be idempotent, use protected paths, and keep secrets out of argumen
 
 See the [complete configuration and script contract](README.zh-hans.md). Local tests cover updates, retained-state recovery, revocation, templates, scripts, failure paths, confirmation and socket lifecycle. Linux systemd installation and real service actions need target-host validation.
 
-## CLI and local foreground development
+## CLI and foreground operation
 
 ```bash
 jms-pam-agent get_accounts --config /path/to/agent.json
@@ -42,23 +51,13 @@ Queries use the running Agent's protected socket. Account listing returns metada
 
 `--config` accepts paths relative to the current working directory; private permissions and symlink checks still apply. Paths inside the configuration remain absolute. CLI diagnostics explain local validation failures or report HTTP status without logging backend response bodies.
 
-For macOS/Linux foreground use, build the native binary, protect the downloaded bootstrap JSON with mode 0600, then run:
+For Linux foreground use, save the Release binary as `jms-pam-agent`, protect the bootstrap JSON with mode 0600, then run:
 
 ```bash
 ./jms-pam-agent init-local --bootstrap /private/path/jms_pam_agent.json \
   --directory "$HOME/.jms-pam-agent/orders" --instance-id local-orders-agent
 ./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
 ```
-
-For Windows, build `jms-pam-agent.exe` with `GOOS=windows GOARCH=amd64 go build -o jms-pam-agent.exe ./cmd/jms-pam-agent`, then run in PowerShell from the directory containing the downloaded bootstrap:
-
-```powershell
-$agentDir = Join-Path $HOME 'jms-pam\orders'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id $env:COMPUTERNAME
-.\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
-```
-
-Windows requires AF_UNIX stream socket support.
 
 Initialize once and reuse `agent.json` for later starts. The bootstrap and all Windows credential paths must stay under the current user's home with a private ACL; the Agent rejects links and reparse points. Use a short directory so the local Unix socket path stays below 108 bytes. Windows default credential filenames use a SHA-256 hash of the key because `account:<id>` is not a valid Windows filename; the JSON content still includes the key. Foreground mode uses current-user paths and JSON or Socket delivery; it cannot execute systemd actions or EnvironmentFile delivery. Signed scope and execution capability checks remain enforced. The directory contains private `agent.json`, append-only metadata `events.jsonl`, retained `state.json`, a protected `run/agent.sock`, and default JSON credentials. Records distinguish received, saved and delivered phases, contain no secrets and provide no exactly-once/history replay guarantee. The Linux service remains `systemctl start jms-pam-agent`.
 
@@ -86,10 +85,6 @@ Put this object inside `rules`. The Agent edits only `DB_USER` and `DB_PASSWORD`
 For a test file that already contains `VERSION`, add `"VERSION":"revision"` to `fields_map` to keep the delivered policy revision visible. This is the credential delivery revision, not an account password history version.
 
 To update two accounts in one file, write two rules, each with one account and its own flat `config_update.fields_map`. Their mapped fields must not overlap. The Agent applies all file updates before service actions and application checks. For a custom update script, stdin `credentials` is keyed by the configured account ID even when the active account changes. Check the [Chinese Agent guide](README.zh-hans.md) for full `config.txt` and `config.yml` behavior and the script input example.
-
-## Download 1.0.2
-
-Download the Agent binary for your architecture and SHA256SUMS from [v1.0.2](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2). Verify the checksum before installing. Obtain `jms_pam_agent.json` from the application access wizard. No source build is required.
 
 ## Event application results
 

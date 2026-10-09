@@ -5,14 +5,12 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 ## Yêu cầu môi trường
 
 - JDK 11+ / Maven / Jackson
-- `src/main/java/org/jumpserver/pam/Demo.java`
 
 ## Cấu hình và chạy
 
-Cài SDK nguồn và cấu hình bên dưới. Cấp quyền tài khoản cho pull trong quản lý ứng dụng; chỉ gắn chính sách khi cần push hoặc luân phiên thông tin xác thực. Lấy AK/SK và ID tổ chức từ tài liệu kết nối. Thay các giá trị mẫu và bảo vệ bí mật triển khai. Mỗi bản sao cần ID ổn định và duy nhất. Chỉ dùng một bộ chọn: ID tài khoản hoặc key chính sách.
+Cài SDK và cấu hình bên dưới. Cấp quyền tài khoản cho pull trong quản lý ứng dụng; chỉ gắn chính sách khi cần push hoặc luân phiên thông tin xác thực. Lấy AK/SK và ID tổ chức từ tài liệu kết nối. Thay các giá trị mẫu và bảo vệ bí mật triển khai. Mỗi bản sao cần ID ổn định và duy nhất. Lấy theo ID tài khoản.
 
 ```bash
-cd java
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,14 +18,14 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-mvn package dependency:copy-dependencies
-java -cp 'target/classes:target/dependency/*' org.jumpserver.pam.Demo
 ```
 
-Các SDK hiện được cài từ mã nguồn kho này và chưa được phát hành lên kho gói công khai. Thay /path/to/jumpserver bằng đường dẫn tuyệt đối. Chạy lệnh cài Go và Node.js trong thư mục ứng dụng hoặc thêm phụ thuộc Java vào pom.xml của ứng dụng. Thay lệnh nhập cục bộ trong ví dụ bằng lệnh nhập gói dưới đây.
+Go được phân phối bằng thẻ phiên bản mô-đun. Java và Node.js có gói nguồn SDK trong Release 1.0.2; cần Maven hoặc Node.js để cài. Chạy các lệnh trong thư mục ứng dụng và thêm phụ thuộc Java vào pom.xml. Ví dụ dùng gói đã cài.
 
 ```bash
-mvn -f /path/to/pam-clients/java/pom.xml install
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
+tar -xzf jms-pam-java.tar.gz
+mvn -f ./java/pom.xml install
 ```
 
 ```xml

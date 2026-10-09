@@ -83,14 +83,14 @@ HOOK_EXAMPLES = {
     "node": ("javascript", "hooks.js"),
 }
 LATEST_CREDENTIAL_APIS = {
-    "python": """- `credential.from_local`
+    "python": """- `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`""",
-    "go": """- `credential.FromLocal`
-- `GetCredentialFresh(ctx, selector)`""",
-    "java": """- `credential.isFromLocal()`
-- `getCredential(key, false)` / `getCredentialByAccountId(accountId, false)`""",
-    "node": """- `credential.fromLocal`
-- `getCredential({key, allowLocalFallback: false})` / `getCredential({accountId, allowLocalFallback: false})`""",
+    "go": """- `account.FromLocal`
+- `GetAccountFresh(ctx, accountID)`""",
+    "java": """- `account.isFromLocal()`
+- `getAccount(accountId, false)`""",
+    "node": """- `account.fromLocal`
+- `getAccount({accountId, allowLocalFallback: false})`""",
 }
 
 LIFECYCLES = {
@@ -143,7 +143,9 @@ go get github.com/jumpserver/pam-clients/go@v1.0.2
 import pam "github.com/jumpserver/pam-clients/go"
 ```""",
     "java": """```bash
-mvn -f /path/to/pam-clients/java/pom.xml install
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
+tar -xzf jms-pam-java.tar.gz
+mvn -f ./java/pom.xml install
 ```
 
 ```xml
@@ -158,7 +160,9 @@ mvn -f /path/to/pam-clients/java/pom.xml install
 import org.jumpserver.pam.Client;
 ```""",
     "node": """```bash
-npm install /path/to/pam-clients/node
+curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-node.tar.gz
+tar -xzf jms-pam-node.tar.gz
+npm install ./node
 ```
 
 ```javascript
@@ -257,6 +261,11 @@ def native_guide(language, texts):
     syntax, quickstart, events = NATIVE_EXAMPLES[language]
     directory = CLIENTS / language
     methods = "\n".join(f"- `{method}`" for method in NATIVE_METHODS[language])
+    quickstart_code = (directory / quickstart).read_text(encoding="utf-8").rstrip()
+    events_code = (directory / events).read_text(encoding="utf-8").rstrip()
+    if language == "node":
+        quickstart_code = quickstart_code.replace("require('./index')", "require('@jumpserver/pam')")
+        events_code = events_code.replace("require('./index')", "require('@jumpserver/pam')")
     return f"""# JumpServer PAM {label} SDK
 
 {texts["native_intro"]}
@@ -264,16 +273,13 @@ def native_guide(language, texts):
 ## {texts["requirements"]}
 
 - {runtime}
-- `{example}`
 
 ## {texts["configure"]}
 
 {texts["native_setup"]}
 
 ```bash
-cd {language}
 {NATIVE_ENVIRONMENT}
-{command}
 ```
 
 {texts["native_install"]}
@@ -283,7 +289,7 @@ cd {language}
 ## {texts["response"]}
 
 ```{syntax}
-{(directory / quickstart).read_text(encoding="utf-8").rstrip()}
+{quickstart_code}
 ```
 
 ## {texts["events"]}
@@ -291,7 +297,7 @@ cd {language}
 {texts["event_results"]}
 
 ```{syntax}
-{(directory / events).read_text(encoding="utf-8").rstrip()}
+{events_code}
 ```
 
 {texts["event_compatibility"]}

@@ -5,14 +5,12 @@ Récupérez le compte via `account_id`. Validez et appliquez le changement avant
 ## Prérequis
 
 - Go 1.23+ / coder/websocket
-- `cmd/demo/main.go`
 
 ## Configuration et exécution
 
-Installez le SDK source et renseignez la configuration ci-dessous. Autorisez les comptes pour le pull dans la gestion des applications ; associez des politiques seulement si le push ou la rotation est nécessaire. Récupérez AK/SK et l’identifiant d’organisation dans les données d’accès. Remplacez les valeurs d’exemple et protégez les secrets de déploiement. Chaque réplique nécessite un identifiant stable et unique. Utilisez un seul sélecteur : identifiant de compte ou key de politique.
+Installez le SDK et renseignez la configuration ci-dessous. Autorisez les comptes pour le pull dans la gestion des applications ; associez des politiques seulement si le push ou la rotation est nécessaire. Récupérez AK/SK et l’identifiant d’organisation dans les données d’accès. Remplacez les valeurs d’exemple et protégez les secrets de déploiement. Chaque réplique nécessite un identifiant stable et unique. Récupérez par identifiant de compte.
 
 ```bash
-cd go
 export JMS_ENDPOINT='https://jumpserver.example.com'
 export JMS_APP_ID='<app-id>'
 export JMS_APP_SECRET='<app-secret>'
@@ -20,11 +18,9 @@ export JMS_ORG_ID='<org-id>'
 export JMS_INSTANCE_ID='app-node-1'
 export JMS_ACCOUNT_ID='<account-id>'
 
-go mod download
-go run ./cmd/demo
 ```
 
-Les SDK s’installent depuis les sources de ce dépôt et ne sont pas encore publiés dans les registres publics. Remplacez /path/to/jumpserver par un chemin absolu. Exécutez l’installation Go et Node.js dans le répertoire de l’application, ou ajoutez la dépendance Java au pom.xml de l’application. Remplacez les imports locaux des exemples par les imports de paquet ci-dessous.
+Go est distribué par tags de module. Java et Node.js sont disponibles en archives SDK dans Release 1.0.2 ; Maven ou Node.js est nécessaire. Exécutez les commandes dans le répertoire de votre application et ajoutez la dépendance Java à pom.xml. Les exemples importent les paquets installés.
 
 ```bash
 go get github.com/jumpserver/pam-clients/go@v1.0.2
