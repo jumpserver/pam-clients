@@ -18,7 +18,7 @@
 | 功能 | Python | Go | Java | Node.js |
 | --- | --- | --- | --- | --- |
 | 按账号取密 | `get_account(account_id=...)` | `GetAccount(ctx, accountID)` | `getAccount(accountId)` | `getAccount({accountId})` |
-| 上报事件应用结果 | `confirm_event(event_id, ...)` | `ConfirmEvent(ctx, eventID, status, errorCode)` | `confirmEvent(eventId, status, errorCode)` | `confirmEvent({eventId, ...})` |
+| 上报事件应用结果 | `confirm_event(event_id=..., ...)` | `ConfirmEvent(ctx, eventID, status, errorCode)` | `confirmEvent(eventId, status, errorCode)` | `confirmEvent({eventId, ...})` |
 | 监听事件及重连快照 | `watch_credential_events(...)` | `WatchCredentialEvents(ctx, handler)` | `watchCredentialEvents()` | `watchCredentialEvents({...})` |
 | 高层事件处理 | `watch_events()` / `start_events()` | `WatchEvents(ctx, handlers)` / `StartEvents(ctx, handlers)` | `watchEvents(listener)` / `startEvents(listener)` | `watchEvents()` / `startEvents()` |
 | 强制实时取密 | `get_account(account_id=..., allow_local_fallback=False)` | `GetAccountFresh(ctx, accountID)` | `getAccount(accountId, false)` | `getAccount({accountId, allowLocalFallback: false})` |
