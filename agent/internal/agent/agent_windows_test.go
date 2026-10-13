@@ -19,6 +19,8 @@ import (
 
 type windowsRemote struct{ credential pam.Credential }
 
+func (r windowsRemote) ReportStatus(context.Context, pam.ApplicationStatus) error { return nil }
+
 func (r windowsRemote) ListAuthorizedAccounts(context.Context) ([]pam.AuthorizedAccount, error) {
 	return nil, nil
 }

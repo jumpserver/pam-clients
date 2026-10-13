@@ -45,6 +45,156 @@ func TestSignedCredentialOperations(t *testing.T) {
 		t.Fatalf("Confirmation failed: %v", err)
 	}
 }
+
+func TestSelfApplicationAndPolicyMetadata(t *testing.T) {
+	client := contractClient(t, "go-metadata", "jms-pam")
+	ctx := context.Background()
+	application, err := client.GetApplication(ctx)
+	if err != nil || application.ID != "contract-app" || application.OrgID != "contract-org" || application.AccountsCount != 3 {
+		t.Fatalf("Invalid application metadata: %v", err)
+	}
+	replica, err := client.GetClientInfo(ctx)
+	if err != nil || replica.InstanceID != "go-metadata" || replica.Type != "sdk" || replica.ConfigSchemaVersion == nil || *replica.ConfigSchemaVersion != 0 {
+		t.Fatalf("Invalid client metadata: %v", err)
+	}
+	policies, err := client.ListPolicies(ctx, "")
+	if err != nil || len(policies) != 2 {
+		t.Fatalf("Invalid policy list: %v", err)
+	}
+	if policies[1].IsActive || policies[1].ActiveAccountID != "" || policies[0].AccountSwitch == nil || len(policies[0].AccountSwitch.AccountIDs) != 2 {
+		t.Fatal("Invalid policy metadata")
+	}
+	for _, selector := range []PolicySelector{{Key: policies[0].Key}, {PolicyID: policies[0].ID}} {
+		policy, err := client.GetPolicy(ctx, selector)
+		if err != nil || policy.ID != policies[0].ID {
+			t.Fatalf("Policy lookup failed: %v", err)
+		}
+	}
+	filtered, err := client.ListPolicies(ctx, "db/空 格?=&")
+	if err != nil || len(filtered) != 1 || filtered[0].ID != policies[0].ID {
+		t.Fatalf("Policy search failed: %v", err)
+	}
+	empty, err := client.ListPolicies(ctx, "no-match")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("Empty policy list failed: %v", err)
+	}
+	raw, err := json.Marshal([]any{application, replica, policies})
+	if err != nil || strings.Contains(string(raw), "DO_NOT_LOG_SECRET") {
+		t.Fatal("Secret leaked in metadata")
+	}
+}
+
+func TestMetadataValidationAndMissingPolicies(t *testing.T) {
+	client := contractClient(t, "go-invalid-metadata", "jms-pam")
+	ctx := context.Background()
+	_, appErr := client.GetApplication(ctx)
+	_, clientErr := client.GetClientInfo(ctx)
+	_, policyErr := client.GetPolicy(ctx, PolicySelector{Key: "invalid"})
+	for _, err := range []error{appErr, clientErr, policyErr} {
+		var failure *PAMError
+		if !errors.As(err, &failure) || failure.Code != "ResponseError" {
+			t.Fatalf("Malformed metadata accepted: %v", err)
+		}
+	}
+	for _, search := range []string{"fault:invalid-list", "fault:duplicate", "fault:invalid-policy"} {
+		if _, err := client.ListPolicies(ctx, search); err == nil {
+			t.Fatal("Malformed list accepted")
+		}
+	}
+	for _, selector := range []PolicySelector{{}, {Key: "db", PolicyID: "id"}, {Key: strings.Repeat("x", 65)}} {
+		if _, err := client.GetPolicy(ctx, selector); err == nil {
+			t.Fatal("Invalid selector accepted")
+		}
+	}
+	if _, err := client.ListPolicies(ctx, strings.Repeat("x", 129)); err == nil {
+		t.Fatal("Invalid search accepted")
+	}
+	_, err := client.GetPolicy(ctx, PolicySelector{Key: "missing"})
+	var failure *PAMError
+	if !errors.As(err, &failure) || failure.StatusCode != 404 {
+		t.Fatalf("Missing policy did not fail: %v", err)
+	}
+}
+
+func TestAccountListing(t *testing.T) {
+	client := contractClient(t, "go-accounts", "jms-pam")
+	ctx := context.Background()
+	accounts, err := client.ListAccounts(ctx, "")
+	if err != nil || len(accounts) != 205 {
+		t.Fatalf("Account listing failed: %v, count %d", err, len(accounts))
+	}
+	if accounts[0].Asset.Platform.Type != "postgresql" || len(accounts[0].Credentials[0].AccountSwitch.AccountIDs) != 2 || accounts[1].Credentials[0].Mode != "subscription" || len(accounts[2].Credentials) != 0 || accounts[2].Username != "" {
+		t.Fatal("Invalid account metadata or policy mapping")
+	}
+	if strings.Contains(fmt.Sprint(accounts), "DO_NOT_LOG_SECRET") {
+		t.Fatal("Secret leaked in account metadata")
+	}
+	page, count, err := client.ListAccountsPage(ctx, 2, 1, "")
+	if err != nil || count != 205 || len(page) != 2 || page[0].ID != "account-1" || page[1].ID != "account-2" {
+		t.Fatalf("Invalid account page: %v", err)
+	}
+	for _, search := range []string{"db/空 格?=&", "no-match", "fault:empty"} {
+		found, err := client.ListAccounts(ctx, search)
+		expected := 0
+		if search == "db/空 格?=&" {
+			expected = 1
+		}
+		if err != nil || len(found) != expected {
+			t.Fatalf("Search failed for %q: %v", search, err)
+		}
+	}
+	page, _, err = client.ListAccountsPage(ctx, 200, 205, "")
+	if err != nil || len(page) != 0 {
+		t.Fatalf("Invalid empty page: %v", err)
+	}
+	legacy, err := client.ListAuthorizedAccounts(ctx)
+	if err != nil || len(legacy) != 205 {
+		t.Fatalf("Legacy method failed: %v", err)
+	}
+	response, err := http.Get(strings.TrimSuffix(os.Getenv("JMS_TEST_ENDPOINT"), "/prefix") + "/__stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var stats struct {
+		Requests []struct {
+			Path string
+			Data map[string]any
+		}
+	}
+	if err := json.NewDecoder(response.Body).Decode(&stats); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range stats.Requests {
+		if request.Data["instance_id"] == "go-accounts" && !strings.HasSuffix(request.Path, "/accounts/") {
+			t.Fatal("Enumeration performed a secret fetch")
+		}
+	}
+}
+
+func TestAccountListingFailures(t *testing.T) {
+	client := contractClient(t, "go-errors-accounts", "jms-pam")
+	ctx := context.Background()
+	for _, page := range [][2]int{{0, 0}, {501, 0}, {200, -1}} {
+		if _, _, err := client.ListAccountsPage(ctx, page[0], page[1], ""); err == nil {
+			t.Fatal("Invalid page accepted")
+		}
+	}
+	if _, err := client.ListAccounts(ctx, strings.Repeat("x", 129)); err == nil {
+		t.Fatal("Oversized search accepted")
+	}
+	for _, fault := range []string{"invalid-count", "null-count", "missing-policy-revision", "missing-username", "null-policies", "invalid-account", "invalid-policy", "invalid-list", "oversized", "duplicate-page", "incomplete", "duplicate", "changing-count", "forbidden"} {
+		accounts, err := client.ListAccounts(ctx, "fault:"+fault)
+		var failure *PAMError
+		code := "ResponseError"
+		if fault == "forbidden" {
+			code = "credential_not_authorized"
+		}
+		if !errors.As(err, &failure) || failure.Code != code || accounts != nil {
+			t.Fatalf("Expected %s for %s, received %v", code, fault, err)
+		}
+	}
+}
 func TestValidationAndErrors(t *testing.T) {
 	client := contractClient(t, "go-errors", "jms-pam")
 	ctx := context.Background()

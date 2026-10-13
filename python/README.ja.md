@@ -63,6 +63,7 @@ JSON はファイル配信、EnvironmentFile は固定した systemd サービ�
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -79,6 +80,8 @@ JSON はファイル配信、EnvironmentFile は固定した systemd サービ�
   }
 ]
 ```
+
+`config_update.format` の既定値は `auto` で、省略時も同じです。拡張子 `.txt`、`.env`、`.properties` は `env`（`KEY=value`）、`.yml`、`.yaml` は `yaml`（最上位の `KEY: value`、新しい値は引用符付き文字列）として扱います。他の拡張子では `env` または `yaml` を明示します。対象フィールドは既存で一度だけ出現する必要があり、他の設定は保持されます。INI セクションやネストした YAML は `files` + `template_file` で全体を生成するか、`script` を使用します。環境変数ファイルの更新後はアプリケーションの再読み込みまたは再起動が必要です。
 
 ```bash
 jms-pam-agent get_accounts
@@ -132,7 +135,28 @@ Python 3.9+ が必要です。アプリケーションの Python または仮想
 python3 -m pip install jms-pam
 ```
 
-jms_pam_config.py をアプリケーションから読み込める場所に配置します。client_options は識別情報を含むため、コミットやログ出力は禁止です。各レプリカに安定した一意の instance_id を設定します.
+`jms_pam_config.py` はアプリケーションの設定ファイルで、PyPI の `jms-pam` パッケージには含まれません。接続ウィザードからダウンロードしてアプリケーションのスクリプトと同じディレクトリに保存するか、以下の内容で作成し、プレースホルダーを実際の識別情報に置き換えます。`client_options` をコミットしたりログに出力したりしないでください。各レプリカに安定した一意の `instance_id` を設定します。
+
+```python
+# jms_pam_config.py
+import os
+
+client_options = {
+    "endpoint": "https://jumpserver.example.com",
+    "app_id": "<application-id>",
+    "app_secret": "<application-secret>",
+    "org_id": "<org-id>",
+}
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+```
+
+対話形式でテストする場合は、`jms_pam_config.py` のあるディレクトリで Python を起動して以下の例を実行します。スクリプトの場合は同じディレクトリに `app.py` として保存し、`python3 app.py` を実行します。`ModuleNotFoundError: No module named 'jms_pam_config'` が出たらファイル名と場所を確認してください。再インストールではこのファイルは作成されません。
+
+```bash
+cd /path/to/your/application
+chmod 0600 jms_pam_config.py
+python3
+```
 
 <!-- python-account-example:start -->
 ```python
@@ -146,6 +170,49 @@ with Client(instance_id=instance_id, **client_options) as client:
     password = account.secret
 ```
 <!-- python-account-example:end -->
+
+### 認可されたアカウントの一覧
+
+一覧メソッドはアプリケーションの現在の pull 認可範囲を取得します。アカウント、資産、関連する push ポリシーのメタデータのみを返し、パスワード取得や取得記録は行いません。ポリシーのないアカウントも含まれます。全件メソッドは全ページを読み取り、ページメソッドは `count` と `accounts` を返します（Go はリストと総数を別々に返します）。既定は limit 200、offset 0、limit は 1–500、search は最大128文字でアカウント名、ユーザー名、資産名、アドレスを検索します。重複、不完全な結果、総数の変化はエラーになります。認可が変わった場合は一覧全体を再取得してください。秘密が必要な場合はアカウント ID で取得メソッドを呼びます。例には新メソッドを含む SDK ソースが必要です。公開済み1.0.2の Python、Java、Node.js にはまだ含まれません。
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    accounts = client.list_accounts()
+    for account in accounts:
+        print(account.id, account.username, account.asset.name)
+
+    page = client.list_accounts_page(limit=20, offset=0, search="database")
+    print("Matching accounts:", page.count)
+    # Use an authorized account.id with get_account when its secret is needed.
+```
+
+
+### アプリケーション、インスタンス、ポリシー情報
+
+get_application は署名したアプリケーションの ID、名前、組織、認可アカウント数と可視ポリシー数を返します。get_client_info は現在のレプリカの登録、種類、バージョンのみを返します。一覧は無効化されたものを含む可視な関連ポリシー全件を返し、search は名前と key を検索します。単一ポリシーは ID またはポリシー自体の key の一方で取得します。アカウントの push key は使用しません。輪換ポリシーには両アカウントと有効アカウントの認可が必要で、購読数は現在認可されたものだけです。秘密やパスワードを返さず、取得や適用確認も行いません。初回アクセスでレプリカを登録します。更新した Core と SDK ソースが必要です。公開済み1.0.2には未収録です。
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    application = client.get_application()
+    print(application.id, application.name, application.accounts_count)
+    replica = client.get_client_info()
+    print(replica.instance_id, replica.client_version)
+
+    policies = client.list_policies()
+    for policy in policies:
+        print(policy.key, policy.name, policy.is_active, policy.status)
+    if policies:
+        policy = client.get_policy(policy_id=policies[0].id)
+        # Alternatively: client.get_policy(key=policies[0].key)
+        print(policy.name, policy.accounts_count)
+```
+
 
 ### イベントと認証情報の適用
 
@@ -225,6 +292,11 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 
 ### 主なメソッド
 
+- `list_accounts(search="")`
+- `get_application()` / `get_client_info()`
+- `report_status("running", account_id=...)` / `report_status("stopped")`
+- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
+- `list_accounts_page(limit=200, offset=0, search="")` → `page.count`, `page.accounts`
 - `get_account(account_id=..., allow_local_fallback=True)`
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
@@ -234,6 +306,16 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 - `clone()` / `close()`
 
 従来の key API は互換用です。新規連携は `get_account` と `confirm_event` を使い、Core も更新してください。
+
+### アプリケーション状態の報告
+
+実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
+
+```python
+client.report_status("running", account_id=account.id)
+client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
+client.report_status("stopped")
+```
 
 
 <!-- sdk-doc:end -->

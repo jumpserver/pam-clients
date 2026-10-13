@@ -63,6 +63,7 @@ JSON 交付檔案，EnvironmentFile 對接固定 systemd 服務，Unix Socket �
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -79,6 +80,8 @@ JSON 交付檔案，EnvironmentFile 對接固定 systemd 服務，Unix Socket �
   }
 ]
 ```
+
+`config_update.format` 預設為 `auto`，省略與明確填寫的效果相同。依副檔名辨識：`.txt`、`.env`、`.properties` 使用 `env`，替換 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替換頂層 `KEY: value`，新值寫為帶引號的字串。其他副檔名需明確指定 `env` 或 `yaml`。映射欄位必須已存在且只出現一次，其他設定保留。INI section、巢狀 YAML 等複雜格式使用 `files` + `template_file` 完整產生，或用 `script` 自訂替換。環境變數檔案更新後，應用仍需重新讀取檔案或重新啟動才會生效。
 
 ```bash
 jms-pam-agent get_accounts
@@ -132,7 +135,28 @@ Agent 在啟動、相關事件及每 300 秒同步。網路故障保留已取得
 python3 -m pip install jms-pam
 ```
 
-將 jms_pam_config.py 放在應用程式旁邊。client_options 包含應用程式身分資料，不要提交或寫入日誌。每個副本使用穩定且唯一的 instance_id.
+`jms_pam_config.py` 是應用程式設定檔，不屬於 PyPI 的 `jms-pam` 套件。從應用程式接入精靈下載並放在應用程式腳本旁，或依下方內容建立檔案，將佔位值替換為實際身分資訊。不要提交或記錄 `client_options`。每個副本使用穩定且唯一的 `instance_id`。
+
+```python
+# jms_pam_config.py
+import os
+
+client_options = {
+    "endpoint": "https://jumpserver.example.com",
+    "app_id": "<application-id>",
+    "app_secret": "<application-secret>",
+    "org_id": "<org-id>",
+}
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+```
+
+互動測試時，先進入 `jms_pam_config.py` 所在目錄再啟動 Python，然後執行下方範例。腳本可儲存為同目錄的 `app.py`，以 `python3 app.py` 執行。若出現 `ModuleNotFoundError: No module named 'jms_pam_config'`，請檢查檔名及位置；重新安裝套件不會產生此檔案。
+
+```bash
+cd /path/to/your/application
+chmod 0600 jms_pam_config.py
+python3
+```
 
 <!-- python-account-example:start -->
 ```python
@@ -146,6 +170,49 @@ with Client(instance_id=instance_id, **client_options) as client:
     password = account.secret
 ```
 <!-- python-account-example:end -->
+
+### 列出授權帳號
+
+帳號列表方法查詢應用程式目前授權的 pull 範圍，只回傳帳號、資產及相關 push 策略的中繼資料，不取得密碼或記錄取密；未綁定策略的帳號也會回傳。完整列表方法自動讀取所有分頁；分頁方法回傳 `count` 和 `accounts`（Go 分別回傳列表與總數）。預設 limit 為 200、offset 為 0；limit 為 1–500，search 最長 128 個字元，可搜尋帳號名稱、使用者名稱、資產名稱或地址。重複、不完整或總數變動會報錯；授權變動時重新查詢完整列表。需要密碼時以帳號 ID 呼叫取密方法。範例需要包含新增方法的 SDK 原始碼；已發布的 1.0.2 尚未在 Python、Java、Node.js 提供這些方法。
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    accounts = client.list_accounts()
+    for account in accounts:
+        print(account.id, account.username, account.asset.name)
+
+    page = client.list_accounts_page(limit=20, offset=0, search="database")
+    print("Matching accounts:", page.count)
+    # Use an authorized account.id with get_account when its secret is needed.
+```
+
+
+### 應用程式、實例與策略資訊
+
+get_application 回傳目前簽章應用程式的 ID、名稱、組織及授權帳號與可見策略數量；get_client_info 只回傳目前副本的登記資訊、類型和版本。策略列表一次回傳全部可見的關聯策略，包括停用策略；search 比對策略名稱或 key。單一策略以策略 ID 或策略本身的 key 查詢，不使用帳號 push key。輪換策略的兩個帳號及目前生效帳號都須有授權；訂閱數量只統計目前有權存取的帳號。查詢只回傳中繼資料，不回傳密鑰或密碼、不取密或確認生效。首次存取會登記副本。需要更新 Core 與 SDK 原始碼；已發布的 1.0.2 尚未包含這些方法。
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    application = client.get_application()
+    print(application.id, application.name, application.accounts_count)
+    replica = client.get_client_info()
+    print(replica.instance_id, replica.client_version)
+
+    policies = client.list_policies()
+    for policy in policies:
+        print(policy.key, policy.name, policy.is_active, policy.status)
+    if policies:
+        policy = client.get_policy(policy_id=policies[0].id)
+        # Alternatively: client.get_policy(key=policies[0].key)
+        print(policy.name, policy.accounts_count)
+```
+
 
 ### 事件與憑證生效
 
@@ -225,6 +292,11 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 
 ### 常用方法
 
+- `list_accounts(search="")`
+- `get_application()` / `get_client_info()`
+- `report_status("running", account_id=...)` / `report_status("stopped")`
+- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
+- `list_accounts_page(limit=200, offset=0, search="")` → `page.count`, `page.accounts`
 - `get_account(account_id=..., allow_local_fallback=True)`
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
@@ -234,6 +306,16 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 - `clone()` / `close()`
 
 舊 key API 保留相容。新整合使用 `get_account` 和 `confirm_event`，並須同步更新 Core。
+
+### 應用狀態回報
+
+回報應用狀態和目前使用的帳號 ID。支援 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次都是完整快照，空帳號清單會清除先前記錄。由應用在狀態變更或自己的心跳中呼叫，不會自動啟動背景回報。Python、Java、Node.js 遇到網路或 API 錯誤時預設回傳 false；Go 使用 `TryReportStatus`。嚴格模式可取得錯誤，無效參數仍會明確提示。呼叫使用設定的 HTTP 逾時，請避開影響業務回應的路徑。回報不會取得密碼、確認輪換或清除憑據快取。`error_code` 僅傳機器可讀錯誤碼，不要傳密碼或例外原文。透過 ClientInfo 查詢最後回報和時間。
+
+```python
+client.report_status("running", account_id=account.id)
+client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
+client.report_status("stopped")
+```
 
 
 <!-- sdk-doc:end -->

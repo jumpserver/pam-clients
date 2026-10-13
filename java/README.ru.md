@@ -67,6 +67,77 @@ public final class Demo {
 }
 ```
 
+### Список разрешённых аккаунтов
+
+Методы списка возвращают текущую область pull-доступа приложения: метаданные аккаунтов, активов и push-политик без чтения паролей и записи получения секретов. Включены аккаунты без политик. Полный список читает все страницы; метод страницы возвращает `count` и `accounts` (Go возвращает список и число отдельно). По умолчанию limit 200, offset 0; limit 1–500, search до 128 символов ищет по имени аккаунта, пользователю, имени актива или адресу. Дубликаты, неполные результаты и изменение числа вызывают ошибку; при изменении доступа повторите полный запрос. Для получения секрета используйте ID аккаунта. Примеры требуют исходный код SDK с новыми методами; опубликованная 1.0.2 ещё не содержит их в Python, Java или Node.js.
+
+```java
+package org.jumpserver.pam;
+
+public final class AccountsDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      for (Models.AuthorizedAccount account : client.listAccounts()) {
+        System.out.println(
+            account.getId() + " " + account.getUsername() + " " + account.getAsset().getName());
+      }
+      Models.AccountsPage page = client.listAccountsPage(20, 0, "database");
+      System.out.println("Matching accounts: " + page.getCount());
+      // Use an authorized account.getId() with getAccount when its secret is needed.
+    }
+  }
+}
+```
+
+
+### Информация о приложении, экземпляре и политиках
+
+getApplication возвращает ID, имя, организацию и число разрешённых аккаунтов и видимых политик подписавшего приложения. getClientInfo возвращает регистрацию, тип и версии только текущей реплики. Список возвращает все видимые привязанные политики, включая отключённые; search ищет по имени или ключу. Для одной политики используйте ID либо собственный ключ политики, а не push-ключ аккаунта. Ротация требует доступа к обоим аккаунтам и активному аккаунту; число подписок учитывает только разрешённые аккаунты. Запросы не возвращают секреты, не получают и не подтверждают учётные данные. Первый доступ регистрирует реплику. Нужны обновлённые Core и исходный код SDK; в опубликованной 1.0.2 методов пока нет.
+
+```java
+package org.jumpserver.pam;
+
+import java.util.List;
+
+public final class ApplicationInfoDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      Models.ApplicationInfo application = client.getApplication();
+      System.out.println(
+          application.getId() + " " + application.getName() + " " + application.getAccountsCount());
+      Models.ClientInfo replica = client.getClientInfo();
+      System.out.println(replica.getInstanceId() + " " + replica.getClientVersion());
+      List<Models.CredentialPolicy> policies = client.listPolicies();
+      for (Models.CredentialPolicy policy : policies) {
+        System.out.println(
+            policy.getKey()
+                + " "
+                + policy.getName()
+                + " "
+                + policy.isActive()
+                + " "
+                + policy.getStatus());
+      }
+      if (!policies.isEmpty()) {
+        Models.CredentialPolicy policy = client.getPolicyById(policies.get(0).getId());
+        System.out.println(policy.getName() + " " + policy.getAccountsCount());
+      }
+    }
+  }
+}
+```
+
+
 ## События и применение учётных данных
 
 Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
@@ -130,6 +201,11 @@ public final class EventsDemo {
 
 ## Основные методы
 
+- `getApplication() / getClientInfo()`
+- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
+- `listAccounts() / listAccounts(search)`
+- `listAccountsPage(limit, offset, search)`
 - `getAccount(accountId)`
 - `getAccount(accountId, false)`
 - `confirmEvent(eventId, status, errorCode)`
@@ -141,6 +217,16 @@ public final class EventsDemo {
 - `executeApplicationCommand(event, handler)`
 - `syncAgent(credentials, deliveredCredentials, configDigest, syncStatus, syncError)`
 - `clone() / close()`
+
+### Отчёт о состоянии приложения
+
+Передавайте полный снимок состояния и ID используемых аккаунтов. Состояния: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Пустой список очищает прежние сведения. Вызывайте при изменении состояния или из heartbeat приложения. Python, Java и Node.js возвращают false при ошибках сети/API; Go предоставляет `TryReportStatus`. Строгие варианты возвращают подробности ошибок. Неверные аргументы отклоняются. Используется настроенный HTTP timeout. Отчёт не получает секреты, не подтверждает ротацию и не очищает кеш. Не передавайте секреты и тексты исключений в `error_code`. ClientInfo возвращает последний отчёт и его время.
+
+```java
+boolean accepted = client.reportStatus("running", account.getId());
+client.reportStatus("stopped", java.util.Collections.emptyList());
+```
+
 
 ## Устранение неполадок
 
@@ -187,6 +273,7 @@ public final class EventsDemo {
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -203,6 +290,8 @@ public final class EventsDemo {
   }
 ]
 ```
+
+`config_update.format` по умолчанию равен `auto`, в том числе при отсутствии поля. Расширения `.txt`, `.env`, `.properties` используют `env` (`KEY=value`), а `.yml`, `.yaml` — `yaml` (`KEY: value` верхнего уровня, новые значения записываются как строки в кавычках). Для других расширений задайте `env` или `yaml`. Каждое поле должно уже существовать ровно один раз; остальные настройки сохраняются. Для секций INI и вложенного YAML используйте `files` + `template_file` для генерации всего файла либо `script`. После обновления файла переменных приложение должно перечитать его или перезапуститься.
 
 ```bash
 jms-pam-agent get_accounts

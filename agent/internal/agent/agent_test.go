@@ -32,6 +32,13 @@ type fakeRemote struct {
 	confirmFault               error
 	fetched, confirmed, claims int
 	commandResults             []string
+	statusReports              []pam.ApplicationStatus
+	statusFault                error
+}
+
+func (f *fakeRemote) ReportStatus(_ context.Context, report pam.ApplicationStatus) error {
+	f.statusReports = append(f.statusReports, report)
+	return f.statusFault
 }
 
 func (f *fakeRemote) SyncAgent(context.Context, pam.AgentSyncOptions) (pam.AgentSync, error) {
@@ -87,11 +94,16 @@ func (f *fakeRemote) ReportApplicationCommandResult(_ context.Context, _ string,
 	return pam.CommandResult{Accepted: f.claims == 1, Status: "running"}, nil
 }
 
-// Use a private directory under the checkout; /tmp has writable ancestors and
-// deliberately fails production path checks. No root/systemd mutation is tested.
+// Use a short private directory under the home folder: /tmp has writable
+// ancestors, and macOS Unix sockets cannot use long checkout paths.
+// No root/systemd mutation is tested.
 func fixture(t *testing.T) (Config, *fakeRemote, *Agent) {
 	t.Helper()
-	directory, err := os.MkdirTemp(".", ".agent-test-")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(home, ".pam-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,6 +776,54 @@ func TestConciseAccountRuleAndGeneratedDefaults(t *testing.T) {
 	stored, err = json.Marshal(config.compactDefaults())
 	if err != nil || bytes.Contains(stored, []byte(`"format"`)) || bytes.Contains(stored, []byte(`"type"`)) {
 		t.Fatal("inferred template or action type leaked into installed configuration", err)
+	}
+}
+
+func TestMappedConfigFormatSelection(t *testing.T) {
+	for _, example := range []struct {
+		name, format, body, expected string
+		invalid                      bool
+	}{
+		{"default.env", "", "DB_USER=old\nOTHER=keep\n", "DB_USER=new\nOTHER=keep\n", false},
+		{"auto.env", "auto", "DB_USER=old\nOTHER=keep\n", "DB_USER=new\nOTHER=keep\n", false},
+		{"auto.txt", "auto", "DB_USER=old\n", "DB_USER=new\n", false},
+		{"auto.properties", "auto", "DB_USER=old\n", "DB_USER=new\n", false},
+		{"default.yml", "", "DB_USER: old\n", "DB_USER: \"new\"\n", false},
+		{"auto.yml", "auto", "DB_USER: old\nOTHER: keep\n", "DB_USER: \"new\"\nOTHER: keep\n", false},
+		{"auto.YAML", "auto", "DB_USER: old\n", "DB_USER: \"new\"\n", false},
+		{"explicit-env", "env", "DB_USER=old\n", "DB_USER=new\n", false},
+		{"explicit-yaml", "yaml", "DB_USER: old\n", "DB_USER: \"new\"\n", false},
+		{"unknown.conf", "auto", "DB_USER=old\n", "", true},
+		{"default.conf", "", "DB_USER=old\n", "", true},
+		{"unsupported.ini", "ini", "[db]\nDB_USER=old\n", "", true},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			config, _, _ := fixture(t)
+			path := filepath.Join(filepath.Dir(config.StateFile), example.name)
+			if err := os.WriteFile(path, []byte(example.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			config.Rules = []Rule{{Accounts: []AccountSelector{{AccountID: "account"}},
+				ConfigUpdate: &ConfigUpdate{File: path, Format: example.format, FieldsMap: map[string]string{"DB_USER": "username"}}}}
+			err := config.Validate()
+			if example.invalid {
+				if err == nil {
+					t.Fatal("unsupported format should fail validation")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			latest := map[string]Credential{"policy": {Key: "policy", Revision: 1, AccountID: "account", Username: "new"}}
+			if err := Deliver(context.Background(), config, latest, map[string]bool{"policy": true}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != example.expected {
+				t.Fatalf("unexpected mapped configuration: %q, %v", data, err)
+			}
+		})
 	}
 }
 

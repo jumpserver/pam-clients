@@ -67,6 +67,77 @@ public final class Demo {
 }
 ```
 
+### List authorized accounts
+
+Use the account listing methods to discover the application’s current authorized pull scope. Listings return account and asset metadata plus related push policies, without retrieving passwords or recording credential fetches. Accounts without policies are included. The full-list method follows all pages; the page method returns `count` and `accounts` (Go returns the slice and total separately). Defaults are limit 200 and offset 0; limit is 1–500 and search is at most 128 characters, matching account name, username, asset name or address. Duplicate accounts, incomplete results and changing totals raise an error; retry the whole listing if authorization changes. Use an account ID with the account-fetch method when its secret is needed. Examples require SDK source containing these new methods; published version 1.0.2 does not yet provide them in Python, Java or Node.js.
+
+```java
+package org.jumpserver.pam;
+
+public final class AccountsDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      for (Models.AuthorizedAccount account : client.listAccounts()) {
+        System.out.println(
+            account.getId() + " " + account.getUsername() + " " + account.getAsset().getName());
+      }
+      Models.AccountsPage page = client.listAccountsPage(20, 0, "database");
+      System.out.println("Matching accounts: " + page.getCount());
+      // Use an authorized account.getId() with getAccount when its secret is needed.
+    }
+  }
+}
+```
+
+
+### Application, replica and policy information
+
+Read the authenticated application ID, name, organization and authorized account/policy counts with getApplication; getClientInfo returns only the current replica’s registration, type and versions. Policy listing returns the entire visible bound list, including disabled policies; search matches policy names or keys. Fetch a policy using exactly one of its ID or base policy key, rather than an account push key. Rotation policies require authorization for both accounts and the active account. Subscription counts include only accounts currently authorized to this application. These calls return metadata without secrets and do not fetch credentials or confirm application changes. As with account queries, the replica is registered on first access. They require updated Core and SDK source; the published 1.0.2 does not yet contain these methods.
+
+```java
+package org.jumpserver.pam;
+
+import java.util.List;
+
+public final class ApplicationInfoDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      Models.ApplicationInfo application = client.getApplication();
+      System.out.println(
+          application.getId() + " " + application.getName() + " " + application.getAccountsCount());
+      Models.ClientInfo replica = client.getClientInfo();
+      System.out.println(replica.getInstanceId() + " " + replica.getClientVersion());
+      List<Models.CredentialPolicy> policies = client.listPolicies();
+      for (Models.CredentialPolicy policy : policies) {
+        System.out.println(
+            policy.getKey()
+                + " "
+                + policy.getName()
+                + " "
+                + policy.isActive()
+                + " "
+                + policy.getStatus());
+      }
+      if (!policies.isEmpty()) {
+        Models.CredentialPolicy policy = client.getPolicyById(policies.get(0).getId());
+        System.out.println(policy.getName() + " " + policy.getAccountsCount());
+      }
+    }
+  }
+}
+```
+
+
 ## Events and credential application
 
 Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
@@ -130,6 +201,11 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 
 ## Common methods
 
+- `getApplication() / getClientInfo()`
+- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
+- `listAccounts() / listAccounts(search)`
+- `listAccountsPage(limit, offset, search)`
 - `getAccount(accountId)`
 - `getAccount(accountId, false)`
 - `confirmEvent(eventId, status, errorCode)`
@@ -141,6 +217,16 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 - `executeApplicationCommand(event, handler)`
 - `syncAgent(credentials, deliveredCredentials, configDigest, syncStatus, syncError)`
 - `clone() / close()`
+
+### Application status reporting
+
+Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
+
+```java
+boolean accepted = client.reportStatus("running", account.getId());
+client.reportStatus("stopped", java.util.Collections.emptyList());
+```
+
 
 ## Troubleshooting
 
@@ -187,6 +273,7 @@ The downloaded bootstrap contains Agent identity and delivery settings. Edit rul
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -203,6 +290,8 @@ The downloaded bootstrap contains Agent identity and delivery settings. Edit rul
   }
 ]
 ```
+
+`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
 
 ```bash
 jms-pam-agent get_accounts

@@ -1,6 +1,6 @@
 include README.*.md
 include .ruff.toml
-include demo.py subclass_demo.py
+include demo.py subclass_demo.py list_accounts.py application_info.py
 recursive-include file_apps *.md
 
 include LICENSE

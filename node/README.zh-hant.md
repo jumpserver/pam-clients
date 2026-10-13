@@ -66,6 +66,87 @@ if (require.main === module)
   })
 ```
 
+### 列出授權帳號
+
+帳號列表方法查詢應用程式目前授權的 pull 範圍，只回傳帳號、資產及相關 push 策略的中繼資料，不取得密碼或記錄取密；未綁定策略的帳號也會回傳。完整列表方法自動讀取所有分頁；分頁方法回傳 `count` 和 `accounts`（Go 分別回傳列表與總數）。預設 limit 為 200、offset 為 0；limit 為 1–500，search 最長 128 個字元，可搜尋帳號名稱、使用者名稱、資產名稱或地址。重複、不完整或總數變動會報錯；授權變動時重新查詢完整列表。需要密碼時以帳號 ID 呼叫取密方法。範例需要包含新增方法的 SDK 原始碼；已發布的 1.0.2 尚未在 Python、Java、Node.js 提供這些方法。
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const accounts = await client.listAccounts()
+    for (const account of accounts) {
+      console.log(account.id, account.username, account.asset.name)
+    }
+    const page = await client.listAccountsPage({ limit: 20, offset: 0, search: 'database' })
+    console.log('Matching accounts:', page.count)
+    // Use an authorized account.id with getAccount when its secret is needed.
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
+### 應用程式、實例與策略資訊
+
+getApplication 回傳目前簽章應用程式的 ID、名稱、組織及授權帳號與可見策略數量；getClientInfo 只回傳目前副本的登記資訊、類型和版本。策略列表一次回傳全部可見的關聯策略，包括停用策略；search 比對策略名稱或 key。單一策略以策略 ID 或策略本身的 key 查詢，不使用帳號 push key。輪換策略的兩個帳號及目前生效帳號都須有授權；訂閱數量只統計目前有權存取的帳號。查詢只回傳中繼資料，不回傳密鑰或密碼、不取密或確認生效。首次存取會登記副本。需要更新 Core 與 SDK 原始碼；已發布的 1.0.2 尚未包含這些方法。
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const application = await client.getApplication()
+    console.log(application.id, application.name, application.accountsCount)
+    const replica = await client.getClientInfo()
+    console.log(replica.instanceId, replica.clientVersion)
+    const policies = await client.listPolicies()
+    for (const policy of policies) {
+      console.log(policy.key, policy.name, policy.isActive, policy.status)
+    }
+    if (policies.length) {
+      const policy = await client.getPolicy({ policyId: policies[0].id })
+      console.log(policy.name, policy.accountsCount)
+    }
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
 ## 事件與憑證生效
 
 使用 `account_id` 取得事件指定帳號。完成連線驗證與切換後，透過 `event_id` 回報 `success` 或 `failed`；收到事件或取密成功不代表套用成功。事件與重連快照包含 `event_id`、`account_id`、`account_revision`，套用前須檢查帳號版本。指令先以 `running` 認領；處理須具冪等性。
@@ -125,6 +206,11 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 
 ## 常用方法
 
+- `getApplication({signal}) / getClientInfo({signal})`
+- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
+- `listAccounts({search, signal})`
+- `listAccountsPage({limit, offset, search, signal})`
 - `getAccount({accountId})`
 - `getAccount({accountId, allowLocalFallback: false})`
 - `confirmEvent({eventId, status, errorCode})`
@@ -136,6 +222,16 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 - `executeApplicationCommand(event, handler)`
 - `syncAgent({credentials, deliveredCredentials, ...})`
 - `clone() / close()`
+
+### 應用狀態回報
+
+回報應用狀態和目前使用的帳號 ID。支援 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次都是完整快照，空帳號清單會清除先前記錄。由應用在狀態變更或自己的心跳中呼叫，不會自動啟動背景回報。Python、Java、Node.js 遇到網路或 API 錯誤時預設回傳 false；Go 使用 `TryReportStatus`。嚴格模式可取得錯誤，無效參數仍會明確提示。呼叫使用設定的 HTTP 逾時，請避開影響業務回應的路徑。回報不會取得密碼、確認輪換或清除憑據快取。`error_code` 僅傳機器可讀錯誤碼，不要傳密碼或例外原文。透過 ClientInfo 查詢最後回報和時間。
+
+```javascript
+const accepted = await client.reportStatus({status: 'running', accountId: account.id})
+await client.reportStatus({status: 'stopped'})
+```
+
 
 ## 問題排查
 
@@ -182,6 +278,7 @@ HTTP、網路、認證及解碼錯誤使用 SDK 例外或錯誤類型，包含�
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -198,6 +295,8 @@ HTTP、網路、認證及解碼錯誤使用 SDK 例外或錯誤類型，包含�
   }
 ]
 ```
+
+`config_update.format` 預設為 `auto`，省略與明確填寫的效果相同。依副檔名辨識：`.txt`、`.env`、`.properties` 使用 `env`，替換 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替換頂層 `KEY: value`，新值寫為帶引號的字串。其他副檔名需明確指定 `env` 或 `yaml`。映射欄位必須已存在且只出現一次，其他設定保留。INI section、巢狀 YAML 等複雜格式使用 `files` + `template_file` 完整產生，或用 `script` 自訂替換。環境變數檔案更新後，應用仍需重新讀取檔案或重新啟動才會生效。
 
 ```bash
 jms-pam-agent get_accounts

@@ -67,6 +67,77 @@ public final class Demo {
 }
 ```
 
+### 認可されたアカウントの一覧
+
+一覧メソッドはアプリケーションの現在の pull 認可範囲を取得します。アカウント、資産、関連する push ポリシーのメタデータのみを返し、パスワード取得や取得記録は行いません。ポリシーのないアカウントも含まれます。全件メソッドは全ページを読み取り、ページメソッドは `count` と `accounts` を返します（Go はリストと総数を別々に返します）。既定は limit 200、offset 0、limit は 1–500、search は最大128文字でアカウント名、ユーザー名、資産名、アドレスを検索します。重複、不完全な結果、総数の変化はエラーになります。認可が変わった場合は一覧全体を再取得してください。秘密が必要な場合はアカウント ID で取得メソッドを呼びます。例には新メソッドを含む SDK ソースが必要です。公開済み1.0.2の Python、Java、Node.js にはまだ含まれません。
+
+```java
+package org.jumpserver.pam;
+
+public final class AccountsDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      for (Models.AuthorizedAccount account : client.listAccounts()) {
+        System.out.println(
+            account.getId() + " " + account.getUsername() + " " + account.getAsset().getName());
+      }
+      Models.AccountsPage page = client.listAccountsPage(20, 0, "database");
+      System.out.println("Matching accounts: " + page.getCount());
+      // Use an authorized account.getId() with getAccount when its secret is needed.
+    }
+  }
+}
+```
+
+
+### アプリケーション、インスタンス、ポリシー情報
+
+getApplication は署名したアプリケーションの ID、名前、組織、認可アカウント数と可視ポリシー数を返します。getClientInfo は現在のレプリカの登録、種類、バージョンのみを返します。一覧は無効化されたものを含む可視な関連ポリシー全件を返し、search は名前と key を検索します。単一ポリシーは ID またはポリシー自体の key の一方で取得します。アカウントの push key は使用しません。輪換ポリシーには両アカウントと有効アカウントの認可が必要で、購読数は現在認可されたものだけです。秘密やパスワードを返さず、取得や適用確認も行いません。初回アクセスでレプリカを登録します。更新した Core と SDK ソースが必要です。公開済み1.0.2には未収録です。
+
+```java
+package org.jumpserver.pam;
+
+import java.util.List;
+
+public final class ApplicationInfoDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      Models.ApplicationInfo application = client.getApplication();
+      System.out.println(
+          application.getId() + " " + application.getName() + " " + application.getAccountsCount());
+      Models.ClientInfo replica = client.getClientInfo();
+      System.out.println(replica.getInstanceId() + " " + replica.getClientVersion());
+      List<Models.CredentialPolicy> policies = client.listPolicies();
+      for (Models.CredentialPolicy policy : policies) {
+        System.out.println(
+            policy.getKey()
+                + " "
+                + policy.getName()
+                + " "
+                + policy.isActive()
+                + " "
+                + policy.getStatus());
+      }
+      if (!policies.isEmpty()) {
+        Models.CredentialPolicy policy = client.getPolicyById(policies.get(0).getId());
+        System.out.println(policy.getName() + " " + policy.getAccountsCount());
+      }
+    }
+  }
+}
+```
+
+
 ## イベントと認証情報の適用
 
 `account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
@@ -130,6 +201,11 @@ public final class EventsDemo {
 
 ## 主なメソッド
 
+- `getApplication() / getClientInfo()`
+- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
+- `listAccounts() / listAccounts(search)`
+- `listAccountsPage(limit, offset, search)`
 - `getAccount(accountId)`
 - `getAccount(accountId, false)`
 - `confirmEvent(eventId, status, errorCode)`
@@ -141,6 +217,16 @@ public final class EventsDemo {
 - `executeApplicationCommand(event, handler)`
 - `syncAgent(credentials, deliveredCredentials, configDigest, syncStatus, syncError)`
 - `clone() / close()`
+
+### アプリケーション状態の報告
+
+実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
+
+```java
+boolean accepted = client.reportStatus("running", account.getId());
+client.reportStatus("stopped", java.util.Collections.emptyList());
+```
+
 
 ## トラブルシューティング
 
@@ -187,6 +273,7 @@ HTTP、ネットワーク、認証、デコードの失敗はエラーコード�
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -203,6 +290,8 @@ HTTP、ネットワーク、認証、デコードの失敗はエラーコード�
   }
 ]
 ```
+
+`config_update.format` の既定値は `auto` で、省略時も同じです。拡張子 `.txt`、`.env`、`.properties` は `env`（`KEY=value`）、`.yml`、`.yaml` は `yaml`（最上位の `KEY: value`、新しい値は引用符付き文字列）として扱います。他の拡張子では `env` または `yaml` を明示します。対象フィールドは既存で一度だけ出現する必要があり、他の設定は保持されます。INI セクションやネストした YAML は `files` + `template_file` で全体を生成するか、`script` を使用します。環境変数ファイルの更新後はアプリケーションの再読み込みまたは再起動が必要です。
 
 ```bash
 jms-pam-agent get_accounts

@@ -63,6 +63,7 @@ La configuration téléchargée contient déjà l’identité et les paramètres
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -79,6 +80,8 @@ La configuration téléchargée contient déjà l’identité et les paramètres
   }
 ]
 ```
+
+`config_update.format` vaut `auto` par défaut, même si ce champ est omis. Les extensions `.txt`, `.env` et `.properties` utilisent `env` (`KEY=value`) ; `.yml` et `.yaml` utilisent `yaml` (`KEY: value` au premier niveau, valeurs écrites comme chaînes entre guillemets). Pour une autre extension, précisez `env` ou `yaml`. Chaque champ doit déjà exister une seule fois ; les autres paramètres sont conservés. Pour les sections INI ou le YAML imbriqué, utilisez `files` + `template_file` pour générer tout le fichier, ou un `script`. Après modification du fichier de variables, l’application doit le relire ou redémarrer.
 
 ```bash
 jms-pam-agent get_accounts
@@ -132,7 +135,28 @@ Python 3.9+ est requis. Installez jms-pam depuis PyPI ou votre miroir interne av
 python3 -m pip install jms-pam
 ```
 
-Placez jms_pam_config.py à côté de l’application. client_options contient des éléments d’identité : ne les ajoutez ni au dépôt ni aux journaux. Utilisez instance_id stable et unique par réplique.
+`jms_pam_config.py` est un fichier de configuration de l’application, absent du paquet `jms-pam` sur PyPI. Téléchargez-le depuis l’assistant d’intégration et placez-le à côté du script de l’application, ou créez-le avec le contenu ci-dessous en remplaçant les valeurs par l’identité réelle de l’application. Ne placez pas `client_options` dans le dépôt ou les journaux. Utilisez un `instance_id` stable et unique par réplique.
+
+```python
+# jms_pam_config.py
+import os
+
+client_options = {
+    "endpoint": "https://jumpserver.example.com",
+    "app_id": "<application-id>",
+    "app_secret": "<application-secret>",
+    "org_id": "<org-id>",
+}
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+```
+
+Pour un test interactif, lancez Python depuis le répertoire contenant `jms_pam_config.py`, puis exécutez l’exemple ci-dessous. Pour un script, enregistrez-le sous `app.py` dans le même répertoire et exécutez `python3 app.py`. En cas de `ModuleNotFoundError: No module named 'jms_pam_config'`, vérifiez le nom et l’emplacement du fichier ; réinstaller le paquet ne le crée pas.
+
+```bash
+cd /path/to/your/application
+chmod 0600 jms_pam_config.py
+python3
+```
 
 <!-- python-account-example:start -->
 ```python
@@ -146,6 +170,49 @@ with Client(instance_id=instance_id, **client_options) as client:
     password = account.secret
 ```
 <!-- python-account-example:end -->
+
+### Lister les comptes autorisés
+
+Les méthodes de liste consultent le périmètre pull actuellement autorisé et renvoient les métadonnées des comptes, actifs et politiques push, sans récupérer les mots de passe ni enregistrer une lecture de secret. Les comptes sans politique sont inclus. La liste complète parcourt toutes les pages ; la méthode de page renvoie `count` et `accounts` (Go renvoie la liste et le total séparément). Les valeurs par défaut sont limit 200 et offset 0 ; limit vaut 1–500 et search accepte 128 caractères pour le nom du compte, l’utilisateur, le nom de l’actif ou l’adresse. Doublons, résultats incomplets et changements du total produisent une erreur ; relancez toute la liste si les droits changent. Pour obtenir un secret, utilisez l’ID du compte. Les exemples nécessitent le code SDK avec ces nouvelles méthodes ; la version publiée 1.0.2 ne les fournit pas encore en Python, Java ou Node.js.
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    accounts = client.list_accounts()
+    for account in accounts:
+        print(account.id, account.username, account.asset.name)
+
+    page = client.list_accounts_page(limit=20, offset=0, search="database")
+    print("Matching accounts:", page.count)
+    # Use an authorized account.id with get_account when its secret is needed.
+```
+
+
+### Informations sur l’application, la réplique et les politiques
+
+get_application renvoie ID, nom, organisation et nombres de comptes autorisés et de politiques visibles de l’application authentifiée. get_client_info renvoie uniquement l’inscription, le type et les versions de la réplique actuelle. La liste renvoie toutes les politiques liées visibles, y compris désactivées ; search recherche les noms ou clés. Consultez une politique par son ID ou sa propre clé, sans utiliser les clés push des comptes. La rotation exige les droits sur les deux comptes et le compte actif ; les nombres d’abonnements ne comptent que les comptes autorisés. Ces appels ne renvoient pas de secrets et ne récupèrent ni ne confirment des identifiants. Le premier accès inscrit la réplique. Ils exigent Core et le code SDK mis à jour ; la version publiée 1.0.2 ne les contient pas encore.
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    application = client.get_application()
+    print(application.id, application.name, application.accounts_count)
+    replica = client.get_client_info()
+    print(replica.instance_id, replica.client_version)
+
+    policies = client.list_policies()
+    for policy in policies:
+        print(policy.key, policy.name, policy.is_active, policy.status)
+    if policies:
+        policy = client.get_policy(policy_id=policies[0].id)
+        # Alternatively: client.get_policy(key=policies[0].key)
+        print(policy.name, policy.accounts_count)
+```
+
 
 ### Événements et application des identifiants
 
@@ -225,6 +292,11 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 
 ### Méthodes courantes
 
+- `list_accounts(search="")`
+- `get_application()` / `get_client_info()`
+- `report_status("running", account_id=...)` / `report_status("stopped")`
+- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
+- `list_accounts_page(limit=200, offset=0, search="")` → `page.count`, `page.accounts`
 - `get_account(account_id=..., allow_local_fallback=True)`
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
@@ -234,6 +306,16 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 - `clone()` / `close()`
 
 Les anciennes API key restent compatibles. Utilisez `get_account` et `confirm_event` pour les nouvelles intégrations et mettez également Core à jour.
+
+### Rapport d’état de l’application
+
+Signalez un instantané complet de l’état et des ID des comptes utilisés. États : `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Une liste vide efface les usages précédents. Appelez lors des changements d’état ou depuis le heartbeat de l’application. Python, Java et Node.js renvoient false en cas d’erreur réseau/API ; Go propose `TryReportStatus`. Les variantes strictes exposent les erreurs. Les arguments invalides sont rejetés. Le délai HTTP configuré s’applique. Le rapport ne récupère pas de secrets, ne confirme pas de rotation et n’invalide pas le cache. N’incluez ni secrets ni messages d’exception dans `error_code`. ClientInfo fournit le dernier rapport et sa date.
+
+```python
+client.report_status("running", account_id=account.id)
+client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
+client.report_status("stopped")
+```
 
 
 <!-- sdk-doc:end -->

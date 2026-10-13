@@ -24,6 +24,122 @@ function client(instanceId = 'node', source = 'jms-pam') {
   })
 }
 
+test('status reporting is best effort, reports complete usage and preserves cached credentials', async () => {
+  const sdk = client('node-status')
+  try {
+    assert.equal(await sdk.reportStatus({ status: 'running', accountId: 'account' }), true)
+    assert.deepEqual((await sdk.getClientInfo()).applicationStatus, { status: 'running', accountIds: ['account'], errorCode: '' })
+    assert.equal(await sdk.reportStatus({ status: 'degraded', accountIds: ['account', 'backup'], errorCode: 'db_unavailable' }), true)
+    assert.deepEqual((await sdk.getClientInfo()).applicationStatus.accountIds, ['account', 'backup'])
+    await sdk.getCredential({ key: 'cache-503' })
+    for (const errorCode of ['fault_401', 'fault_403', 'fault_404', 'fault_503', 'fault_invalid', 'fault_network']) {
+      assert.equal(await sdk.reportStatus({ status: 'running', errorCode }), false)
+      await assert.rejects(sdk.reportStatus({ status: 'running', errorCode, raiseOnError: true }), PAMError)
+    }
+    assert.equal((await sdk.getCredential({ key: 'cache-503' })).fromLocal, true)
+    assert.equal(await sdk.reportStatus({ status: 'running', signal: AbortSignal.abort() }), false)
+    assert.equal(await sdk.reportStatus({ status: 'stopped' }), true)
+    assert.deepEqual((await sdk.getClientInfo()).applicationStatus.accountIds, [])
+    await assert.rejects(sdk.reportStatus({ status: 'unknown' }), TypeError)
+    await assert.rejects(sdk.reportStatus({ status: 'running', accountIds: ['account', 'account'] }), TypeError)
+    await assert.rejects(sdk.reportStatus({ status: 'error', errorCode: 'DO NOT SEND SECRETS' }), TypeError)
+  } finally { sdk.close() }
+  assert.equal(await sdk.reportStatus({ status: 'stopped' }), false)
+  await assert.rejects(sdk.reportStatus({ status: 'stopped', raiseOnError: true }))
+  const timeoutClient = new Client({ endpoint: server.endpoint, appId: 'contract-app', appSecret: 'contract-secret', instanceId: 'node-status-timeout', orgId: 'contract-org', timeout: 50 })
+  try { assert.equal(await timeoutClient.reportStatus({ status: 'running', errorCode: 'fault_timeout' }), false) }
+  finally { timeoutClient.close() }
+})
+
+test('application, current client and bound policies expose only typed metadata', async () => {
+  const sdk = client('node-metadata')
+  try {
+    const app = await sdk.getApplication()
+    assert.equal(app.id, 'contract-app')
+    assert.equal(app.orgId, 'contract-org')
+    assert.equal(app.accountsCount, 3)
+    const replica = await sdk.getClientInfo()
+    assert.equal(replica.instanceId, 'node-metadata')
+    assert.equal(replica.type, 'sdk')
+    assert.equal(replica.configSchemaVersion, 0)
+    const policies = await sdk.listPolicies()
+    assert.equal(policies.length, 2)
+    assert.equal(policies[1].isActive, false)
+    assert.equal(policies[1].activeAccountId, null)
+    assert.deepEqual(policies[0].accountSwitch.accountIds, ['account', 'backup'])
+    assert.deepEqual(await sdk.getPolicy({ key: policies[0].key }), policies[0])
+    assert.deepEqual(await sdk.getPolicy({ policyId: policies[0].id }), policies[0])
+    assert.deepEqual(await sdk.listPolicies({ search: 'db/空 格?=&' }), [policies[0]])
+    assert.deepEqual(await sdk.listPolicies({ search: 'no-match' }), [])
+    assert.ok(!JSON.stringify([app, replica, policies]).includes('DO_NOT_LOG_SECRET'))
+    for (const item of [app, replica, ...policies]) assert.equal(item.secret, undefined)
+    assert.ok(server.stats().requests.filter(item => item.data.instance_id === 'node-metadata')
+      .every(item => ['/application/', '/client/', '/policies/', '/policy/'].some(path => item.path.endsWith(path))))
+  } finally { sdk.close() }
+})
+
+test('metadata queries reject malformed responses, duplicate policies and invalid selectors', async () => {
+  const sdk = client('node-invalid-metadata')
+  try {
+    for (const method of [() => sdk.getApplication(), () => sdk.getClientInfo(),
+      () => sdk.getPolicy({ key: 'invalid' })]) {
+      await assert.rejects(method(), error => error instanceof PAMError && error.code === 'ResponseError')
+    }
+    for (const search of ['fault:invalid-list', 'fault:duplicate', 'fault:invalid-policy'])
+      await assert.rejects(sdk.listPolicies({ search }), PAMError)
+    for (const options of [{}, { key: 'db', policyId: 'id' }, { key: '' }, { key: 'x'.repeat(65) }])
+      assert.throws(() => sdk.getPolicy(options), TypeError)
+    assert.throws(() => sdk.listPolicies({ search: 'x'.repeat(129) }), TypeError)
+    await assert.rejects(sdk.getPolicy({ key: 'missing' }), error => error.statusCode === 404)
+    await assert.rejects(sdk.getApplication({ signal: AbortSignal.abort() }), PAMError)
+  } finally { sdk.close() }
+})
+
+test('account listing follows pages, searches and returns metadata without secrets', async () => {
+  const sdk = client('node-accounts')
+  try {
+    const accounts = await sdk.listAccounts()
+    assert.equal(accounts.length, 205)
+    assert.equal(new Set(accounts.map(item => item.id)).size, 205)
+    assert.equal(accounts[0].asset.platform.type, 'postgresql')
+    assert.deepEqual(accounts[0].credentials[0].accountSwitch.accountIds, ['account-0', 'backup'])
+    assert.equal(accounts[1].credentials[0].mode, 'subscription')
+    assert.deepEqual(accounts[2].credentials, [])
+    assert.equal(accounts[2].username, '')
+    assert.equal(accounts[0].secret, undefined)
+    assert.ok(!inspect(accounts).includes('DO_NOT_LOG_SECRET'))
+    const page = await sdk.listAccountsPage({ limit: 2, offset: 1 })
+    assert.equal(page.count, 205)
+    assert.deepEqual(page.accounts.map(item => item.id), ['account-1', 'account-2'])
+    assert.deepEqual((await sdk.listAccountsPage({ offset: 205 })).accounts, [])
+    assert.deepEqual((await sdk.listAccounts({ search: 'db/空 格?=&' })).map(item => item.id), ['account-0'])
+    assert.deepEqual(await sdk.listAccounts({ search: 'no-match' }), [])
+    assert.deepEqual(await sdk.listAccounts({ search: 'fault:empty' }), [])
+    assert.ok(server.stats().requests.filter(item => item.data.instance_id === 'node-accounts')
+      .every(item => item.path.endsWith('/accounts/')))
+  } finally {
+    sdk.close()
+  }
+})
+
+test('account listing rejects malformed pages and never returns a partial list', async () => {
+  const sdk = client('node-errors-accounts')
+  try {
+    for (const options of [
+      { limit: 0 }, { limit: 501 }, { limit: true }, { limit: 1.5 },
+      { offset: -1 }, { offset: true }, { search: null }, { search: 'x'.repeat(129) },
+    ]) assert.throws(() => sdk.listAccountsPage(options), TypeError)
+    for (const fault of ['invalid-count', 'null-count', 'missing-policy-revision', 'missing-username', 'null-policies', 'invalid-account', 'invalid-policy', 'invalid-list',
+      'oversized', 'duplicate-page', 'incomplete', 'duplicate', 'changing-count', 'forbidden']) {
+      await assert.rejects(sdk.listAccounts({ search: 'fault:' + fault }), error =>
+        error instanceof PAMError && error.code === (fault === 'forbidden' ? 'credential_not_authorized' : 'ResponseError'))
+    }
+    await assert.rejects(sdk.listAccounts({ signal: AbortSignal.abort() }), PAMError)
+  } finally {
+    sdk.close()
+  }
+})
+
 test('automatic signing, encoded selectors and typed responses', async () => {
   const sdk = client()
   try {

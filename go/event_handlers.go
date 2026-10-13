@@ -82,11 +82,24 @@ func (w *EventWatcher) report(err error, event *Event) {
 		return
 	}
 	if w.handlers.OnError != nil {
-		w.handlers.OnError(w.ctx, err, event)
+		if failure := invokeEventHook(func() error { w.handlers.OnError(w.ctx, err, event); return nil }); failure != nil {
+			log.Printf("Credential error hook failed: %T", failure)
+		}
 	} else {
 		// Exception messages and event payloads can contain credential material.
 		log.Printf("Credential event handler failed: %T", err)
 	}
+}
+
+// A panic in an application callback must not crash the application's process.
+// Do not include the recovered value; it may contain credentials.
+func invokeEventHook(hook func() error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("application event hook panicked")
+		}
+	}()
+	return hook()
 }
 
 func eventSelector(event Event) (CredentialSelector, bool) {
@@ -119,7 +132,7 @@ func (w *EventWatcher) refresh(update, event Event, delay time.Duration) {
 		err = errors.New("credential API revision is behind the event")
 	}
 	if err == nil && w.ctx.Err() == nil && w.handlers.OnCredentialChanged != nil {
-		err = w.handlers.OnCredentialChanged(w.ctx, credential)
+		err = invokeEventHook(func() error { return w.handlers.OnCredentialChanged(w.ctx, credential) })
 	}
 	if w.ctx.Err() != nil {
 		return
@@ -144,7 +157,7 @@ func (w *EventWatcher) dispatch(event Event) {
 		clear(w.pending)
 	}
 	if w.handlers.OnEvent != nil {
-		if err := w.handlers.OnEvent(w.ctx, event); err != nil {
+		if err := invokeEventHook(func() error { return w.handlers.OnEvent(w.ctx, event) }); err != nil {
 			w.report(err, &event)
 		}
 	}
@@ -162,7 +175,7 @@ func (w *EventWatcher) dispatch(event Event) {
 		}
 	case "credential.revoked":
 		if w.handlers.OnCredentialRevoked != nil {
-			if err := w.handlers.OnCredentialRevoked(w.ctx, event); err != nil {
+			if err := invokeEventHook(func() error { return w.handlers.OnCredentialRevoked(w.ctx, event) }); err != nil {
 				w.report(err, &event)
 			}
 		}

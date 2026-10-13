@@ -32,7 +32,7 @@ class Transport:
                 response = self.session.request(method, url, **options)
             except requests.RequestException as error:
                 raise PAMError(
-                    "NetworkError", str(error), original_error=error
+                    "NetworkError", "HTTP request failed", original_error=error
                 ) from error
             try:
                 return self._decode(response, parse)
@@ -48,6 +48,11 @@ class Transport:
                 "ResponseError",
                 "The server returned invalid JSON",
                 status_code=response.status_code,
+                original_error=error,
+            ) from error
+        except requests.RequestException as error:
+            raise PAMError(
+                "NetworkError", "HTTP response failed", status_code=response.status_code,
                 original_error=error,
             ) from error
         if not isinstance(payload, dict):

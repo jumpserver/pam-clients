@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -217,6 +218,12 @@ public final class Client implements AutoCloseable {
 
   private <T> T request(
       String method, String path, Map<String, Object> fields, Function<JsonNode, T> parse) {
+    return request(method, path, fields, parse, true);
+  }
+
+  private <T> T request(
+      String method, String path, Map<String, Object> fields, Function<JsonNode, T> parse,
+      boolean invalidateCredentials) {
     synchronized (this) {
       if (closed) throw new IllegalStateException("Client is closed");
     }
@@ -248,10 +255,10 @@ public final class Client implements AutoCloseable {
       future.cancel(true);
       throw new PAMException("NetworkError", 0, "HTTP request failed", null, error);
     }
-    if (response.statusCode() == 401
+    if (invalidateCredentials && (response.statusCode() == 401
         || response.statusCode() == 403
         || response.statusCode() == 404
-        || response.statusCode() == 426) {
+        || response.statusCode() == 426)) {
       synchronized (credentialsLock) {
         latestCredentials.clear();
         credentialGeneration++;
@@ -272,7 +279,7 @@ public final class Client implements AutoCloseable {
               : "HTTP request failed";
       String requestId =
           payload.path("request_id").isTextual() ? payload.get("request_id").asText() : null;
-      if (response.statusCode() == 400 && code.equals("credential_not_found")) {
+      if (invalidateCredentials && response.statusCode() == 400 && code.equals("credential_not_found")) {
         synchronized (credentialsLock) {
           latestCredentials.clear();
           credentialGeneration++;
@@ -291,6 +298,133 @@ public final class Client implements AutoCloseable {
           null,
           error);
     }
+  }
+
+  public ApplicationInfo getApplication() {
+    return request("GET", "/application/", Collections.emptyMap(), ApplicationInfo::new);
+  }
+
+  public ClientInfo getClientInfo() {
+    return request("GET", "/client/", Collections.emptyMap(), ClientInfo::new);
+  }
+
+  /** Optional telemetry: network/API failures return false, without invalidating credentials. */
+  public boolean reportStatus(String status, String accountId) {
+    return reportStatus(new ApplicationStatus(status, Collections.singletonList(accountId), ""));
+  }
+
+  public boolean reportStatus(String status, List<String> accountIds) {
+    return reportStatus(new ApplicationStatus(status, accountIds, ""));
+  }
+
+  public boolean reportStatus(ApplicationStatus report) {
+    java.util.Objects.requireNonNull(report, "report");
+    try {
+      return reportStatusStrict(report);
+    } catch (PAMException | IllegalStateException error) {
+      return false;
+    }
+  }
+
+  /** Strict form for callers that need the failure code. Does not confirm a rotation. */
+  public boolean reportStatusStrict(ApplicationStatus report) {
+    java.util.Objects.requireNonNull(report, "report");
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put("status", report.getStatus());
+    fields.put("account_ids", report.getAccountIds());
+    fields.put("error_code", report.getErrorCode());
+    return request("POST", "/status/", fields, data -> Models.bool(data, "accepted"), false);
+  }
+
+  public List<CredentialPolicy> listPolicies() {
+    return listPolicies("");
+  }
+
+  public List<CredentialPolicy> listPolicies(String search) {
+    if (search == null || search.codePointCount(0, search.length()) > 128)
+      throw new IllegalArgumentException("Invalid policy search");
+    return request(
+        "GET",
+        "/policies/",
+        Map.of("search", search),
+        value -> {
+          JsonNode items = value.get("policies");
+          if (items == null || !items.isArray())
+            throw new IllegalArgumentException("Invalid policy list");
+          List<CredentialPolicy> policies = new ArrayList<>();
+          Set<String> seen = new HashSet<>();
+          for (JsonNode item : items) {
+            CredentialPolicy policy = new CredentialPolicy(item);
+            if (!seen.add(policy.getId()))
+              throw new IllegalArgumentException("Duplicate policy in list");
+            policies.add(policy);
+          }
+          return Collections.unmodifiableList(policies);
+        });
+  }
+
+  public CredentialPolicy getPolicy(String key) {
+    nonempty(key, "key");
+    if (key.codePointCount(0, key.length()) > 64)
+      throw new IllegalArgumentException("Invalid policy key");
+    return request("GET", "/policy/", Map.of("key", key), CredentialPolicy::new);
+  }
+
+  public CredentialPolicy getPolicyById(String policyId) {
+    return request(
+        "GET",
+        "/policy/",
+        Map.of("policy_id", nonempty(policyId, "policyId")),
+        CredentialPolicy::new);
+  }
+
+  public List<AuthorizedAccount> listAccounts() {
+    return listAccounts("");
+  }
+
+  /** Fetch all live metadata pages; retry the listing if the scope changes. */
+  public List<AuthorizedAccount> listAccounts(String search) {
+    List<AuthorizedAccount> accounts = new ArrayList<>();
+    Set<String> seen = new HashSet<>();
+    int count = -1;
+    while (true) {
+      AccountsPage page = listAccountsPage(200, accounts.size(), search);
+      if (count == -1) count = page.getCount();
+      if (page.getCount() != count)
+        throw new PAMException(
+            "ResponseError",
+            200,
+            "Account count changed during pagination; retry listing",
+            null,
+            null);
+      if (page.getAccounts().isEmpty() && accounts.size() < count)
+        throw new PAMException("ResponseError", 200, "Incomplete account list", null, null);
+      for (AuthorizedAccount account : page.getAccounts()) {
+        if (!seen.add(account.getId()))
+          throw new PAMException(
+              "ResponseError", 200, "Duplicate account in paginated list", null, null);
+        accounts.add(account);
+      }
+      if (accounts.size() == count) return Collections.unmodifiableList(accounts);
+    }
+  }
+
+  /** Return one metadata page and its total count, without fetching secrets. */
+  public AccountsPage listAccountsPage(int limit, int offset, String search) {
+    if (limit < 1 || limit > 500 || offset < 0)
+      throw new IllegalArgumentException("Invalid account page");
+    if (search == null || search.codePointCount(0, search.length()) > 128)
+      throw new IllegalArgumentException("search must be a string of at most 128 characters");
+    return request(
+        "GET",
+        "/accounts/",
+        Map.of("limit", limit, "offset", offset, "search", search),
+        value -> {
+          AccountsPage page = new AccountsPage(value);
+          if (page.getAccounts().size() > Math.min(limit, Math.max(page.getCount() - offset, 0)))
+            throw new IllegalArgumentException("Account page exceeds limit or total count");
+          return page;
+        });
   }
 
   public Credential getCredential(String key) {

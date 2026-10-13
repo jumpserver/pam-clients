@@ -65,6 +65,104 @@ func main() {
 }
 ```
 
+### Listar cuentas autorizadas
+
+Los métodos de listado consultan el ámbito pull autorizado actual y devuelven metadatos de cuentas, activos y políticas push, sin obtener contraseñas ni registrar consultas de secretos. Incluyen cuentas sin políticas. La lista completa recorre todas las páginas; el método de página devuelve `count` y `accounts` (Go devuelve lista y total por separado). Los valores predeterminados son limit 200 y offset 0; limit acepta 1–500 y search hasta 128 caracteres para nombre de cuenta, usuario, nombre de activo o dirección. Duplicados, resultados incompletos y cambios del total producen error; repita el listado completo si cambia la autorización. Para obtener un secreto, use el ID de la cuenta. Los ejemplos requieren código SDK con los métodos nuevos; la versión publicada 1.0.2 aún no los ofrece en Python, Java ni Node.js.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	pam "github.com/jumpserver/pam-clients/go"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx := context.Background()
+	accounts, err := client.ListAccounts(ctx, "")
+	if err != nil {
+		log.Fatalf("Account listing failed: %T", err)
+	}
+	for _, account := range accounts {
+		fmt.Println(account.ID, account.Username, account.Asset.Name)
+	}
+	_, count, err := client.ListAccountsPage(ctx, 20, 0, "database")
+	if err != nil {
+		log.Fatalf("Account page failed: %T", err)
+	}
+	fmt.Println("Matching accounts:", count)
+	// Use an authorized account.ID with GetAccount when its secret is needed.
+}
+```
+
+
+### Información de aplicación, réplica y políticas
+
+GetApplication devuelve ID, nombre, organización y cantidades de cuentas autorizadas y políticas visibles de la aplicación autenticada. GetClientInfo devuelve solamente registro, tipo y versiones de la réplica actual. La lista devuelve todas las políticas vinculadas visibles, incluidas las desactivadas; search busca nombres o claves. Consulte una política por su ID o clave propia, sin usar claves push de cuentas. La rotación requiere autorización para ambas cuentas y la cuenta activa; los recuentos de suscripción incluyen solo cuentas autorizadas. Las consultas no devuelven secretos ni obtienen o confirman credenciales. El primer acceso registra la réplica. Requieren Core y código SDK actualizados; la versión publicada 1.0.2 aún no incluye estos métodos.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
+	"log"
+	"os"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx := context.Background()
+	application, err := client.GetApplication(ctx)
+	if err != nil {
+		log.Fatalf("Application query failed: %T", err)
+	}
+	fmt.Println(application.ID, application.Name, application.AccountsCount)
+	replica, err := client.GetClientInfo(ctx)
+	if err != nil {
+		log.Fatalf("Client query failed: %T", err)
+	}
+	fmt.Println(replica.InstanceID, replica.ClientVersion)
+	policies, err := client.ListPolicies(ctx, "")
+	if err != nil {
+		log.Fatalf("Policy listing failed: %T", err)
+	}
+	for _, policy := range policies {
+		fmt.Println(policy.Key, policy.Name, policy.IsActive, policy.Status)
+	}
+	if len(policies) > 0 {
+		policy, err := client.GetPolicy(ctx, pam.PolicySelector{PolicyID: policies[0].ID})
+		if err != nil {
+			log.Fatalf("Policy query failed: %T", err)
+		}
+		fmt.Println(policy.Name, policy.AccountsCount)
+	}
+}
+```
+
+
 ## Eventos y aplicación de credenciales
 
 Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
@@ -153,6 +251,11 @@ Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de inf
 
 ## Métodos habituales
 
+- `GetApplication(ctx) / GetClientInfo(ctx)`
+- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
+- `ListAccounts(ctx, search)`
+- `ListAccountsPage(ctx, limit, offset, search)`
 - `GetAccount(ctx, accountID)`
 - `GetAccountFresh(ctx, accountID)`
 - `ConfirmEvent(ctx, eventID, status, errorCode)`
@@ -164,6 +267,18 @@ Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de inf
 - `ExecuteApplicationCommand(ctx, event, handler)`
 - `SyncAgent(ctx, AgentSyncOptions{...})`
 - `Clone() / Close()`
+
+### Informe de estado de la aplicación
+
+Informe una instantánea completa del estado y los IDs de las cuentas en uso. Estados: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Una lista vacía borra el uso anterior. Llame al cambiar el estado o desde el heartbeat de la aplicación. Python, Java y Node.js devuelven false ante errores de red/API; Go ofrece `TryReportStatus`. Las variantes estrictas muestran los errores. Los argumentos inválidos se rechazan. Se utiliza el timeout HTTP configurado. El informe no obtiene secretos, confirma rotaciones ni invalida la caché. No incluya secretos ni mensajes de excepción en `error_code`. ClientInfo devuelve el último informe y su fecha.
+
+```go
+ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
+    Status: "running", AccountIDs: []string{account.ID},
+})
+// ReportStatus(ctx, report) returns an error when details are needed.
+```
+
 
 ## Solución de problemas
 
@@ -210,6 +325,7 @@ La configuración descargada ya incluye la identidad y la entrega del Agent. En 
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -226,6 +342,8 @@ La configuración descargada ya incluye la identidad y la entrega del Agent. En 
   }
 ]
 ```
+
+`config_update.format` usa `auto` por defecto, también cuando se omite. Las extensiones `.txt`, `.env` y `.properties` usan `env` (`KEY=value`); `.yml` y `.yaml` usan `yaml` (`KEY: value` de nivel superior, valores escritos como cadenas entre comillas). Para otras extensiones, indique `env` o `yaml`. Cada campo debe existir una sola vez; se conservan los demás ajustes. Para secciones INI o YAML anidado, use `files` + `template_file` para generar todo el archivo, o un `script`. Tras actualizar el archivo de variables, la aplicación debe releerlo o reiniciarse.
 
 ```bash
 jms-pam-agent get_accounts

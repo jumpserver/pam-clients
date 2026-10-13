@@ -35,6 +35,42 @@ export interface RetrievedAccount {
   revision: number; asset: Credential['asset']; readonly fromLocal: boolean
 }
 export interface CredentialConfirmation extends KnownRevision {}
+export interface ApplicationInfo {
+  id: string; name: string; orgId: string; isActive: boolean
+  accountsCount: number; policiesCount: number
+}
+export interface ClientInfo {
+  id: string; instanceId: string; type: 'sdk' | 'agent'; isActive: boolean
+  clientVersion: string; protocolVersion: number; configSchemaVersion: number | null
+  applicationStatus?: ApplicationStatus | null
+  dateStatusReported?: string | null
+}
+export type ApplicationState = 'starting' | 'running' | 'degraded' | 'stopping' | 'stopped' | 'error'
+export interface ApplicationStatus {
+  status: ApplicationState; accountIds: string[]; errorCode: string
+}
+export interface CredentialPolicy extends KnownRevision {
+  id: string; name: string; mode: 'subscription' | 'alternating_rotation'
+  isActive: boolean; status: string; accountsCount: number
+  subscriptionAllAuthorized: boolean; activeAccountId: string | null
+  accountSwitch: { accountIds: string[] } | null
+}
+/** Metadata in the application's pull scope; listing does not retrieve secrets. */
+export interface AuthorizedAccount {
+  id: string
+  name: string
+  username: string
+  secretType: string
+  asset: Credential['asset']
+  credentials: Array<KnownRevision & {
+    mode: 'subscription' | 'alternating_rotation'
+    accountSwitch?: { accountIds: string[] }
+  }>
+}
+export interface AccountsPage {
+  count: number
+  accounts: AuthorizedAccount[]
+}
 export interface SnapshotCredential extends KnownRevision {
   credentialMode: string
   accountId?: string
@@ -77,6 +113,17 @@ export class PAMError extends Error {
 }
 export class Client {
   constructor(options: ClientOptions)
+  getApplication(options?: RequestOptions): Promise<ApplicationInfo>
+  getClientInfo(options?: RequestOptions): Promise<ClientInfo>
+  /** Reports a complete usage snapshot, without confirming rotation. Network/API failures return false by default. */
+  reportStatus(options: RequestOptions & {
+    status: ApplicationState; accountId?: string; accountIds?: string[]; errorCode?: string; raiseOnError?: boolean
+  }): Promise<boolean>
+  listPolicies(options?: RequestOptions & { search?: string }): Promise<CredentialPolicy[]>
+  getPolicy(options: RequestOptions &
+    ({ key: string; policyId?: never } | { key?: never; policyId: string })): Promise<CredentialPolicy>
+  listAccounts(options?: RequestOptions & { search?: string }): Promise<AuthorizedAccount[]>
+  listAccountsPage(options?: RequestOptions & { limit?: number; offset?: number; search?: string }): Promise<AccountsPage>
   getCredential(
     options: RequestOptions & { allowLocalFallback?: boolean } &
       ({ key: string; accountId?: never } | { key?: never; accountId: string }),

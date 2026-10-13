@@ -20,6 +20,9 @@ const eventLivenessTimeout = 30 * time.Second
 // and calls handler sequentially. A receipt does not confirm application use.
 // Cancel ctx or Close the client to stop; handler errors are returned unchanged.
 func (c *Client) WatchCredentialEvents(ctx context.Context, handler func(Event) error) error {
+	if ctx == nil {
+		return fmt.Errorf("context is required")
+	}
 	if handler == nil {
 		return fmt.Errorf("handler is required")
 	}
@@ -140,7 +143,7 @@ func (c *Client) readEvents(ctx context.Context, connection *websocket.Conn, han
 			done()
 		}
 		c.reconcileLatestCredentials(event)
-		if err = handler(event); err != nil {
+		if err = invokeEventHook(func() error { return handler(event) }); err != nil {
 			break
 		}
 	}

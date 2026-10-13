@@ -65,6 +65,104 @@ func main() {
 }
 ```
 
+### 列出授权账号
+
+使用账号列表方法查询应用当前授权的 pull 范围。列表只返回账号、资产和关联 push 策略的元数据，不获取密码，不记录取密；未绑定策略的授权账号也会返回。完整列表方法自动读取所有分页；分页方法返回 `count` 和 `accounts`（Go 分别返回列表和总数）。默认 limit 为 200、offset 为 0；limit 范围为 1–500，search 最长 128 个字符，可匹配账号名称、用户名、资产名称或地址。重复账号、分页不完整或总数变化会报错；授权范围变化时重新查询完整列表。需要密码时，再使用账号 ID 调用取密方法。示例需要包含这些新增方法的 SDK 源码；已发布的 1.0.2 尚未在 Python、Java、Node.js 中提供这些方法。
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	pam "github.com/jumpserver/pam-clients/go"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx := context.Background()
+	accounts, err := client.ListAccounts(ctx, "")
+	if err != nil {
+		log.Fatalf("Account listing failed: %T", err)
+	}
+	for _, account := range accounts {
+		fmt.Println(account.ID, account.Username, account.Asset.Name)
+	}
+	_, count, err := client.ListAccountsPage(ctx, 20, 0, "database")
+	if err != nil {
+		log.Fatalf("Account page failed: %T", err)
+	}
+	fmt.Println("Matching accounts:", count)
+	// Use an authorized account.ID with GetAccount when its secret is needed.
+}
+```
+
+
+### 应用、实例与策略信息
+
+GetApplication 返回当前签名应用的 ID、名称、组织以及授权账号和可见策略数量；GetClientInfo 只返回当前副本的登记信息、类型和版本。策略列表一次返回全部可见的关联策略，包括停用策略；search 匹配策略名称或 key。查询单个策略时只提供策略 ID 或策略本身的 key，不使用账号 push key。轮换策略要求两个账号及当前生效账号均在应用授权范围内；订阅账号数量只统计应用当前有权访问的账号。这些查询只返回元数据，不返回密钥或密码，不取密、不确认凭据生效。和账号查询一样，首次访问会登记当前副本。需要同步更新 Core 和 SDK 源码；已发布的 1.0.2 尚未包含这些方法。
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
+	"log"
+	"os"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx := context.Background()
+	application, err := client.GetApplication(ctx)
+	if err != nil {
+		log.Fatalf("Application query failed: %T", err)
+	}
+	fmt.Println(application.ID, application.Name, application.AccountsCount)
+	replica, err := client.GetClientInfo(ctx)
+	if err != nil {
+		log.Fatalf("Client query failed: %T", err)
+	}
+	fmt.Println(replica.InstanceID, replica.ClientVersion)
+	policies, err := client.ListPolicies(ctx, "")
+	if err != nil {
+		log.Fatalf("Policy listing failed: %T", err)
+	}
+	for _, policy := range policies {
+		fmt.Println(policy.Key, policy.Name, policy.IsActive, policy.Status)
+	}
+	if len(policies) > 0 {
+		policy, err := client.GetPolicy(ctx, pam.PolicySelector{PolicyID: policies[0].ID})
+		if err != nil {
+			log.Fatalf("Policy query failed: %T", err)
+		}
+		fmt.Println(policy.Name, policy.AccountsCount)
+	}
+}
+```
+
+
 ## 事件与凭据生效
 
 使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
@@ -153,6 +251,11 @@ func main() {
 
 ## 常用方法
 
+- `GetApplication(ctx) / GetClientInfo(ctx)`
+- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
+- `ListAccounts(ctx, search)`
+- `ListAccountsPage(ctx, limit, offset, search)`
 - `GetAccount(ctx, accountID)`
 - `GetAccountFresh(ctx, accountID)`
 - `ConfirmEvent(ctx, eventID, status, errorCode)`
@@ -164,6 +267,18 @@ func main() {
 - `ExecuteApplicationCommand(ctx, event, handler)`
 - `SyncAgent(ctx, AgentSyncOptions{...})`
 - `Clone() / Close()`
+
+### 应用状态上报
+
+上报应用运行状态和当前使用的账号 ID，支持 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次上报都是完整快照，空账号列表会清除此前使用记录。由应用在状态变化或自己的心跳中调用，不会自动启动后台上报。Python、Java、Node.js 遇到网络、API 错误或旧 Core 不支持接口时默认返回 false；Go 使用 `TryReportStatus` 获得相同行为。严格调用方式可以获取具体错误，参数错误仍会明确提示。调用遵循配置的 HTTP 超时，请放在不影响业务响应的执行路径。上报不会取密、确认轮换或清空已有凭据缓存。`error_code` 只传机器可读错误码，不要传密码或异常原文。`get_client_info` / `GetClientInfo` / `getClientInfo` 可以读取最后一次上报及其时间。
+
+```go
+ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
+    Status: "running", AccountIDs: []string{account.ID},
+})
+// ReportStatus(ctx, report) returns an error when details are needed.
+```
+
 
 ## 排查问题
 
@@ -210,6 +325,7 @@ HTTP、网络、认证和响应解码错误使用 SDK 异常或错误类型，�
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -226,6 +342,8 @@ HTTP、网络、认证和响应解码错误使用 SDK 异常或错误类型，�
   }
 ]
 ```
+
+`config_update.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
 
 ```bash
 jms-pam-agent get_accounts

@@ -67,6 +67,77 @@ public final class Demo {
 }
 ```
 
+### 列出授权账号
+
+使用账号列表方法查询应用当前授权的 pull 范围。列表只返回账号、资产和关联 push 策略的元数据，不获取密码，不记录取密；未绑定策略的授权账号也会返回。完整列表方法自动读取所有分页；分页方法返回 `count` 和 `accounts`（Go 分别返回列表和总数）。默认 limit 为 200、offset 为 0；limit 范围为 1–500，search 最长 128 个字符，可匹配账号名称、用户名、资产名称或地址。重复账号、分页不完整或总数变化会报错；授权范围变化时重新查询完整列表。需要密码时，再使用账号 ID 调用取密方法。示例需要包含这些新增方法的 SDK 源码；已发布的 1.0.2 尚未在 Python、Java、Node.js 中提供这些方法。
+
+```java
+package org.jumpserver.pam;
+
+public final class AccountsDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      for (Models.AuthorizedAccount account : client.listAccounts()) {
+        System.out.println(
+            account.getId() + " " + account.getUsername() + " " + account.getAsset().getName());
+      }
+      Models.AccountsPage page = client.listAccountsPage(20, 0, "database");
+      System.out.println("Matching accounts: " + page.getCount());
+      // Use an authorized account.getId() with getAccount when its secret is needed.
+    }
+  }
+}
+```
+
+
+### 应用、实例与策略信息
+
+getApplication 返回当前签名应用的 ID、名称、组织以及授权账号和可见策略数量；getClientInfo 只返回当前副本的登记信息、类型和版本。策略列表一次返回全部可见的关联策略，包括停用策略；search 匹配策略名称或 key。查询单个策略时只提供策略 ID 或策略本身的 key，不使用账号 push key。轮换策略要求两个账号及当前生效账号均在应用授权范围内；订阅账号数量只统计应用当前有权访问的账号。这些查询只返回元数据，不返回密钥或密码，不取密、不确认凭据生效。和账号查询一样，首次访问会登记当前副本。需要同步更新 Core 和 SDK 源码；已发布的 1.0.2 尚未包含这些方法。
+
+```java
+package org.jumpserver.pam;
+
+import java.util.List;
+
+public final class ApplicationInfoDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      Models.ApplicationInfo application = client.getApplication();
+      System.out.println(
+          application.getId() + " " + application.getName() + " " + application.getAccountsCount());
+      Models.ClientInfo replica = client.getClientInfo();
+      System.out.println(replica.getInstanceId() + " " + replica.getClientVersion());
+      List<Models.CredentialPolicy> policies = client.listPolicies();
+      for (Models.CredentialPolicy policy : policies) {
+        System.out.println(
+            policy.getKey()
+                + " "
+                + policy.getName()
+                + " "
+                + policy.isActive()
+                + " "
+                + policy.getStatus());
+      }
+      if (!policies.isEmpty()) {
+        Models.CredentialPolicy policy = client.getPolicyById(policies.get(0).getId());
+        System.out.println(policy.getName() + " " + policy.getAccountsCount());
+      }
+    }
+  }
+}
+```
+
+
 ## 事件与凭据生效
 
 使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
@@ -130,6 +201,11 @@ public final class EventsDemo {
 
 ## 常用方法
 
+- `getApplication() / getClientInfo()`
+- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
+- `listAccounts() / listAccounts(search)`
+- `listAccountsPage(limit, offset, search)`
 - `getAccount(accountId)`
 - `getAccount(accountId, false)`
 - `confirmEvent(eventId, status, errorCode)`
@@ -141,6 +217,16 @@ public final class EventsDemo {
 - `executeApplicationCommand(event, handler)`
 - `syncAgent(credentials, deliveredCredentials, configDigest, syncStatus, syncError)`
 - `clone() / close()`
+
+### 应用状态上报
+
+上报应用运行状态和当前使用的账号 ID，支持 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次上报都是完整快照，空账号列表会清除此前使用记录。由应用在状态变化或自己的心跳中调用，不会自动启动后台上报。Python、Java、Node.js 遇到网络、API 错误或旧 Core 不支持接口时默认返回 false；Go 使用 `TryReportStatus` 获得相同行为。严格调用方式可以获取具体错误，参数错误仍会明确提示。调用遵循配置的 HTTP 超时，请放在不影响业务响应的执行路径。上报不会取密、确认轮换或清空已有凭据缓存。`error_code` 只传机器可读错误码，不要传密码或异常原文。`get_client_info` / `GetClientInfo` / `getClientInfo` 可以读取最后一次上报及其时间。
+
+```java
+boolean accepted = client.reportStatus("running", account.getId());
+client.reportStatus("stopped", java.util.Collections.emptyList());
+```
+
 
 ## 排查问题
 
@@ -187,6 +273,7 @@ HTTP、网络、认证和响应解码错误使用 SDK 异常或错误类型，�
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -203,6 +290,8 @@ HTTP、网络、认证和响应解码错误使用 SDK 异常或错误类型，�
   }
 ]
 ```
+
+`config_update.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
 
 ```bash
 jms-pam-agent get_accounts

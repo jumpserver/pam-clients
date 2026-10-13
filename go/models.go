@@ -74,6 +74,149 @@ type AccountPolicy struct {
 	Revision      int64          `json:"revision"`
 	AccountSwitch *AccountSwitch `json:"account_switch,omitempty"`
 }
+
+type ApplicationInfo struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	OrgID         string `json:"org_id"`
+	IsActive      bool   `json:"is_active"`
+	AccountsCount int    `json:"accounts_count"`
+	PoliciesCount int    `json:"policies_count"`
+}
+type ClientInfo struct {
+	ID                  string             `json:"id"`
+	InstanceID          string             `json:"instance_id"`
+	Type                string             `json:"type"`
+	IsActive            bool               `json:"is_active"`
+	ClientVersion       string             `json:"client_version"`
+	ProtocolVersion     int                `json:"protocol_version"`
+	ConfigSchemaVersion *int               `json:"config_schema_version"`
+	ApplicationStatus   *ApplicationStatus `json:"application_status"`
+	DateStatusReported  *string            `json:"date_status_reported"`
+}
+type CredentialPolicy struct {
+	ID                        string         `json:"id"`
+	Key                       string         `json:"key"`
+	Name                      string         `json:"name"`
+	Mode                      string         `json:"mode"`
+	IsActive                  bool           `json:"is_active"`
+	Status                    string         `json:"status"`
+	Revision                  int64          `json:"revision"`
+	AccountsCount             int            `json:"accounts_count"`
+	SubscriptionAllAuthorized bool           `json:"subscription_all_authorized"`
+	ActiveAccountID           string         `json:"active_account_id"`
+	AccountSwitch             *AccountSwitch `json:"account_switch"`
+}
+type PolicySelector struct{ Key, PolicyID string }
+
+func metadataFields(data map[string]json.RawMessage, stringsFields, bools, counts []string) error {
+	for _, name := range stringsFields {
+		if err := required(data, name); err != nil {
+			return err
+		}
+		var value string
+		if err := json.Unmarshal(data[name], &value); err != nil {
+			return err
+		}
+	}
+	for _, name := range bools {
+		if err := required(data, name); err != nil {
+			return err
+		}
+		var value bool
+		if err := json.Unmarshal(data[name], &value); err != nil {
+			return err
+		}
+	}
+	for _, name := range counts {
+		if err := required(data, name); err != nil {
+			return err
+		}
+		var value int64
+		if err := json.Unmarshal(data[name], &value); err != nil || value < 0 {
+			return fmt.Errorf("invalid %s", name)
+		}
+	}
+	return nil
+}
+
+func validApplicationInfo(data map[string]json.RawMessage) error {
+	return metadataFields(data, []string{"id", "name", "org_id"}, []string{"is_active"}, []string{"accounts_count", "policies_count"})
+}
+func validClientInfo(data map[string]json.RawMessage) error {
+	if err := metadataFields(data, []string{"id", "instance_id", "type", "client_version"}, []string{"is_active"}, []string{"protocol_version"}); err != nil {
+		return err
+	}
+	var clientType string
+	json.Unmarshal(data["type"], &clientType)
+	if clientType != "sdk" && clientType != "agent" {
+		return fmt.Errorf("invalid client type")
+	}
+	if raw, ok := data["config_schema_version"]; ok && string(raw) != "null" {
+		if err := metadataFields(data, nil, nil, []string{"config_schema_version"}); err != nil {
+			return err
+		}
+	}
+	if raw, ok := data["application_status"]; ok && string(raw) != "null" {
+		fields, err := object(raw)
+		if err != nil {
+			return err
+		}
+		var report ApplicationStatus
+		if err := json.Unmarshal(raw, &report); err != nil {
+			return err
+		}
+		if err := report.validate(); err != nil {
+			return err
+		}
+		if _, ok := fields["account_ids"]; !ok || report.AccountIDs == nil {
+			return fmt.Errorf("invalid account IDs")
+		}
+		var errorCode string
+		rawCode, ok := fields["error_code"]
+		if !ok || string(rawCode) == "null" {
+			return fmt.Errorf("invalid status error code")
+		}
+		if err := json.Unmarshal(rawCode, &errorCode); err != nil {
+			return err
+		}
+	}
+	if raw, ok := data["date_status_reported"]; ok && string(raw) != "null" {
+		var date string
+		if err := json.Unmarshal(raw, &date); err != nil || date == "" {
+			return fmt.Errorf("invalid report timestamp")
+		}
+	}
+	return nil
+}
+func validPolicy(data map[string]json.RawMessage) error {
+	if err := metadataFields(data, []string{"id", "key", "name", "mode", "status"}, []string{"is_active", "subscription_all_authorized"}, []string{"revision", "accounts_count"}); err != nil {
+		return err
+	}
+	var value CredentialPolicy
+	raw, _ := json.Marshal(data)
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	if value.Mode != "subscription" && value.Mode != "alternating_rotation" {
+		return fmt.Errorf("invalid policy mode")
+	}
+	if raw, ok := data["active_account_id"]; ok && string(raw) == `""` {
+		return fmt.Errorf("invalid active account ID")
+	}
+	if value.AccountSwitch != nil {
+		if value.AccountSwitch.AccountIDs == nil {
+			return fmt.Errorf("invalid account switch")
+		}
+		for _, id := range value.AccountSwitch.AccountIDs {
+			if id == "" {
+				return fmt.Errorf("invalid account switch ID")
+			}
+		}
+	}
+	return nil
+}
+
 type CredentialConfirmation struct {
 	Key      string `json:"key"`
 	Revision int64  `json:"revision"`
@@ -185,6 +328,61 @@ func object(data []byte) (map[string]json.RawMessage, error) {
 	}
 	return values, nil
 }
+
+func validAuthorizedAccount(data map[string]json.RawMessage) error {
+	if err := required(data, "id", "name", "secret_type", "asset", "credentials"); err != nil {
+		return err
+	}
+	var username string
+	if raw, ok := data["username"]; !ok || string(raw) == "null" {
+		return fmt.Errorf("missing username")
+	} else if err := json.Unmarshal(raw, &username); err != nil {
+		return err
+	}
+	asset, err := object(data["asset"])
+	if err != nil {
+		return err
+	}
+	if err := required(asset, "id", "name", "address", "platform"); err != nil {
+		return err
+	}
+	platform, err := object(asset["platform"])
+	if err != nil {
+		return err
+	}
+	if err := required(platform, "id", "name", "category", "type"); err != nil {
+		return err
+	}
+	var policies []map[string]json.RawMessage
+	if err := json.Unmarshal(data["credentials"], &policies); err != nil {
+		return err
+	}
+	for _, policy := range policies {
+		if err := required(policy, "key", "mode", "revision"); err != nil {
+			return err
+		}
+		if raw, ok := policy["account_switch"]; ok && string(raw) != "null" {
+			switchData, err := object(raw)
+			if err != nil {
+				return err
+			}
+			if err := required(switchData, "account_ids"); err != nil {
+				return err
+			}
+			var ids []string
+			if err := json.Unmarshal(switchData["account_ids"], &ids); err != nil {
+				return err
+			}
+			for _, id := range ids {
+				if id == "" {
+					return fmt.Errorf("invalid account switch ID")
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func validCredential(data map[string]json.RawMessage) error {
 	if err := required(data, "key", "revision", "asset", "account"); err != nil {
 		return err

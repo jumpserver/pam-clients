@@ -6,6 +6,8 @@
 
 方法、参数和响应属性使用 `snake_case`；类名使用 `CapWords`。客户端通过关键字参数配置，取密、确认等操作直接传参，响应具有类型提示。使用 `with` 自动关闭 HTTP 会话：
 
+先按照下方“Python SDK 接入”准备 `jms_pam_config.py`。它是应用自己的身份配置文件，不包含在 `jms-pam` 包中；仅执行 `pip install jms-pam` 无法导入它。
+
 <!-- python-account-example:start -->
 ```python
 from jms_pam import Client
@@ -120,6 +122,7 @@ JSON 交付文件，EnvironmentFile 对接固定 systemd 服务，Unix Socket �
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+        "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -136,6 +139,8 @@ JSON 交付文件，EnvironmentFile 对接固定 systemd 服务，Unix Socket �
   }
 ]
 ```
+
+`config_update.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
 
 ```bash
 jms-pam-agent get_accounts
@@ -188,7 +193,28 @@ Agent 在启动、相关事件和每 300 秒进行同步。网络故障保留已
 python3 -m pip install jms-pam
 ```
 
-将 jms_pam_config.py 放在应用旁边。client_options 包含应用身份材料，不要提交或写入日志。每个副本使用稳定且唯一的 instance_id.
+`jms_pam_config.py` 是应用配置文件，不属于 PyPI 的 `jms-pam` 包。在应用接入向导中下载，并保存到应用脚本旁边；也可按下面的内容创建文件，将占位值替换为实际应用身份信息。`client_options` 不要提交或写入日志。每个副本使用稳定且唯一的 `instance_id`。
+
+```python
+# jms_pam_config.py
+import os
+
+client_options = {
+    "endpoint": "https://jumpserver.example.com",
+    "app_id": "<application-id>",
+    "app_secret": "<application-secret>",
+    "org_id": "<org-id>",
+}
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+```
+
+交互式测试时，先进入 `jms_pam_config.py` 所在目录再启动 Python，然后执行下方示例。脚本运行时，将示例保存为同目录的 `app.py`，改为执行 `python3 app.py`。如果出现 `ModuleNotFoundError: No module named 'jms_pam_config'`，请检查配置文件名和位置；重新安装 `jms-pam` 不会生成此文件。
+
+```bash
+cd /path/to/your/application
+chmod 0600 jms_pam_config.py
+python3
+```
 
 <!-- python-account-example:start -->
 ```python
@@ -202,6 +228,49 @@ with Client(instance_id=instance_id, **client_options) as client:
     password = account.secret
 ```
 <!-- python-account-example:end -->
+
+### 列出授权账号
+
+使用账号列表方法查询应用当前授权的 pull 范围。列表只返回账号、资产和关联 push 策略的元数据，不获取密码，不记录取密；未绑定策略的授权账号也会返回。完整列表方法自动读取所有分页；分页方法返回 `count` 和 `accounts`（Go 分别返回列表和总数）。默认 limit 为 200、offset 为 0；limit 范围为 1–500，search 最长 128 个字符，可匹配账号名称、用户名、资产名称或地址。重复账号、分页不完整或总数变化会报错；授权范围变化时重新查询完整列表。需要密码时，再使用账号 ID 调用取密方法。示例需要包含这些新增方法的 SDK 源码；已发布的 1.0.2 尚未在 Python、Java、Node.js 中提供这些方法。
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    accounts = client.list_accounts()
+    for account in accounts:
+        print(account.id, account.username, account.asset.name)
+
+    page = client.list_accounts_page(limit=20, offset=0, search="database")
+    print("Matching accounts:", page.count)
+    # Use an authorized account.id with get_account when its secret is needed.
+```
+
+
+### 应用、实例与策略信息
+
+get_application 返回当前签名应用的 ID、名称、组织以及授权账号和可见策略数量；get_client_info 只返回当前副本的登记信息、类型和版本。策略列表一次返回全部可见的关联策略，包括停用策略；search 匹配策略名称或 key。查询单个策略时只提供策略 ID 或策略本身的 key，不使用账号 push key。轮换策略要求两个账号及当前生效账号均在应用授权范围内；订阅账号数量只统计应用当前有权访问的账号。这些查询只返回元数据，不返回密钥或密码，不取密、不确认凭据生效。和账号查询一样，首次访问会登记当前副本。需要同步更新 Core 和 SDK 源码；已发布的 1.0.2 尚未包含这些方法。
+
+```python
+from jms_pam import Client
+from jms_pam_config import client_options, instance_id
+
+with Client(instance_id=instance_id, **client_options) as client:
+    application = client.get_application()
+    print(application.id, application.name, application.accounts_count)
+    replica = client.get_client_info()
+    print(replica.instance_id, replica.client_version)
+
+    policies = client.list_policies()
+    for policy in policies:
+        print(policy.key, policy.name, policy.is_active, policy.status)
+    if policies:
+        policy = client.get_policy(policy_id=policies[0].id)
+        # Alternatively: client.get_policy(key=policies[0].key)
+        print(policy.name, policy.accounts_count)
+```
+
 
 ### 事件与凭据生效
 
@@ -281,6 +350,11 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 
 ### 常用方法
 
+- `list_accounts(search="")`
+- `get_application()` / `get_client_info()`
+- `report_status("running", account_id=...)` / `report_status("stopped")`
+- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
+- `list_accounts_page(limit=200, offset=0, search="")` → `page.count`, `page.accounts`
 - `get_account(account_id=..., allow_local_fallback=True)`
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
@@ -290,6 +364,16 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 - `clone()` / `close()`
 
 `get_credential` 和基于 key 的确认接口保留兼容旧接入；新接入使用 `get_account` 和 `confirm_event`。事件结果流程需要同步更新 Core，仅升级 SDK 1.0.2 不会增加服务端能力。
+
+### 应用状态上报
+
+上报应用运行状态和当前使用的账号 ID，支持 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次上报都是完整快照，空账号列表会清除此前使用记录。由应用在状态变化或自己的心跳中调用，不会自动启动后台上报。Python、Java、Node.js 遇到网络、API 错误或旧 Core 不支持接口时默认返回 false；Go 使用 `TryReportStatus` 获得相同行为。严格调用方式可以获取具体错误，参数错误仍会明确提示。调用遵循配置的 HTTP 超时，请放在不影响业务响应的执行路径。上报不会取密、确认轮换或清空已有凭据缓存。`error_code` 只传机器可读错误码，不要传密码或异常原文。`get_client_info` / `GetClientInfo` / `getClientInfo` 可以读取最后一次上报及其时间。
+
+```python
+client.report_status("running", account_id=account.id)
+client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
+client.report_status("stopped")
+```
 
 
 <!-- sdk-doc:end -->

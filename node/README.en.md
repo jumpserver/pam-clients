@@ -66,6 +66,87 @@ if (require.main === module)
   })
 ```
 
+### List authorized accounts
+
+Use the account listing methods to discover the application’s current authorized pull scope. Listings return account and asset metadata plus related push policies, without retrieving passwords or recording credential fetches. Accounts without policies are included. The full-list method follows all pages; the page method returns `count` and `accounts` (Go returns the slice and total separately). Defaults are limit 200 and offset 0; limit is 1–500 and search is at most 128 characters, matching account name, username, asset name or address. Duplicate accounts, incomplete results and changing totals raise an error; retry the whole listing if authorization changes. Use an account ID with the account-fetch method when its secret is needed. Examples require SDK source containing these new methods; published version 1.0.2 does not yet provide them in Python, Java or Node.js.
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const accounts = await client.listAccounts()
+    for (const account of accounts) {
+      console.log(account.id, account.username, account.asset.name)
+    }
+    const page = await client.listAccountsPage({ limit: 20, offset: 0, search: 'database' })
+    console.log('Matching accounts:', page.count)
+    // Use an authorized account.id with getAccount when its secret is needed.
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
+### Application, replica and policy information
+
+Read the authenticated application ID, name, organization and authorized account/policy counts with getApplication; getClientInfo returns only the current replica’s registration, type and versions. Policy listing returns the entire visible bound list, including disabled policies; search matches policy names or keys. Fetch a policy using exactly one of its ID or base policy key, rather than an account push key. Rotation policies require authorization for both accounts and the active account. Subscription counts include only accounts currently authorized to this application. These calls return metadata without secrets and do not fetch credentials or confirm application changes. As with account queries, the replica is registered on first access. They require updated Core and SDK source; the published 1.0.2 does not yet contain these methods.
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const application = await client.getApplication()
+    console.log(application.id, application.name, application.accountsCount)
+    const replica = await client.getClientInfo()
+    console.log(replica.instanceId, replica.clientVersion)
+    const policies = await client.listPolicies()
+    for (const policy of policies) {
+      console.log(policy.key, policy.name, policy.isActive, policy.status)
+    }
+    if (policies.length) {
+      const policy = await client.getPolicy({ policyId: policies[0].id })
+      console.log(policy.name, policy.accountsCount)
+    }
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
 ## Events and credential application
 
 Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
@@ -125,6 +206,11 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 
 ## Common methods
 
+- `getApplication({signal}) / getClientInfo({signal})`
+- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
+- `listAccounts({search, signal})`
+- `listAccountsPage({limit, offset, search, signal})`
 - `getAccount({accountId})`
 - `getAccount({accountId, allowLocalFallback: false})`
 - `confirmEvent({eventId, status, errorCode})`
@@ -136,6 +222,16 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 - `executeApplicationCommand(event, handler)`
 - `syncAgent({credentials, deliveredCredentials, ...})`
 - `clone() / close()`
+
+### Application status reporting
+
+Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
+
+```javascript
+const accepted = await client.reportStatus({status: 'running', accountId: account.id})
+await client.reportStatus({status: 'stopped'})
+```
+
 
 ## Troubleshooting
 
@@ -182,6 +278,7 @@ The downloaded bootstrap contains Agent identity and delivery settings. Edit rul
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -198,6 +295,8 @@ The downloaded bootstrap contains Agent identity and delivery settings. Edit rul
   }
 ]
 ```
+
+`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
 
 ```bash
 jms-pam-agent get_accounts

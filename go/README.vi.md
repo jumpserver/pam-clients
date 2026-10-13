@@ -65,6 +65,104 @@ func main() {
 }
 ```
 
+### Liệt kê tài khoản được cấp quyền
+
+Các phương thức danh sách truy vấn phạm vi pull hiện được cấp quyền của ứng dụng, chỉ trả siêu dữ liệu tài khoản, tài sản và chính sách push, không lấy mật khẩu hay ghi nhận lấy bí mật. Bao gồm tài khoản không có chính sách. Danh sách đầy đủ đọc mọi trang; phương thức phân trang trả `count` và `accounts` (Go trả danh sách và tổng riêng). Mặc định limit 200, offset 0; limit 1–500, search tối đa 128 ký tự để tìm tên tài khoản, tên người dùng, tên tài sản hoặc địa chỉ. Trùng lặp, thiếu kết quả hoặc tổng thay đổi gây lỗi; truy vấn lại toàn bộ khi quyền thay đổi. Khi cần bí mật, dùng ID tài khoản với phương thức lấy tài khoản. Ví dụ cần mã SDK có phương thức mới; bản 1.0.2 đã phát hành chưa có chúng trong Python, Java hoặc Node.js.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	pam "github.com/jumpserver/pam-clients/go"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx := context.Background()
+	accounts, err := client.ListAccounts(ctx, "")
+	if err != nil {
+		log.Fatalf("Account listing failed: %T", err)
+	}
+	for _, account := range accounts {
+		fmt.Println(account.ID, account.Username, account.Asset.Name)
+	}
+	_, count, err := client.ListAccountsPage(ctx, 20, 0, "database")
+	if err != nil {
+		log.Fatalf("Account page failed: %T", err)
+	}
+	fmt.Println("Matching accounts:", count)
+	// Use an authorized account.ID with GetAccount when its secret is needed.
+}
+```
+
+
+### Thông tin ứng dụng, bản sao và chính sách
+
+GetApplication trả ID, tên, tổ chức và số tài khoản được cấp quyền cùng chính sách hiển thị của ứng dụng đã ký. GetClientInfo chỉ trả đăng ký, loại và phiên bản của bản sao hiện tại. Danh sách trả toàn bộ chính sách liên kết hiển thị, gồm chính sách vô hiệu; search tìm theo tên hoặc key. Truy vấn chính sách bằng ID hoặc key của chính sách, không dùng key push tài khoản. Chính sách luân phiên yêu cầu quyền cho cả hai tài khoản và tài khoản đang hoạt động; số tài khoản đăng ký chỉ tính tài khoản được cấp quyền. Không trả bí mật, lấy hay xác nhận thông tin xác thực. Lần truy cập đầu đăng ký bản sao. Cần Core và mã SDK mới; bản 1.0.2 đã phát hành chưa có phương thức này.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
+	"log"
+	"os"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx := context.Background()
+	application, err := client.GetApplication(ctx)
+	if err != nil {
+		log.Fatalf("Application query failed: %T", err)
+	}
+	fmt.Println(application.ID, application.Name, application.AccountsCount)
+	replica, err := client.GetClientInfo(ctx)
+	if err != nil {
+		log.Fatalf("Client query failed: %T", err)
+	}
+	fmt.Println(replica.InstanceID, replica.ClientVersion)
+	policies, err := client.ListPolicies(ctx, "")
+	if err != nil {
+		log.Fatalf("Policy listing failed: %T", err)
+	}
+	for _, policy := range policies {
+		fmt.Println(policy.Key, policy.Name, policy.IsActive, policy.Status)
+	}
+	if len(policies) > 0 {
+		policy, err := client.GetPolicy(ctx, pam.PolicySelector{PolicyID: policies[0].ID})
+		if err != nil {
+			log.Fatalf("Policy query failed: %T", err)
+		}
+		fmt.Println(policy.Name, policy.AccountsCount)
+	}
+}
+```
+
+
 ## Sự kiện và áp dụng thông tin xác thực
 
 Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng thay đổi trước khi báo `success` hoặc `failed` qua `event_id`. Nhận sự kiện hoặc lấy mật khẩu không có nghĩa là áp dụng thành công. Sự kiện và snapshot có `event_id`, `account_id`, `account_revision`; hãy kiểm tra phiên bản. Nhận lệnh bằng `running` và xử lý lặp lại an toàn.
@@ -153,6 +251,11 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 
 ## Phương thức thông dụng
 
+- `GetApplication(ctx) / GetClientInfo(ctx)`
+- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
+- `ListAccounts(ctx, search)`
+- `ListAccountsPage(ctx, limit, offset, search)`
 - `GetAccount(ctx, accountID)`
 - `GetAccountFresh(ctx, accountID)`
 - `ConfirmEvent(ctx, eventID, status, errorCode)`
@@ -164,6 +267,18 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 - `ExecuteApplicationCommand(ctx, event, handler)`
 - `SyncAgent(ctx, AgentSyncOptions{...})`
 - `Clone() / Close()`
+
+### Báo cáo trạng thái ứng dụng
+
+Báo cáo ảnh chụp đầy đủ về trạng thái và ID tài khoản đang sử dụng. Trạng thái: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Danh sách rỗng xóa thông tin sử dụng trước đó. Gọi khi trạng thái thay đổi hoặc từ heartbeat của ứng dụng. Python, Java và Node.js trả về false khi lỗi mạng/API; Go cung cấp `TryReportStatus`. Biến thể nghiêm ngặt cung cấp chi tiết lỗi. Tham số không hợp lệ bị từ chối. Lời gọi dùng thời gian chờ HTTP đã cấu hình. Báo cáo không lấy bí mật, xác nhận luân chuyển hoặc xóa bộ nhớ đệm. Không đặt bí mật hay thông báo ngoại lệ trong `error_code`. ClientInfo trả về báo cáo cuối và thời gian.
+
+```go
+ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
+    Status: "running", AccountIDs: []string{account.ID},
+})
+// ReportStatus(ctx, report) returns an error when details are needed.
+```
+
 
 ## Khắc phục sự cố
 
@@ -210,6 +325,7 @@ Cấu hình tải về đã có danh tính và thiết lập phân phối của 
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -226,6 +342,8 @@ Cấu hình tải về đã có danh tính và thiết lập phân phối của 
   }
 ]
 ```
+
+`config_update.format` mặc định là `auto`, kể cả khi bỏ qua trường này. Các đuôi `.txt`, `.env`, `.properties` dùng `env` (`KEY=value`); `.yml`, `.yaml` dùng `yaml` (`KEY: value` cấp cao nhất, giá trị mới ghi dưới dạng chuỗi có dấu ngoặc kép). Với đuôi khác, chỉ định `env` hoặc `yaml`. Mỗi trường ánh xạ phải tồn tại đúng một lần; các thiết lập khác được giữ nguyên. Với section INI hoặc YAML lồng nhau, dùng `files` + `template_file` để tạo toàn bộ tệp, hoặc `script`. Sau khi cập nhật tệp biến môi trường, ứng dụng phải đọc lại tệp hoặc khởi động lại.
 
 ```bash
 jms-pam-agent get_accounts

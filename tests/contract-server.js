@@ -27,6 +27,7 @@ async function startServer() {
   const credentialRequests = new Map();
   const controls = new Map();
   const instanceSockets = new Map();
+  const applicationStatuses = new Map();
   function authenticate(request, body) {
     const headers = request.headers;
     const auth = Object.fromEntries(
@@ -126,7 +127,46 @@ async function startServer() {
         return;
       }
       let result;
-      if (route === "/credential/") {
+      if (["/application/", "/client/", "/policies/", "/policy/"].includes(route)) {
+        assert.equal(request.method, "GET");
+        const policies = [{
+          id: "11111111-1111-4111-8111-111111111111", key: "db/空 格?=&", name: "Database rotation",
+          mode: "alternating_rotation", is_active: true, status: "waiting_switch", revision: 2,
+          accounts_count: 2, subscription_all_authorized: false, active_account_id: "account",
+          account_switch: {account_ids: ["account", "backup"]}, secret: "DO_NOT_LOG_SECRET",
+        }, {
+          id: "22222222-2222-4222-8222-222222222222", key: "subscription", name: "Database subscription",
+          mode: "subscription", is_active: false, status: "idle", revision: 1,
+          accounts_count: 1, subscription_all_authorized: false, active_account_id: null, account_switch: null,
+        }];
+        if (route === "/application/") {
+          result = {id: "contract-app", name: "Contract application", org_id: "contract-org", is_active: true,
+            accounts_count: 3, policies_count: 2, secret: "DO_NOT_LOG_SECRET", future_field: "ignored"};
+          if (data.instance_id.includes("invalid")) result.accounts_count = "3";
+        } else if (route === "/client/") {
+          result = {id: "current-client", instance_id: data.instance_id,
+            type: request.headers["x-source"] === "jms-pam-agent" ? "agent" : "sdk",
+            is_active: true, client_version: "1.0.2", protocol_version: 1,
+            config_schema_version: request.headers["x-source"] === "jms-pam-agent" ? 1 : 0,
+            application_status: applicationStatuses.get(data.instance_id) || null,
+            date_status_reported: applicationStatuses.has(data.instance_id) ? "2026-10-13T00:00:00Z" : null,
+            secret: "DO_NOT_LOG_SECRET"};
+          if (data.instance_id.includes("invalid")) result.is_active = "true";
+        } else if (route === "/policies/") {
+          result = {policies: policies.filter(p => !data.search || data.search.startsWith("fault:") || p.key.includes(data.search) || p.name.includes(data.search))};
+          if (data.search === "fault:invalid-list") result.policies = null;
+          if (data.search === "fault:duplicate") result.policies.push(result.policies[0]);
+          if (data.search === "fault:invalid-policy") result.policies[0].revision = -1;
+        } else {
+          assert.ok(Boolean(data.key) !== Boolean(data.policy_id));
+          result = policies.find(p => data.key ? p.key === data.key : p.id === data.policy_id);
+          if (data.key === "invalid") result = {...policies[0], accounts_count: "2"};
+          if (!result) {
+            response.statusCode = 404;
+            result = {code: "not_found", detail: "Credential policy not found"};
+          }
+        }
+      } else if (route === "/credential/") {
         assert.equal(Boolean(data.key) !== Boolean(data.account_id), true);
         const control = controls.get(data.instance_id);
         if (control?.fault) {
@@ -200,6 +240,74 @@ async function startServer() {
           asset: {id: "asset", name: "database", address: "127.0.0.1", platform: {id: "platform", name: "PostgreSQL", category: "database", type: "postgresql"}},
           credentials: [{key: "db", mode: "alternating_rotation", revision: control?.revision || 2}],
         }]};
+        if (data.instance_id.endsWith("-accounts")) {
+          assert.equal(request.method, "GET");
+          const limit = Number(data.limit), offset = Number(data.offset);
+          assert.ok(Number.isInteger(limit) && limit >= 1 && limit <= 500);
+          assert.ok(Number.isInteger(offset) && offset >= 0);
+          const base = result.accounts[0];
+          const all = Array.from({length: 205}, (_, index) => ({
+            ...base,
+            id: "account-" + index,
+            name: index === 0 ? "db/空 格?=&" : "db-user-" + index,
+            username: index === 2 ? "" : base.username,
+            credentials: index === 0 ? [{...base.credentials[0], account_switch: {account_ids: ["account-0", "backup"]}}]
+              : index === 1 ? [{key: "account:account-1", mode: "subscription", revision: 3}] : [],
+            future_optional_field: "ignored",
+            // Verify that SDK metadata projections never expose unexpected secrets.
+            secret: "DO_NOT_LOG_SECRET",
+          }));
+          const fault = data.search.startsWith("fault:") ? data.search.slice(6) : "";
+          const filtered = fault ? all : all.filter(item => !data.search || item.name.includes(data.search)
+            || item.username.includes(data.search) || item.asset.name.includes(data.search) || item.asset.address.includes(data.search));
+          result = {count: filtered.length, accounts: filtered.slice(offset, offset + limit)};
+          if (fault === "empty") result = {count: 0, accounts: []};
+          if (fault === "invalid-count") result.count = -1;
+          if (fault === "null-count") result.count = null;
+          if (fault === "invalid-account") result.accounts[0].id = "";
+          if (fault === "invalid-policy") result.accounts[0].credentials[0].mode = "unknown";
+          if (fault === "missing-policy-revision") delete result.accounts[0].credentials[0].revision;
+          if (fault === "missing-username") delete result.accounts[0].username;
+          if (fault === "null-policies") result.accounts[0].credentials = null;
+          if (fault === "invalid-list") result.accounts = null;
+          if (fault === "oversized") result.accounts.push(all[0]);
+          if (fault === "duplicate-page") result.accounts[1] = result.accounts[0];
+          if (offset > 0) {
+            if (fault === "incomplete") result.accounts = [];
+            if (fault === "duplicate") result.accounts[0] = all[0];
+            if (fault === "changing-count") result.count++;
+            if (fault === "forbidden") {
+              response.statusCode = 403;
+              result = {code: "credential_not_authorized", detail: "Scope denied"};
+            }
+          }
+        }
+      } else if (route === "/status/") {
+        assert.equal(request.method, "POST");
+        assert.ok(["starting", "running", "degraded", "stopping", "stopped", "error"].includes(data.status));
+        assert.ok(Array.isArray(data.account_ids));
+        assert.ok(data.account_ids.length <= 200);
+        assert.equal(new Set(data.account_ids).size, data.account_ids.length);
+        assert.match(data.error_code, /^[A-Za-z0-9_.:-]*$/);
+        if (["fault_401", "fault_403", "fault_404", "fault_503"].includes(data.error_code)) {
+          response.statusCode = Number(data.error_code.slice(6));
+          result = {code: "credential_not_authorized"};
+        } else if (data.error_code === "fault_invalid") {
+          result = {accepted: "true"};
+        } else if (data.error_code === "fault_network") {
+          response.destroy();
+          return;
+        } else if (data.error_code === "fault_timeout") {
+          response.writeHead(200);
+          response.write("{");
+          setTimeout(() => response.end("}"), 200).unref();
+          return;
+        } else {
+          applicationStatuses.set(data.instance_id, {
+            status: data.status, account_ids: data.account_ids, error_code: data.error_code,
+          });
+          result = {accepted: true};
+        }
       } else if (route === "/event-result/") {
         assert.ok(data.event_id);
         assert.ok(["success", "failed"].includes(data.status));

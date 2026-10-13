@@ -97,6 +97,96 @@ function commandResult(data) {
   return camelize(data)
 }
 
+function authorizedAccount(data) {
+  object(data)
+  for (const name of ['id', 'name', 'secret_type']) requiredString(data[name], name)
+  if (typeof data.username !== 'string') throw new TypeError('username must be a string')
+  for (const [item, names] of [
+    [data.asset, ['id', 'name', 'address']],
+    [data.asset?.platform, ['id', 'name', 'category', 'type']],
+  ]) {
+    object(item)
+    for (const name of names) requiredString(item[name], name)
+  }
+  if (!Array.isArray(data.credentials)) throw new TypeError('Invalid account policies')
+  const credentials = data.credentials.map((policy) => {
+    object(policy)
+    requiredString(policy.key, 'key')
+    if (!['subscription', 'alternating_rotation'].includes(policy.mode))
+      throw new TypeError('Invalid account policy mode')
+    revision(policy.revision)
+    const result = { key: policy.key, mode: policy.mode, revision: policy.revision }
+    if (policy.account_switch != null) {
+      object(policy.account_switch)
+      const ids = policy.account_switch.account_ids
+      if (!Array.isArray(ids)) throw new TypeError('Invalid account switch')
+      ids.forEach((id) => requiredString(id, 'accountId'))
+      result.accountSwitch = { accountIds: [...ids] }
+    }
+    return result
+  })
+  // Explicit metadata projection keeps secrets and unknown fields out of listings.
+  const { id, name, username, secret_type: secretType } = data
+  const { id: assetId, name: assetName, address, platform } = data.asset
+  const asset = { id: assetId, name: assetName, address,
+    platform: { id: platform.id, name: platform.name, category: platform.category, type: platform.type } }
+  return { id, name, username, secretType, asset, credentials }
+}
+
+function applicationInfo(data) {
+  object(data)
+  for (const name of ['id', 'name', 'org_id']) requiredString(data[name], name)
+  if (typeof data.is_active !== 'boolean') throw new TypeError('Invalid application status')
+  revision(data.accounts_count)
+  revision(data.policies_count)
+  return { id: data.id, name: data.name, orgId: data.org_id, isActive: data.is_active,
+    accountsCount: data.accounts_count, policiesCount: data.policies_count }
+}
+
+function clientInfo(data) {
+  object(data)
+  for (const name of ['id', 'instance_id', 'client_version']) requiredString(data[name], name)
+  if (!['sdk', 'agent'].includes(data.type) || typeof data.is_active !== 'boolean')
+    throw new TypeError('Invalid client status')
+  revision(data.protocol_version)
+  if (data.config_schema_version != null) revision(data.config_schema_version)
+  let applicationStatus = null
+  if (data.application_status != null) {
+    const report = object(data.application_status)
+    if (!['starting', 'running', 'degraded', 'stopping', 'stopped', 'error'].includes(report.status) ||
+        !Array.isArray(report.account_ids) || report.account_ids.some(id => typeof id !== 'string' || !id) ||
+        typeof report.error_code !== 'string') throw new TypeError('Invalid application status')
+    applicationStatus = { status: report.status, accountIds: [...report.account_ids], errorCode: report.error_code }
+  }
+  if (data.date_status_reported != null) requiredString(data.date_status_reported, 'dateStatusReported')
+  return { id: data.id, instanceId: data.instance_id, type: data.type,
+    isActive: data.is_active, clientVersion: data.client_version,
+    protocolVersion: data.protocol_version, configSchemaVersion: data.config_schema_version ?? null,
+    applicationStatus, dateStatusReported: data.date_status_reported ?? null }
+}
+
+function credentialPolicy(data) {
+  object(data)
+  for (const name of ['id', 'key', 'name', 'status']) requiredString(data[name], name)
+  if (!['subscription', 'alternating_rotation'].includes(data.mode)
+    || typeof data.is_active !== 'boolean' || typeof data.subscription_all_authorized !== 'boolean')
+    throw new TypeError('Invalid policy metadata')
+  revision(data.revision)
+  revision(data.accounts_count)
+  if (data.active_account_id != null) requiredString(data.active_account_id, 'activeAccountId')
+  let accountSwitch = null
+  if (data.account_switch != null) {
+    const ids = object(data.account_switch).account_ids
+    if (!Array.isArray(ids)) throw new TypeError('Invalid account switch')
+    ids.forEach(id => requiredString(id, 'accountId'))
+    accountSwitch = { accountIds: [...ids] }
+  }
+  return { id: data.id, key: data.key, name: data.name, mode: data.mode,
+    isActive: data.is_active, status: data.status, revision: data.revision,
+    accountsCount: data.accounts_count, subscriptionAllAuthorized: data.subscription_all_authorized,
+    activeAccountId: data.active_account_id ?? null, accountSwitch }
+}
+
 /** One application replica. Each request and WebSocket reconnect gets a fresh signature. */
 class Client {
   #options
@@ -189,7 +279,7 @@ class Client {
     return headers
   }
 
-  async #request(method, path, data, parse, { signal } = {}) {
+  async #request(method, path, data, parse, { signal, invalidateCredentials = true } = {}) {
     if (this.#closed.signal.aborted) throw new Error('Client is closed')
     data = this.#identity(data)
     const url = this.#url(CLIENT_PATH + path, method === 'GET' ? data : {})
@@ -210,7 +300,7 @@ class Client {
     } catch (cause) {
       throw new PAMError('NetworkError', 'HTTP request failed', { cause })
     }
-    if ([401, 403, 404, 426].includes(response.status)) {
+    if (invalidateCredentials && [401, 403, 404, 426].includes(response.status)) {
       this.#latestCredentials.clear()
       this.#credentialGeneration++
     }
@@ -234,7 +324,7 @@ class Client {
       })
     }
     if (!response.ok) {
-      if (response.status === 400 && dataObject.code === 'credential_not_found') {
+      if (invalidateCredentials && response.status === 400 && dataObject.code === 'credential_not_found') {
         this.#latestCredentials.clear(); this.#credentialGeneration++
       }
       throw new PAMError(
@@ -255,6 +345,100 @@ class Client {
         cause,
       })
     }
+  }
+
+  getApplication({ signal } = {}) {
+    return this.#request('GET', '/application/', {}, applicationInfo, { signal })
+  }
+
+  getClientInfo({ signal } = {}) {
+    return this.#request('GET', '/client/', {}, clientInfo, { signal })
+  }
+
+  async reportStatus({ status, accountId, accountIds, errorCode = '', raiseOnError = false, signal } = {}) {
+    if (!['starting', 'running', 'degraded', 'stopping', 'stopped', 'error'].includes(status))
+      throw new TypeError('Invalid application status')
+    if (typeof raiseOnError !== 'boolean') throw new TypeError('raiseOnError must be a boolean')
+    if (accountId !== undefined && accountIds !== undefined) throw new TypeError('Use accountId or accountIds, not both')
+    const accounts = accountId === undefined ? (accountIds ?? []) : [accountId]
+    if (!Array.isArray(accounts) || accounts.length > 200 || accounts.some(id => typeof id !== 'string' || !id) || new Set(accounts).size !== accounts.length)
+      throw new TypeError('Use at most 200 unique non-empty account IDs')
+    if (typeof errorCode !== 'string' || errorCode.length > 128 || !/^[A-Za-z0-9_.:-]*$/.test(errorCode))
+      throw new TypeError('Invalid machine-readable error code')
+    try {
+      if (this.#closed.signal.aborted) {
+        if (raiseOnError) throw new Error('Client is closed')
+        return false
+      }
+      return await this.#request('POST', '/status/', { status, account_ids: accounts, error_code: errorCode }, data => {
+        if (typeof data.accepted !== 'boolean') throw new TypeError('Invalid status acknowledgment')
+        return data.accepted
+      }, { signal, invalidateCredentials: false })
+    } catch (error) {
+      if (raiseOnError || !(error instanceof PAMError)) throw error
+      return false
+    }
+  }
+
+  listPolicies({ search = '', signal } = {}) {
+    if (typeof search !== 'string' || [...search].length > 128)
+      throw new TypeError('search must be a string of at most 128 characters')
+    return this.#request('GET', '/policies/', { search }, data => {
+      if (!Array.isArray(data.policies)) throw new TypeError('Invalid policy list')
+      const policies = data.policies.map(credentialPolicy)
+      if (new Set(policies.map(item => item.id)).size !== policies.length)
+        throw new TypeError('Duplicate policy in list')
+      return policies
+    }, { signal })
+  }
+
+  getPolicy({ key, policyId, signal } = {}) {
+    if ((key === undefined) === (policyId === undefined))
+      throw new TypeError('Provide exactly one of key or policyId')
+    const data = key !== undefined ? { key: requiredString(key, 'key') }
+      : { policy_id: requiredString(policyId, 'policyId') }
+    if (key !== undefined && [...key].length > 64) throw new TypeError('Invalid policy key')
+    return this.#request('GET', '/policy/', data, credentialPolicy, { signal })
+  }
+
+  async listAccounts({ search = '', signal } = {}) {
+    const accounts = []
+    const seen = new Set()
+    let count
+    for (;;) {
+      const page = await this.listAccountsPage({ offset: accounts.length, search, signal })
+      count ??= page.count
+      if (page.count !== count)
+        throw new PAMError('ResponseError', 'Account count changed during pagination; retry listing')
+      if (!page.accounts.length && accounts.length < count)
+        throw new PAMError('ResponseError', 'Incomplete account list')
+      for (const account of page.accounts) {
+        if (seen.has(account.id))
+          throw new PAMError('ResponseError', 'Duplicate account in paginated list')
+        seen.add(account.id)
+        accounts.push(account)
+      }
+      if (accounts.length === count) return accounts
+    }
+  }
+
+  listAccountsPage({ limit = 200, offset = 0, search = '', signal } = {}) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+      throw new TypeError('limit must be an integer between 1 and 500')
+    if (!Number.isSafeInteger(offset) || offset < 0)
+      throw new TypeError('offset must be a non-negative integer')
+    if (typeof search !== 'string' || [...search].length > 128)
+      throw new TypeError('search must be a string of at most 128 characters')
+    return this.#request('GET', '/accounts/', { limit, offset, search }, (data) => {
+      if (!Number.isSafeInteger(data.count) || data.count < 0 || !Array.isArray(data.accounts))
+        throw new TypeError('Invalid account page')
+      const accounts = data.accounts.map(authorizedAccount)
+      if (accounts.length > Math.min(limit, Math.max(data.count - offset, 0)))
+        throw new TypeError('Account page exceeds limit or total count')
+      if (new Set(accounts.map((account) => account.id)).size !== accounts.length)
+        throw new TypeError('Duplicate account in page')
+      return { count: data.count, accounts }
+    }, { signal })
   }
 
   getCredential({ key, accountId, signal, allowLocalFallback = true } = {}) {

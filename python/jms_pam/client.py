@@ -2,6 +2,7 @@
 
 import logging
 import math
+import re
 from dataclasses import replace
 from email.utils import formatdate
 from threading import Event, Lock
@@ -19,10 +20,15 @@ from ._version import CONFIG_SCHEMA_VERSION, PROTOCOL_VERSION, __version__
 from .exceptions import PAMError
 from .models import (
     Account,
+    AccountsPage,
     AgentSync,
+    ApplicationInfo,
+    AuthorizedAccount,
+    ClientInfo,
     CommandResult,
     Credential,
     CredentialConfirmation,
+    CredentialPolicy,
     KnownRevision,
 )
 
@@ -108,6 +114,7 @@ class Client:
         data: dict[str, Any],
         parse: Callable[[dict[str, Any]], Response],
         query: bool = False,
+        invalidate_credentials: bool = True,
     ) -> Response:
         data = {key: value for key, value in data.items() if value is not None}
         data["instance_id"] = self.instance_id
@@ -123,7 +130,7 @@ class Client:
                 timeout=self.timeout,
             )
         except PAMError as error:
-            if (
+            if invalidate_credentials and (
                 error.status_code in (401, 403, 404)
                 or error.code == "client_upgrade_required"
                 or (error.status_code == 400 and error.code == "credential_not_found")
@@ -275,6 +282,130 @@ class Client:
                 for selector, credential in self._latest_credentials.items()
                 if selector[0] != "key" or selector[1] in keys
             }
+
+    def get_application(self) -> ApplicationInfo:
+        """Read metadata for the authenticated application, without its secret."""
+        return self._request("GET", f"{CLIENT_PATH}/application/", {}, ApplicationInfo.from_dict, query=True)
+
+    def get_client_info(self) -> ClientInfo:
+        """Read registration and version metadata for this replica only."""
+        return self._request("GET", f"{CLIENT_PATH}/client/", {}, ClientInfo.from_dict, query=True)
+
+    def report_status(
+        self, status: str, *, account_id: Optional[str] = None,
+        account_ids: Optional[Iterable[str]] = None, error_code: str = "",
+        raise_on_error: bool = False,
+    ) -> bool:
+        """Report a complete usage snapshot; transport failures return False by default.
+
+        This does not confirm a rotation. Invalid arguments still raise ValueError.
+        Use an empty account list when no accounts are in use. Never pass secrets
+        or exception messages as error_code. Calls use the configured HTTP timeout.
+        """
+        if status not in ("starting", "running", "degraded", "stopping", "stopped", "error"):
+            raise ValueError("Invalid application status")
+        if type(raise_on_error) is not bool:
+            raise ValueError("raise_on_error must be a boolean")
+        if account_id is not None and account_ids is not None:
+            raise ValueError("Use account_id or account_ids, not both")
+        if isinstance(account_ids, (str, bytes)):
+            raise ValueError("account_ids must be a sequence of account IDs")
+        accounts = [account_id] if account_id is not None else list(account_ids or ())
+        if len(accounts) > 200 or any(not isinstance(value, str) or not value for value in accounts):
+            raise ValueError("Use at most 200 non-empty account IDs")
+        if len(set(accounts)) != len(accounts):
+            raise ValueError("Duplicate account IDs")
+        if not isinstance(error_code, str) or len(error_code) > 128 or re.fullmatch(r"[A-Za-z0-9_.:-]*", error_code) is None:
+            raise ValueError("error_code must be a machine-readable code of at most 128 characters")
+
+        def parse(data):
+            if type(data.get("accepted")) is not bool:
+                raise ValueError("Invalid status acknowledgment")
+            return data["accepted"]
+
+        try:
+            return self._request(
+                "POST", f"{CLIENT_PATH}/status/",
+                {"status": status, "account_ids": accounts, "error_code": error_code},
+                parse, invalidate_credentials=False,
+            )
+        except (PAMError, RuntimeError):
+            if raise_on_error:
+                raise
+            return False
+
+    def list_policies(self, *, search: str = "") -> list[CredentialPolicy]:
+        """Read all visible bound policies, including disabled ones, without secrets."""
+        if not isinstance(search, str) or len(search) > 128:
+            raise ValueError("search must be a string of at most 128 characters")
+
+        def parse(data):
+            if not isinstance(data.get("policies"), list):
+                raise TypeError("policies must be a list")
+            policies = [CredentialPolicy.from_dict(item) for item in data["policies"]]
+            if len({item.id for item in policies}) != len(policies):
+                raise ValueError("Duplicate policy in list")
+            return policies
+
+        return self._request("GET", f"{CLIENT_PATH}/policies/", {"search": search}, parse, query=True)
+
+    def get_policy(
+        self, *, key: Optional[str] = None, policy_id: Optional[str] = None,
+    ) -> CredentialPolicy:
+        """Read one visible bound policy by exactly one of key or policy_id."""
+        if (key is None) == (policy_id is None):
+            raise ValueError("Provide exactly one of key or policy_id")
+        name, value = ("key", key) if key is not None else ("policy_id", policy_id)
+        if not isinstance(value, str) or not value or (name == "key" and len(value) > 64):
+            raise ValueError(f"Invalid {name}")
+        return self._request("GET", f"{CLIENT_PATH}/policy/", {name: value}, CredentialPolicy.from_dict, query=True)
+
+    def list_accounts(self, *, search: str = "") -> list[AuthorizedAccount]:
+        """Fetch all authorized metadata pages live, without retrieving secrets.
+
+        A changed count, duplicate or incomplete page raises PAMError. Retry the
+        entire listing if the application's scope changes during pagination.
+        """
+        accounts = []
+        seen = set()
+        count = None
+        while True:
+            page = self.list_accounts_page(offset=len(accounts), search=search)
+            if count is None:
+                count = page.count
+            if page.count != count:
+                raise PAMError("ResponseError", "Account count changed during pagination; retry listing")
+            if not page.accounts and len(accounts) < count:
+                raise PAMError("ResponseError", "Incomplete account list")
+            for account in page.accounts:
+                if account.id in seen:
+                    raise PAMError("ResponseError", "Duplicate account in paginated list")
+                seen.add(account.id)
+                accounts.append(account)
+            if len(accounts) == count:
+                return accounts
+
+    def list_accounts_page(
+        self, *, limit: int = 200, offset: int = 0, search: str = "",
+    ) -> AccountsPage:
+        """Return one live page of authorized account metadata and its total count."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        if not isinstance(search, str) or len(search) > 128:
+            raise ValueError("search must be a string of at most 128 characters")
+
+        def parse(data):
+            page = AccountsPage.from_dict(data)
+            if len(page.accounts) > min(limit, max(page.count - offset, 0)):
+                raise ValueError("Account page exceeds limit or total count")
+            return page
+
+        return self._request(
+            "GET", f"{CLIENT_PATH}/accounts/",
+            {"limit": limit, "offset": offset, "search": search}, parse, query=True,
+        )
 
     def get_account(self, *, account_id: str, allow_local_fallback: bool = True) -> Account:
         """Fetch an authorized account, including asset and cache provenance."""

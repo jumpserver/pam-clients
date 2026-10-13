@@ -67,6 +67,77 @@ public final class Demo {
 }
 ```
 
+### Listar contas autorizadas
+
+Os métodos de listagem consultam o escopo pull autorizado atual da aplicação e retornam metadados de contas, ativos e políticas push, sem buscar senhas nem registrar consultas de credenciais. Incluem contas sem políticas. A lista completa percorre todas as páginas; o método de página retorna `count` e `accounts` (Go retorna lista e total separadamente). Os padrões são limit 200 e offset 0; limit aceita 1–500 e search até 128 caracteres para nome da conta, usuário, nome do ativo ou endereço. Duplicatas, resultados incompletos e totais variáveis geram erro; repita a consulta completa se a autorização mudar. Para obter uma senha, use o ID da conta no método de consulta. Os exemplos exigem código do SDK com esses novos métodos; a versão publicada 1.0.2 ainda não os oferece em Python, Java ou Node.js.
+
+```java
+package org.jumpserver.pam;
+
+public final class AccountsDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      for (Models.AuthorizedAccount account : client.listAccounts()) {
+        System.out.println(
+            account.getId() + " " + account.getUsername() + " " + account.getAsset().getName());
+      }
+      Models.AccountsPage page = client.listAccountsPage(20, 0, "database");
+      System.out.println("Matching accounts: " + page.getCount());
+      // Use an authorized account.getId() with getAccount when its secret is needed.
+    }
+  }
+}
+```
+
+
+### Informações da aplicação, réplica e políticas
+
+getApplication retorna ID, nome, organização e contagens de contas autorizadas e políticas visíveis da aplicação autenticada. getClientInfo retorna somente registro, tipo e versões da réplica atual. A lista retorna todas as políticas vinculadas visíveis, incluindo desativadas; search filtra nomes ou chaves. Consulte uma política pelo ID ou pela chave da própria política, sem usar chaves push de contas. Políticas de rotação exigem autorização para ambas as contas e a conta ativa; contagens de assinatura incluem somente contas autorizadas. As consultas não retornam segredos nem buscam ou confirmam credenciais. O primeiro acesso registra a réplica. Exigem Core e código SDK atualizados; a versão publicada 1.0.2 ainda não contém os métodos.
+
+```java
+package org.jumpserver.pam;
+
+import java.util.List;
+
+public final class ApplicationInfoDemo {
+  public static void main(String[] args) {
+    Client.Options options =
+        new Client.Options(
+                System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
+                System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID"))
+            .orgId(System.getenv("JMS_ORG_ID"));
+    try (Client client = new Client(options)) {
+      Models.ApplicationInfo application = client.getApplication();
+      System.out.println(
+          application.getId() + " " + application.getName() + " " + application.getAccountsCount());
+      Models.ClientInfo replica = client.getClientInfo();
+      System.out.println(replica.getInstanceId() + " " + replica.getClientVersion());
+      List<Models.CredentialPolicy> policies = client.listPolicies();
+      for (Models.CredentialPolicy policy : policies) {
+        System.out.println(
+            policy.getKey()
+                + " "
+                + policy.getName()
+                + " "
+                + policy.isActive()
+                + " "
+                + policy.getStatus());
+      }
+      if (!policies.isEmpty()) {
+        Models.CredentialPolicy policy = client.getPolicyById(policies.get(0).getId());
+        System.out.println(policy.getName() + " " + policy.getAccountsCount());
+      }
+    }
+  }
+}
+```
+
+
 ## Eventos e aplicação de credenciais
 
 Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `success` ou `failed` com `event_id`. Receber ou buscar não significa aplicar. Eventos e snapshots incluem `event_id`, `account_id` e `account_revision`; verifique a versão. Reivindique comandos com `running` e use operações idempotentes.
@@ -130,6 +201,11 @@ Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `
 
 ## Métodos comuns
 
+- `getApplication() / getClientInfo()`
+- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
+- `listAccounts() / listAccounts(search)`
+- `listAccountsPage(limit, offset, search)`
 - `getAccount(accountId)`
 - `getAccount(accountId, false)`
 - `confirmEvent(eventId, status, errorCode)`
@@ -141,6 +217,16 @@ Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `
 - `executeApplicationCommand(event, handler)`
 - `syncAgent(credentials, deliveredCredentials, configDigest, syncStatus, syncError)`
 - `clone() / close()`
+
+### Relatório de estado da aplicação
+
+Informe um retrato completo do estado e dos IDs das contas em uso. Estados: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Uma lista vazia remove o uso anterior. Chame nas mudanças de estado ou no heartbeat da aplicação. Python, Java e Node.js retornam false em falhas de rede/API; Go oferece `TryReportStatus`. Variantes estritas expõem os erros. Argumentos inválidos são rejeitados. As chamadas usam o timeout HTTP configurado. O relatório não busca segredos, confirma rotação nem invalida o cache. Não inclua segredos ou mensagens de exceção em `error_code`. ClientInfo fornece o último relatório e sua data.
+
+```java
+boolean accepted = client.reportStatus("running", account.getId());
+client.reportStatus("stopped", java.util.Collections.emptyList());
+```
+
 
 ## Solução de problemas
 
@@ -187,6 +273,7 @@ A configuração baixada já inclui a identidade e a entrega do Agent. Em rules,
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -203,6 +290,8 @@ A configuração baixada já inclui a identidade e a entrega do Agent. Em rules,
   }
 ]
 ```
+
+`config_update.format` usa `auto` por padrão, inclusive quando omitido. As extensões `.txt`, `.env` e `.properties` usam `env` (`KEY=value`); `.yml` e `.yaml` usam `yaml` (`KEY: value` no nível superior, valores gravados como strings entre aspas). Para outras extensões, informe `env` ou `yaml`. Cada campo deve existir exatamente uma vez; as demais configurações são preservadas. Para seções INI ou YAML aninhado, use `files` + `template_file` para gerar o arquivo inteiro, ou um `script`. Após atualizar o arquivo de variáveis, a aplicação precisa relê-lo ou reiniciar.
 
 ```bash
 jms-pam-agent get_accounts

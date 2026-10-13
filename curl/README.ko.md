@@ -48,6 +48,12 @@ id는 애플리케이션을 식별하며 계정 리비전이 아닙니다. secre
 | HTTP | API | JSON / query |
 | --- | --- | --- |
 | GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/accounts/` | `instance_id`, `limit`, `offset`, `search` |
+| GET | `/api/v1/accounts/credential-client/application/` | `instance_id` |
+| GET | `/api/v1/accounts/credential-client/client/` | `instance_id` |
+| POST | `/api/v1/accounts/credential-client/status/` | `instance_id`, `status`, `account_ids`, `error_code` |
+| GET | `/api/v1/accounts/credential-client/policies/` | `instance_id`, `search` |
+| GET | `/api/v1/accounts/credential-client/policy/` | `instance_id`, `key` or `policy_id` |
 | POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |

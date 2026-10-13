@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Options identify a stable application replica. Timeout applies to HTTP calls and WS handshakes.
@@ -75,6 +76,13 @@ func (c *Client) Close() error {
 	return nil
 }
 func (c *Client) request(ctx context.Context, method, path string, data map[string]any, target any, validate func(map[string]json.RawMessage) error) error {
+	return c.requestInternal(ctx, method, path, data, target, validate, true)
+}
+
+func (c *Client) requestInternal(ctx context.Context, method, path string, data map[string]any, target any, validate func(map[string]json.RawMessage) error, invalidateCredentials bool) error {
+	if ctx == nil {
+		return fmt.Errorf("context is required")
+	}
 	c.mu.Lock()
 	closed := c.closed
 	c.mu.Unlock()
@@ -118,7 +126,7 @@ func (c *Client) request(ctx context.Context, method, path string, data map[stri
 		return &PAMError{Code: "NetworkError", Detail: "HTTP request failed", Err: err}
 	}
 	defer response.Body.Close()
-	if response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404 || response.StatusCode == 426 {
+	if invalidateCredentials && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404 || response.StatusCode == 426) {
 		c.mu.Lock()
 		clear(c.latestCredentials)
 		c.credentialGeneration++
@@ -143,7 +151,7 @@ func (c *Client) request(ctx context.Context, method, path string, data map[stri
 			detail = value
 		}
 		json.Unmarshal(payload["request_id"], &requestID)
-		if response.StatusCode == 400 && code == "credential_not_found" {
+		if invalidateCredentials && response.StatusCode == 400 && code == "credential_not_found" {
 			c.mu.Lock()
 			clear(c.latestCredentials)
 			c.credentialGeneration++
@@ -166,13 +174,82 @@ func (c *Client) GetCredential(ctx context.Context, selector CredentialSelector)
 	return c.getCredential(ctx, selector, true)
 }
 
+func (c *Client) GetApplication(ctx context.Context) (ApplicationInfo, error) {
+	var value ApplicationInfo
+	err := c.request(ctx, http.MethodGet, "/application/", map[string]any{}, &value, validApplicationInfo)
+	return value, err
+}
+func (c *Client) GetClientInfo(ctx context.Context) (ClientInfo, error) {
+	var value ClientInfo
+	err := c.request(ctx, http.MethodGet, "/client/", map[string]any{}, &value, validClientInfo)
+	return value, err
+}
+func (c *Client) ListPolicies(ctx context.Context, search string) ([]CredentialPolicy, error) {
+	if !utf8.ValidString(search) || utf8.RuneCountInString(search) > 128 {
+		return nil, fmt.Errorf("invalid policy search")
+	}
+	var value struct {
+		Policies []CredentialPolicy `json:"policies"`
+	}
+	err := c.request(ctx, http.MethodGet, "/policies/", map[string]any{"search": search}, &value, func(data map[string]json.RawMessage) error {
+		if err := required(data, "policies"); err != nil {
+			return err
+		}
+		var policies []map[string]json.RawMessage
+		if err := json.Unmarshal(data["policies"], &policies); err != nil {
+			return err
+		}
+		seen := map[string]bool{}
+		for _, policy := range policies {
+			if err := validPolicy(policy); err != nil {
+				return err
+			}
+			var id string
+			json.Unmarshal(policy["id"], &id)
+			if seen[id] {
+				return fmt.Errorf("duplicate policy in list")
+			}
+			seen[id] = true
+		}
+		return nil
+	})
+	return value.Policies, err
+}
+func (c *Client) GetPolicy(ctx context.Context, selector PolicySelector) (CredentialPolicy, error) {
+	if (selector.Key == "") == (selector.PolicyID == "") || utf8.RuneCountInString(selector.Key) > 64 {
+		return CredentialPolicy{}, fmt.Errorf("provide exactly one of Key or PolicyID")
+	}
+	data := map[string]any{}
+	if selector.Key != "" {
+		data["key"] = selector.Key
+	} else {
+		data["policy_id"] = selector.PolicyID
+	}
+	var value CredentialPolicy
+	err := c.request(ctx, http.MethodGet, "/policy/", data, &value, validPolicy)
+	return value, err
+}
+
 func (c *Client) ListAuthorizedAccounts(ctx context.Context) ([]AuthorizedAccount, error) {
+	return c.ListAccounts(ctx, "")
+}
+
+// ListAccounts fetches all pages in the application's current pull scope without secrets.
+// A changing count or incomplete response returns an error; retry the whole listing.
+func (c *Client) ListAccounts(ctx context.Context, search string) ([]AuthorizedAccount, error) {
 	accounts := []AuthorizedAccount{}
 	seen := map[string]bool{}
+	total := -1
 	for {
-		page, count, err := c.ListAuthorizedAccountsPage(ctx, 200, len(accounts), "")
+		page, count, err := c.ListAccountsPage(ctx, 200, len(accounts), search)
 		if err != nil {
 			return nil, err
+		}
+		if total == -1 {
+			total = count
+		}
+		if count != total {
+			return nil, &PAMError{Code: "ResponseError", Detail: "Account count changed during pagination; retry listing"}
 		}
 		if len(page) == 0 && len(accounts) < count {
 			return nil, &PAMError{Code: "ResponseError", Detail: "Incomplete account list"}
@@ -184,15 +261,23 @@ func (c *Client) ListAuthorizedAccounts(ctx context.Context) ([]AuthorizedAccoun
 			seen[account.ID] = true
 			accounts = append(accounts, account)
 		}
-		if len(accounts) >= count {
+		if len(accounts) == count {
 			return accounts, nil
 		}
 	}
 }
 
 func (c *Client) ListAuthorizedAccountsPage(ctx context.Context, limit, offset int, search string) ([]AuthorizedAccount, int, error) {
+	return c.ListAccountsPage(ctx, limit, offset, search)
+}
+
+// ListAccountsPage returns one live metadata page and the total matching account count.
+func (c *Client) ListAccountsPage(ctx context.Context, limit, offset int, search string) ([]AuthorizedAccount, int, error) {
 	if limit < 1 || limit > 500 || offset < 0 {
 		return nil, 0, fmt.Errorf("invalid account page")
+	}
+	if !utf8.ValidString(search) || utf8.RuneCountInString(search) > 128 {
+		return nil, 0, fmt.Errorf("search must be a string of at most 128 characters")
 	}
 	var value struct {
 		Count    int                 `json:"count"`
@@ -210,8 +295,18 @@ func (c *Client) ListAuthorizedAccountsPage(ctx context.Context, limit, offset i
 		if err := json.Unmarshal(data["accounts"], &accounts); err != nil || accounts == nil {
 			return fmt.Errorf("invalid accounts metadata")
 		}
+		if len(accounts) > limit || (len(accounts) > 0 && (offset > count || len(accounts) > count-offset)) {
+			return fmt.Errorf("account page exceeds limit or total count")
+		}
 		seen := map[string]bool{}
-		for _, account := range accounts {
+		var items []map[string]json.RawMessage
+		if err := json.Unmarshal(data["accounts"], &items); err != nil {
+			return err
+		}
+		for index, account := range accounts {
+			if err := validAuthorizedAccount(items[index]); err != nil {
+				return err
+			}
 			if account.ID == "" || account.Asset.ID == "" || seen[account.ID] {
 				return fmt.Errorf("invalid authorized account")
 			}
@@ -405,7 +500,7 @@ func (c *Client) ExecuteApplicationCommand(ctx context.Context, event Event, han
 	if err != nil || !claim.Accepted {
 		return claim, err
 	}
-	if err = handler(event); err != nil {
+	if err = invokeEventHook(func() error { return handler(event) }); err != nil {
 		c.ReportApplicationCommandResult(ctx, event.CommandID, "failed", "execution_failed")
 		return CommandResult{}, err
 	}

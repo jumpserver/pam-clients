@@ -28,6 +28,7 @@ type Remote interface {
 	ConfirmEvent(context.Context, string, string, string) (pam.CommandResult, error)
 	ListApplicationCommands(context.Context) ([]pam.Event, error)
 	ReportApplicationCommandResult(context.Context, string, string, string) (pam.CommandResult, error)
+	ReportStatus(context.Context, pam.ApplicationStatus) error
 }
 
 type Applied struct {
@@ -38,19 +39,20 @@ type Applied struct {
 }
 
 type State struct {
-	Events            map[string]pam.Event  `json:"pending_events"`
-	Identity          string                `json:"identity"`
-	LocalDeliveryHash string                `json:"local_delivery_hash"`
-	Latest            map[string]Credential `json:"credentials"`
-	Delivered         map[string]int64      `json:"delivered"`
-	Applied           map[string]Applied    `json:"applied"`
-	Authorized        map[string]bool       `json:"authorized"`
-	Wanted            map[string]int64      `json:"wanted_revisions"`
-	Commands          map[string]pam.Event  `json:"pending_commands"`
-	Scope             pam.AgentScope        `json:"scope"`
-	Digest            string                `json:"config_digest"`
-	Denied            bool                  `json:"access_denied"`
-	Status            string                `json:"sync_status"`
+	Events            map[string]pam.Event    `json:"pending_events"`
+	Identity          string                  `json:"identity"`
+	LocalDeliveryHash string                  `json:"local_delivery_hash"`
+	Latest            map[string]Credential   `json:"credentials"`
+	Delivered         map[string]int64        `json:"delivered"`
+	Applied           map[string]Applied      `json:"applied"`
+	AccountUsage      map[string]AccountUsage `json:"account_usage"`
+	Authorized        map[string]bool         `json:"authorized"`
+	Wanted            map[string]int64        `json:"wanted_revisions"`
+	Commands          map[string]pam.Event    `json:"pending_commands"`
+	Scope             pam.AgentScope          `json:"scope"`
+	Digest            string                  `json:"config_digest"`
+	Denied            bool                    `json:"access_denied"`
+	Status            string                  `json:"sync_status"`
 }
 
 type Agent struct {
@@ -126,7 +128,11 @@ func New(config Config, remote Remote) (*Agent, error) {
 	if err := validateScope(state.Scope); err != nil {
 		return nil, err
 	}
-	return &Agent{Config: config, remote: remote, state: state, deliver: Deliver}, nil
+	service := &Agent{Config: config, remote: remote, state: state, deliver: Deliver}
+	if err := service.restoreAccountUsage(); err != nil {
+		return nil, err
+	}
+	return service, nil
 }
 
 func (a *Agent) persist() error { return writeJSON(a.Config.StateFile, a.state) }
@@ -244,7 +250,16 @@ func (a *Agent) Sync(ctx context.Context) error {
 	return a.synchronize(ctx)
 }
 
-func (a *Agent) synchronize(ctx context.Context) error {
+func (a *Agent) synchronize(ctx context.Context) (result error) {
+	// Usage reporting is optional telemetry and must never fail credential delivery.
+	defer func() {
+		if result != nil && ctx.Err() == nil {
+			a.mu.Lock()
+			a.state.Status = "error"
+			a.mu.Unlock()
+		}
+		a.reportAccountUsage(ctx)
+	}()
 	a.mu.Lock()
 	legacyConfirmationKeys := append([]string(nil), a.state.Scope.ConfirmationKeys...)
 	options := pam.AgentSyncOptions{ConfigDigest: a.state.Digest, SyncStatus: a.state.Status, DeliveryScope: a.Config.DeliveryScope(), RestartSupported: a.Config.Delivery.Mode == "environment" && a.Config.Delivery.Operation == "restart"}
@@ -433,6 +448,7 @@ func (a *Agent) synchronize(ctx context.Context) error {
 				}
 			}
 		}
+		a.recordAccountUsage(latest)
 		err = a.persist()
 		a.mu.Unlock()
 		if err != nil {

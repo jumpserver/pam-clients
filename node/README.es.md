@@ -66,6 +66,87 @@ if (require.main === module)
   })
 ```
 
+### Listar cuentas autorizadas
+
+Los métodos de listado consultan el ámbito pull autorizado actual y devuelven metadatos de cuentas, activos y políticas push, sin obtener contraseñas ni registrar consultas de secretos. Incluyen cuentas sin políticas. La lista completa recorre todas las páginas; el método de página devuelve `count` y `accounts` (Go devuelve lista y total por separado). Los valores predeterminados son limit 200 y offset 0; limit acepta 1–500 y search hasta 128 caracteres para nombre de cuenta, usuario, nombre de activo o dirección. Duplicados, resultados incompletos y cambios del total producen error; repita el listado completo si cambia la autorización. Para obtener un secreto, use el ID de la cuenta. Los ejemplos requieren código SDK con los métodos nuevos; la versión publicada 1.0.2 aún no los ofrece en Python, Java ni Node.js.
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const accounts = await client.listAccounts()
+    for (const account of accounts) {
+      console.log(account.id, account.username, account.asset.name)
+    }
+    const page = await client.listAccountsPage({ limit: 20, offset: 0, search: 'database' })
+    console.log('Matching accounts:', page.count)
+    // Use an authorized account.id with getAccount when its secret is needed.
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
+### Información de aplicación, réplica y políticas
+
+getApplication devuelve ID, nombre, organización y cantidades de cuentas autorizadas y políticas visibles de la aplicación autenticada. getClientInfo devuelve solamente registro, tipo y versiones de la réplica actual. La lista devuelve todas las políticas vinculadas visibles, incluidas las desactivadas; search busca nombres o claves. Consulte una política por su ID o clave propia, sin usar claves push de cuentas. La rotación requiere autorización para ambas cuentas y la cuenta activa; los recuentos de suscripción incluyen solo cuentas autorizadas. Las consultas no devuelven secretos ni obtienen o confirman credenciales. El primer acceso registra la réplica. Requieren Core y código SDK actualizados; la versión publicada 1.0.2 aún no incluye estos métodos.
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const application = await client.getApplication()
+    console.log(application.id, application.name, application.accountsCount)
+    const replica = await client.getClientInfo()
+    console.log(replica.instanceId, replica.clientVersion)
+    const policies = await client.listPolicies()
+    for (const policy of policies) {
+      console.log(policy.key, policy.name, policy.isActive, policy.status)
+    }
+    if (policies.length) {
+      const policy = await client.getPolicy({ policyId: policies[0].id })
+      console.log(policy.name, policy.accountsCount)
+    }
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
 ## Eventos y aplicación de credenciales
 
 Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
@@ -125,6 +206,11 @@ Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de inf
 
 ## Métodos habituales
 
+- `getApplication({signal}) / getClientInfo({signal})`
+- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
+- `listAccounts({search, signal})`
+- `listAccountsPage({limit, offset, search, signal})`
 - `getAccount({accountId})`
 - `getAccount({accountId, allowLocalFallback: false})`
 - `confirmEvent({eventId, status, errorCode})`
@@ -136,6 +222,16 @@ Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de inf
 - `executeApplicationCommand(event, handler)`
 - `syncAgent({credentials, deliveredCredentials, ...})`
 - `clone() / close()`
+
+### Informe de estado de la aplicación
+
+Informe una instantánea completa del estado y los IDs de las cuentas en uso. Estados: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Una lista vacía borra el uso anterior. Llame al cambiar el estado o desde el heartbeat de la aplicación. Python, Java y Node.js devuelven false ante errores de red/API; Go ofrece `TryReportStatus`. Las variantes estrictas muestran los errores. Los argumentos inválidos se rechazan. Se utiliza el timeout HTTP configurado. El informe no obtiene secretos, confirma rotaciones ni invalida la caché. No incluya secretos ni mensajes de excepción en `error_code`. ClientInfo devuelve el último informe y su fecha.
+
+```javascript
+const accepted = await client.reportStatus({status: 'running', accountId: account.id})
+await client.reportStatus({status: 'stopped'})
+```
+
 
 ## Solución de problemas
 
@@ -182,6 +278,7 @@ La configuración descargada ya incluye la identidad y la entrega del Agent. En 
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -198,6 +295,8 @@ La configuración descargada ya incluye la identidad y la entrega del Agent. En 
   }
 ]
 ```
+
+`config_update.format` usa `auto` por defecto, también cuando se omite. Las extensiones `.txt`, `.env` y `.properties` usan `env` (`KEY=value`); `.yml` y `.yaml` usan `yaml` (`KEY: value` de nivel superior, valores escritos como cadenas entre comillas). Para otras extensiones, indique `env` o `yaml`. Cada campo debe existir una sola vez; se conservan los demás ajustes. Para secciones INI o YAML anidado, use `files` + `template_file` para generar todo el archivo, o un `script`. Tras actualizar el archivo de variables, la aplicación debe releerlo o reiniciarse.
 
 ```bash
 jms-pam-agent get_accounts

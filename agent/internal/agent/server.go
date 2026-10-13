@@ -65,6 +65,8 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/health":
 		reply(200, a.Health())
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/usage":
+		reply(200, a.AccountUsageSnapshot())
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts":
 		value, err := a.Accounts(r.Context())
 		if err != nil {

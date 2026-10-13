@@ -61,6 +61,26 @@ For Linux foreground use, save the Release binary as `jms-pam-agent`, protect th
 
 Initialize once and reuse `agent.json` for later starts. The bootstrap and all Windows credential paths must stay under the current user's home with a private ACL; the Agent rejects links and reparse points. Use a short directory so the local Unix socket path stays below 108 bytes. Windows default credential filenames use a SHA-256 hash of the key because `account:<id>` is not a valid Windows filename; the JSON content still includes the key. Foreground mode uses current-user paths and JSON or Socket delivery; it cannot execute systemd actions or EnvironmentFile delivery. Signed scope and execution capability checks remain enforced. The directory contains private `agent.json`, append-only metadata `events.jsonl`, retained `state.json`, a protected `run/agent.sock`, and default JSON credentials. Records distinguish received, saved and delivered phases, contain no secrets and provide no exactly-once/history replay guarantee. The Linux service remains `systemctl start jms-pam-agent`.
 
+## Configuration replacement formats
+
+`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
+
+`format` applies only to `config_update.file`; omit it when using templates or scripts.
+
+## Accounts in use
+
+Accounts declared in `rules[].accounts` count as in use, independently of password-fetch history. A normal selector uses its configured `account_id`. With `allow_account_switch: true`, successful completion of local delivery updates the retained current account to A or B. A failed workflow preserves the previous account and reports a degraded state.
+
+The existing private `state_file` retains this mapping in `account_usage`, containing account IDs, credential keys and revisions without another copy of passwords. Restart restores the current account. Update local configuration and restart the Agent to remove usage records for deleted declarations. Older state files recover usage from successfully delivered credentials. Undeclared accounts never become in use merely because they were queried, fetched or written to default credential files.
+
+After synchronization, the Agent reports state and account IDs to Core with a two-second timeout. Reporting failures do not block delivery, deny local credential access or repeat application actions; the next synchronization retries reporting. The application's access and connections page displays the accounts and last report time. Usage reporting remains independent of `application_check` and rotation confirmation.
+
+Query the local snapshot through the Socket, replacing the path when configured differently:
+
+```bash
+curl --unix-socket /run/jms-pam-agent/agent.sock http://localhost/v1/usage
+```
+
 ## Local configuration and update flow
 
 The downloaded bootstrap is already a complete configuration. Keep its identity and delivery fields, then add a rule such as:
@@ -70,6 +90,7 @@ The downloaded bootstrap is already a complete configuration. Keep its identity 
   "accounts": [{"account_id": "<primary-account-id>", "allow_account_switch": true}],
   "config_update": {
     "file": "/opt/jumpserver/config/config.txt",
+    "format": "auto",
     "fields_map": {"DB_USER": "username", "DB_PASSWORD": "secret"}
   },
   "service_action": {"path": "/usr/local/libexec/jms-pam/recreate-jumpserver"},

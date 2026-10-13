@@ -44,6 +44,20 @@ sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders
 - 明确撤销或授权快照缩小会先停用相应本地取密并保存范围，再尝试 HTTP 同步；HTTP 身份拒绝阻断本地访问。已写入业务文件不会因网络错误被删除。
 - `received`、保存最新值、文件交付和业务生效分别记录。文件写入、脚本退出或服务重启本身不会确认轮换；只有本机 `application_check` 显式配置 `confirm_on_success` 且成功验证运行中的应用，Agent 才按 event_id 上报成功。
 
+## 使用账号记录
+
+`rules[].accounts` 声明的账号即计入使用范围，不根据取密日志推断。普通账号直接使用配置中的 `account_id`；配置 `allow_account_switch: true` 的账号，在本地交付流程成功后记录该策略当前对应的 A/B 账号。流程失败保留原使用账号，并上报运行异常。
+
+Agent 将声明账号与当前账号的映射保存在已有的 `state_file` 的 `account_usage` 中，只有账号 ID、凭据 key 和版本等元数据，不新增密码副本。重启后恢复映射；修改本机配置并重启 Agent 后，会清除已移除账号声明的使用记录。旧状态文件可根据成功交付的凭据恢复映射。未声明的账号不会因为被查询、取密或默认写入文件而自动计入使用。
+
+每次同步后，Agent 向 Core 上报状态、使用账号列表及更新时间。上报有 2 秒超时；失败不会阻断凭据交付、撤销本地取密权限或重复执行生效动作，下次同步再次尝试。应用详情的“接入与连接”显示使用账号和最近记录时间。使用记录独立于 `application_check` 和轮换成功确认。
+
+可通过本地 Socket 查询当前记录（自定义 Socket 路径时替换下面的路径）：
+
+```bash
+curl --unix-socket /run/jms-pam-agent/agent.sock http://localhost/v1/usage
+```
+
 ## 本机配置
 
 从应用接入向导下载配置，安装时指定稳定的实例 ID。通常只需编辑 `rules`：一个规则声明业务实际使用的账号，以及如何更新配置、让服务重新读取配置、验证运行中的连接。Core 不能通过事件修改本机脚本和目标路径。
@@ -70,6 +84,7 @@ sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders
       ],
       "config_update": {
         "file": "/opt/jumpserver/config/config.txt",
+        "format": "auto",
         "fields_map": {"DB_USER": "username", "DB_PASSWORD": "secret"}
       },
       "service_action": {"path": "/usr/local/libexec/jms-pam/recreate-jumpserver"},
@@ -85,6 +100,20 @@ sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders
 `account_id` 是 JumpServer 账号 ID，不是数据库用户名或凭据策略 ID。使用 `config_update.file` 时，一条规则只声明一个账号；`fields_map` 直接指定文件字段如何取值：上例把当前生效账号的 `username`、`secret` 写入 `DB_USER`、`DB_PASSWORD`。`allow_account_switch` 允许该账号参与 A/B 轮换：事件声明 A、B 后，Agent 在 A→B、B→A，以及首次同步已选中 B 时，均使用 A 的规则，把当前账号的值写到同一组字段。普通账号省略 `allow_account_switch`。
 
 调试文件若有 `VERSION` 字段，可在 `fields_map` 中增加 `"VERSION":"revision"`，随凭据版本自动更新。这里的 `revision` 是凭据策略的交付版本，不是账号密码历史版本；正式业务文件没有该字段时不需要添加。
+
+### 配置替换方式
+
+`config_update.file` 使用 `fields_map` 定点替换现有字段。`format` 默认为 `auto`，省略与显式填写 `"auto"` 的效果相同，按目标文件扩展名选择替换方式：
+
+| `format` | 替换方式 | `auto` 识别的扩展名 |
+| --- | --- | --- |
+| `auto`（默认） | 按扩展名选择以下格式；未知扩展名需显式指定 `env` / `yaml`，或使用模板、脚本。 | 见下方 |
+| `env` | 替换 `KEY=value` 环境变量文件中的字段。 | `.txt`、`.env`、`.properties` |
+| `yaml` | 替换扁平 YAML 的顶层 `KEY: value`，新值写为带引号的字符串。 | `.yml`、`.yaml` |
+
+例如 YAML 文件使用 `"config_update":{"file":"/etc/app/config.yml","format":"auto","fields_map":{"DB_USER":"username","DB_PASSWORD":"secret"}}`；无扩展名的环境变量文件可显式设置 `"format":"env"`。`env` 更新的是磁盘文件，业务仍需重新读取配置或重启才能使用新值。
+
+映射字段必须已存在且只出现一次，其他配置项保留。当前字段映射不支持 INI section 或嵌套 YAML；INI、JSON 及其他复杂格式可使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。`format` 仅适用于 `file` 字段映射，不能与模板或脚本配置混用。
 
 规则按以下顺序执行。只有业务实际使用新连接后，`application_check` 才应成功；`confirm_on_success` 才会按事件 ID 上报成功。失败会保留待交付状态并重试。
 

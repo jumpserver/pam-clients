@@ -25,6 +25,11 @@ EXAMPLES = {
 }
 NATIVE_METHODS = {
     "go": [
+        "GetApplication(ctx) / GetClientInfo(ctx)",
+        "TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)",
+        "ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})",
+        "ListAccounts(ctx, search)",
+        "ListAccountsPage(ctx, limit, offset, search)",
         "GetAccount(ctx, accountID)",
         "GetAccountFresh(ctx, accountID)",
 
@@ -39,6 +44,11 @@ NATIVE_METHODS = {
         "Clone() / Close()",
     ],
     "java": [
+        "getApplication() / getClientInfo()",
+        "reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)",
+        "listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)",
+        "listAccounts() / listAccounts(search)",
+        "listAccountsPage(limit, offset, search)",
         "getAccount(accountId)",
         "getAccount(accountId, false)",
 
@@ -53,6 +63,11 @@ NATIVE_METHODS = {
         "clone() / close()",
     ],
     "node": [
+        "getApplication({signal}) / getClientInfo({signal})",
+        "reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})",
+        "listPolicies({search, signal}) / getPolicy({key, policyId, signal})",
+        "listAccounts({search, signal})",
+        "listAccountsPage({limit, offset, search, signal})",
         "getAccount({accountId})",
         "getAccount({accountId, allowLocalFallback: false})",
 
@@ -92,6 +107,77 @@ LATEST_CREDENTIAL_APIS = {
     "node": """- `account.fromLocal`
 - `getAccount({accountId, allowLocalFallback: false})`""",
 }
+
+ACCOUNT_LIST_EXAMPLES = {
+    "python": ("python", "list_accounts.py"),
+    "go": ("go", "cmd/accounts/main.go"),
+    "java": ("java", "src/main/java/org/jumpserver/pam/AccountsDemo.java"),
+    "node": ("javascript", "accounts.js"),
+}
+
+
+def account_listing_section(language, texts):
+    syntax, example = ACCOUNT_LIST_EXAMPLES[language]
+    code = (CLIENTS / language / example).read_text(encoding="utf-8").rstrip()
+    if language == "node":
+        code = code.replace("require('./index')", "require('@jumpserver/pam')")
+    return f"""### {texts["account_listing_title"]}
+
+{texts["account_listing"]}
+
+```{syntax}
+{code}
+```
+"""
+
+APPLICATION_INFO_EXAMPLES = {
+    "python": ("python", "application_info.py"),
+    "go": ("go", "cmd/applicationinfo/main.go"),
+    "java": ("java", "src/main/java/org/jumpserver/pam/ApplicationInfoDemo.java"),
+    "node": ("javascript", "application-info.js"),
+}
+
+
+STATUS_EXAMPLES = {
+    'python': ('python', 'client.report_status("running", account_id=account.id)\nclient.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")\nclient.report_status("stopped")'),
+    'go': ('go', 'ok := client.TryReportStatus(ctx, pam.ApplicationStatus{\n    Status: "running", AccountIDs: []string{account.ID},\n})\n// ReportStatus(ctx, report) returns an error when details are needed.'),
+    'java': ('java', 'boolean accepted = client.reportStatus("running", account.getId());\nclient.reportStatus("stopped", java.util.Collections.emptyList());'),
+    'node': ('javascript', "const accepted = await client.reportStatus({status: 'running', accountId: account.id})\nawait client.reportStatus({status: 'stopped'})"),
+}
+
+
+def status_reporting_section(language, texts):
+    syntax, example = STATUS_EXAMPLES[language]
+    return f'''### {texts["status_reporting_title"]}
+
+{texts["status_reporting"]}
+
+```{syntax}
+{example}
+```
+'''
+
+
+def application_info_section(language, texts):
+    syntax, example = APPLICATION_INFO_EXAMPLES[language]
+    code = (CLIENTS / language / example).read_text(encoding="utf-8").rstrip()
+    application_method, client_method = {
+        "python": ("get_application", "get_client_info"),
+        "go": ("GetApplication", "GetClientInfo"),
+        "java": ("getApplication", "getClientInfo"),
+        "node": ("getApplication", "getClientInfo"),
+    }[language]
+    description = texts["application_info"].replace("get_application", application_method).replace("get_client_info", client_method)
+    if language == "node":
+        code = code.replace("require('./index')", "require('@jumpserver/pam')")
+    return f"""### {texts["application_info_title"]}
+
+{description}
+
+```{syntax}
+{code}
+```
+"""
 
 LIFECYCLES = {
     "python": "`watch_events(stop_event=...)` / `start_events(stop_event=...)`; `stop_events()` / `close()`",
@@ -181,6 +267,12 @@ export JMS_ACCOUNT_ID='<account-id>'
 API_TABLE = """| HTTP | API | JSON / query |
 | --- | --- | --- |
 | GET | `/api/v1/accounts/credential-client/credential/` | `instance_id`, `account_id` |
+| GET | `/api/v1/accounts/credential-client/accounts/` | `instance_id`, `limit`, `offset`, `search` |
+| GET | `/api/v1/accounts/credential-client/application/` | `instance_id` |
+| GET | `/api/v1/accounts/credential-client/client/` | `instance_id` |
+| POST | `/api/v1/accounts/credential-client/status/` | `instance_id`, `status`, `account_ids`, `error_code` |
+| GET | `/api/v1/accounts/credential-client/policies/` | `instance_id`, `search` |
+| GET | `/api/v1/accounts/credential-client/policy/` | `instance_id`, `key` or `policy_id` |
 | POST | `/api/v1/accounts/credential-client/event-result/` | `instance_id`, `event_id`, `status`, `error_code` |
 | GET | `/api/v1/accounts/credential-client/commands/` | `instance_id` |
 | POST | `/api/v1/accounts/credential-client/command-result/` | `instance_id`, `command_id`, `status`, `error_code` |
@@ -191,6 +283,17 @@ ENVIRONMENT = """export API_URL='https://jumpserver.example.com'
 export API_KEY_ID='<app-id>'
 export API_KEY_SECRET='<app-secret>'
 export ORG_ID='<org-id>'
+"""
+
+PYTHON_CONFIG = """import os
+
+client_options = {
+    "endpoint": "https://jumpserver.example.com",
+    "app_id": "<application-id>",
+    "app_secret": "<application-secret>",
+    "org_id": "<org-id>",
+}
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
 """
 
 HEADERS = """(request-target) accept date digest x-jms-request-id x-jms-org
@@ -292,6 +395,10 @@ def native_guide(language, texts):
 {quickstart_code}
 ```
 
+{account_listing_section(language, texts)}
+
+{application_info_section(language, texts)}
+
 ## {texts["events"]}
 
 {texts["event_results"]}
@@ -309,6 +416,8 @@ def native_guide(language, texts):
 ## {texts["methods"]}
 
 {methods}
+
+{status_reporting_section(language, texts)}
 
 ## {texts["troubleshooting"]}
 
@@ -335,6 +444,7 @@ AGENT_RULE = {
     }],
     'config_update': {
         'file': '/etc/order-service/config.yml',
+        'format': 'auto',
         'fields_map': {'DB_USER': 'username', 'DB_PASSWORD': 'secret'},
     },
     'service_action': {'unit': 'order-service.service', 'operation': 'restart'},
@@ -356,6 +466,8 @@ def agent_configuration_section(texts):
 ```json
 {json.dumps([AGENT_RULE], indent=2)}
 ```
+
+{texts['agent_config_format']}
 
 ```bash
 jms-pam-agent get_accounts
@@ -438,11 +550,28 @@ python3 -m pip install jms-pam
 
 {texts["sdk_config"]}
 
+```python
+# jms_pam_config.py
+{PYTHON_CONFIG.rstrip()}
+```
+
+{texts["sdk_run"]}
+
+```bash
+cd /path/to/your/application
+chmod 0600 jms_pam_config.py
+python3
+```
+
 <!-- python-account-example:start -->
 ```python
 {(CLIENTS / "python" / "account_demo.py").read_text().rstrip()}
 ```
 <!-- python-account-example:end -->
+
+{account_listing_section("python", texts)}
+
+{application_info_section("python", texts)}
 
 ### {texts["events"]}
 
@@ -456,6 +585,11 @@ python3 -m pip install jms-pam
 
 ### {texts["methods"]}
 
+- `list_accounts(search="")`
+- `get_application()` / `get_client_info()`
+- `report_status("running", account_id=...)` / `report_status("stopped")`
+- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
+- `list_accounts_page(limit=200, offset=0, search="")` → `page.count`, `page.accounts`
 - `get_account(account_id=..., allow_local_fallback=True)`
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
@@ -466,6 +600,7 @@ python3 -m pip install jms-pam
 
 {texts["event_compatibility"]}
 
+{status_reporting_section("python", texts)}
 
 <!-- sdk-doc:end -->
 """

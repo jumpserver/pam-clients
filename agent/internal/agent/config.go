@@ -94,7 +94,7 @@ type ConfigUpdate struct {
 }
 
 func (u ConfigUpdate) patchFormat() string {
-	if u.Format != "" {
+	if u.Format != "" && u.Format != "auto" {
 		return u.Format
 	}
 	switch strings.ToLower(filepath.Ext(u.File)) {
@@ -292,7 +292,7 @@ func (c Config) Validate() error {
 			files = update.Files
 			if update.File != "" {
 				if !absolute(update.File) || (update.patchFormat() != "env" && update.patchFormat() != "yaml") || len(rule.Keys) > 0 || len(rule.Accounts) != 1 {
-					return errors.New("file mapping requires an absolute env/YAML file and exactly one account selector")
+					return errors.New("file mapping requires an absolute file path, format auto (known extension), env or yaml, and exactly one account selector")
 				}
 				if c.Local && update.Owner != "" && update.Owner != c.Delivery.User {
 					return errors.New("local files must belong to the current user")

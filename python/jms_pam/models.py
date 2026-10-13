@@ -36,6 +36,104 @@ def _boolean(data, name):
     return value
 
 
+def _count(data, name):
+    _required(data, name)
+    value = data[name]
+    if type(value) is not int or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+@dataclass(frozen=True)
+class ApplicationInfo:
+    id: str
+    name: str
+    org_id: str
+    is_active: bool
+    accounts_count: int
+    policies_count: int
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ApplicationInfo":
+        return cls(
+            _string(data, "id"), _string(data, "name"), _string(data, "org_id"),
+            _boolean(data, "is_active"), _count(data, "accounts_count"), _count(data, "policies_count"),
+        )
+
+
+@dataclass(frozen=True)
+class ApplicationStatus:
+    status: str
+    account_ids: list[str]
+    error_code: str
+
+    @classmethod
+    def from_dict(cls, data):
+        status = _string(data, "status")
+        accounts = data.get("account_ids")
+        error_code = data.get("error_code")
+        if status not in ("starting", "running", "degraded", "stopping", "stopped", "error") or not isinstance(accounts, list):
+            raise ValueError("Invalid application status")
+        if any(not isinstance(value, str) or not value for value in accounts) or not isinstance(error_code, str):
+            raise ValueError("Invalid application status fields")
+        return cls(status, accounts, error_code)
+
+
+@dataclass(frozen=True)
+class ClientInfo:
+    id: str
+    instance_id: str
+    type: str
+    is_active: bool
+    client_version: str
+    protocol_version: int
+    config_schema_version: Optional[int]
+    application_status: Optional[ApplicationStatus] = None
+    date_status_reported: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ClientInfo":
+        client_type = _string(data, "type")
+        if client_type not in ("sdk", "agent"):
+            raise ValueError("Invalid client type")
+        schema = _count(data, "config_schema_version") if data.get("config_schema_version") is not None else None
+        return cls(
+            _string(data, "id"), _string(data, "instance_id"), client_type,
+            _boolean(data, "is_active"), _string(data, "client_version"),
+            _count(data, "protocol_version"), schema,
+            ApplicationStatus.from_dict(data["application_status"]) if data.get("application_status") else None,
+            _string(data, "date_status_reported") if data.get("date_status_reported") is not None else None,
+        )
+
+
+@dataclass(frozen=True)
+class CredentialPolicy:
+    id: str
+    key: str
+    name: str
+    mode: str
+    is_active: bool
+    status: str
+    revision: int
+    accounts_count: int
+    subscription_all_authorized: bool
+    active_account_id: Optional[str]
+    account_switch: Optional[dict[str, list[str]]]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CredentialPolicy":
+        policy = AccountPolicy.from_dict(data)
+        active_id = data.get("active_account_id")
+        if active_id is not None and (not isinstance(active_id, str) or not active_id):
+            raise ValueError("Invalid active account ID")
+        return cls(
+            _string(data, "id"), policy.key, _string(data, "name"), policy.mode,
+            _boolean(data, "is_active"), _string(data, "status"), policy.revision,
+            _count(data, "accounts_count"), _boolean(data, "subscription_all_authorized"),
+            active_id, policy.account_switch,
+        )
+
+
 @dataclass(frozen=True)
 class Platform:
     id: str
@@ -69,6 +167,76 @@ class Asset:
             _string(data, "address"),
             Platform.from_dict(data["platform"]),
         )
+
+
+@dataclass(frozen=True)
+class AccountPolicy:
+    key: str
+    mode: str
+    revision: int
+    account_switch: Optional[dict[str, list[str]]] = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AccountPolicy":
+        mode = _string(data, "mode")
+        if mode not in ("subscription", "alternating_rotation"):
+            raise ValueError("Invalid account policy mode")
+        switch = data.get("account_switch")
+        if switch is not None:
+            if (
+                not isinstance(switch, dict)
+                or not isinstance(switch.get("account_ids"), list)
+                or not all(isinstance(item, str) and item for item in switch["account_ids"])
+            ):
+                raise ValueError("Invalid account switch")
+            switch = {"account_ids": list(switch["account_ids"])}
+        return cls(_string(data, "key"), mode, _revision(data), switch)
+
+
+@dataclass(frozen=True)
+class AuthorizedAccount:
+    """Account metadata in the application's current pull scope, without a secret."""
+
+    id: str
+    name: str
+    username: str
+    secret_type: str
+    asset: Asset
+    credentials: list[AccountPolicy]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AuthorizedAccount":
+        _required(data, "asset", "credentials")
+        if not isinstance(data.get("username"), str):
+            raise TypeError("username must be a string")
+        if not isinstance(data["credentials"], list):
+            raise TypeError("credentials must be a list")
+        return cls(
+            _string(data, "id"),
+            _string(data, "name"),
+            data["username"],
+            _string(data, "secret_type"),
+            Asset.from_dict(data["asset"]),
+            [AccountPolicy.from_dict(item) for item in data["credentials"]],
+        )
+
+
+@dataclass(frozen=True)
+class AccountsPage:
+    count: int
+    accounts: list[AuthorizedAccount]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AccountsPage":
+        _required(data, "count", "accounts")
+        if type(data["count"]) is not int or data["count"] < 0:
+            raise ValueError("count must be a non-negative integer")
+        if not isinstance(data["accounts"], list):
+            raise TypeError("accounts must be a list")
+        accounts = [AuthorizedAccount.from_dict(item) for item in data["accounts"]]
+        if len({item.id for item in accounts}) != len(accounts):
+            raise ValueError("Duplicate account in page")
+        return cls(data["count"], accounts)
 
 
 @dataclass(frozen=True)

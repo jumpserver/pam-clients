@@ -66,6 +66,87 @@ if (require.main === module)
   })
 ```
 
+### 認可されたアカウントの一覧
+
+一覧メソッドはアプリケーションの現在の pull 認可範囲を取得します。アカウント、資産、関連する push ポリシーのメタデータのみを返し、パスワード取得や取得記録は行いません。ポリシーのないアカウントも含まれます。全件メソッドは全ページを読み取り、ページメソッドは `count` と `accounts` を返します（Go はリストと総数を別々に返します）。既定は limit 200、offset 0、limit は 1–500、search は最大128文字でアカウント名、ユーザー名、資産名、アドレスを検索します。重複、不完全な結果、総数の変化はエラーになります。認可が変わった場合は一覧全体を再取得してください。秘密が必要な場合はアカウント ID で取得メソッドを呼びます。例には新メソッドを含む SDK ソースが必要です。公開済み1.0.2の Python、Java、Node.js にはまだ含まれません。
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const accounts = await client.listAccounts()
+    for (const account of accounts) {
+      console.log(account.id, account.username, account.asset.name)
+    }
+    const page = await client.listAccountsPage({ limit: 20, offset: 0, search: 'database' })
+    console.log('Matching accounts:', page.count)
+    // Use an authorized account.id with getAccount when its secret is needed.
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
+### アプリケーション、インスタンス、ポリシー情報
+
+getApplication は署名したアプリケーションの ID、名前、組織、認可アカウント数と可視ポリシー数を返します。getClientInfo は現在のレプリカの登録、種類、バージョンのみを返します。一覧は無効化されたものを含む可視な関連ポリシー全件を返し、search は名前と key を検索します。単一ポリシーは ID またはポリシー自体の key の一方で取得します。アカウントの push key は使用しません。輪換ポリシーには両アカウントと有効アカウントの認可が必要で、購読数は現在認可されたものだけです。秘密やパスワードを返さず、取得や適用確認も行いません。初回アクセスでレプリカを登録します。更新した Core と SDK ソースが必要です。公開済み1.0.2には未収録です。
+
+```javascript
+'use strict'
+
+const { Client } = require('@jumpserver/pam')
+
+async function main() {
+  const client = new Client({
+    endpoint: process.env.JMS_ENDPOINT,
+    appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET,
+    instanceId: process.env.JMS_INSTANCE_ID,
+    orgId: process.env.JMS_ORG_ID,
+  })
+  try {
+    const application = await client.getApplication()
+    console.log(application.id, application.name, application.accountsCount)
+    const replica = await client.getClientInfo()
+    console.log(replica.instanceId, replica.clientVersion)
+    const policies = await client.listPolicies()
+    for (const policy of policies) {
+      console.log(policy.key, policy.name, policy.isActive, policy.status)
+    }
+    if (policies.length) {
+      const policy = await client.getPolicy({ policyId: policies[0].id })
+      console.log(policy.name, policy.accountsCount)
+    }
+  } finally {
+    client.close()
+  }
+}
+
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error.code || error.name)
+    process.exitCode = 1
+  })
+```
+
+
 ## イベントと認証情報の適用
 
 `account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
@@ -125,6 +206,11 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 
 ## 主なメソッド
 
+- `getApplication({signal}) / getClientInfo({signal})`
+- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
+- `listAccounts({search, signal})`
+- `listAccountsPage({limit, offset, search, signal})`
 - `getAccount({accountId})`
 - `getAccount({accountId, allowLocalFallback: false})`
 - `confirmEvent({eventId, status, errorCode})`
@@ -136,6 +222,16 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 - `executeApplicationCommand(event, handler)`
 - `syncAgent({credentials, deliveredCredentials, ...})`
 - `clone() / close()`
+
+### アプリケーション状態の報告
+
+実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
+
+```javascript
+const accepted = await client.reportStatus({status: 'running', accountId: account.id})
+await client.reportStatus({status: 'stopped'})
+```
+
 
 ## トラブルシューティング
 
@@ -182,6 +278,7 @@ HTTP、ネットワーク、認証、デコードの失敗はエラーコード�
     ],
     "config_update": {
       "file": "/etc/order-service/config.yml",
+      "format": "auto",
       "fields_map": {
         "DB_USER": "username",
         "DB_PASSWORD": "secret"
@@ -198,6 +295,8 @@ HTTP、ネットワーク、認証、デコードの失敗はエラーコード�
   }
 ]
 ```
+
+`config_update.format` の既定値は `auto` で、省略時も同じです。拡張子 `.txt`、`.env`、`.properties` は `env`（`KEY=value`）、`.yml`、`.yaml` は `yaml`（最上位の `KEY: value`、新しい値は引用符付き文字列）として扱います。他の拡張子では `env` または `yaml` を明示します。対象フィールドは既存で一度だけ出現する必要があり、他の設定は保持されます。INI セクションやネストした YAML は `files` + `template_file` で全体を生成するか、`script` を使用します。環境変数ファイルの更新後はアプリケーションの再読み込みまたは再起動が必要です。
 
 ```bash
 jms-pam-agent get_accounts
