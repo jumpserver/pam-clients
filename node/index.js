@@ -32,6 +32,11 @@ class PAMError extends Error {
     this.detail = detail
     this.requestId = requestId
   }
+
+  get isCompatibilityError() {
+    if ([401, 403, 404].includes(this.statusCode)) return false
+    return this.statusCode === 426 || this.code === 'client_upgrade_required'
+  }
 }
 
 function requiredString(value, name) {
@@ -149,6 +154,11 @@ function clientInfo(data) {
   if (!['sdk', 'agent'].includes(data.type) || typeof data.is_active !== 'boolean')
     throw new TypeError('Invalid client status')
   revision(data.protocol_version)
+  const capabilities = data.server_capabilities ?? null
+  if (capabilities !== null && (!Array.isArray(capabilities)
+    || capabilities.some(value => typeof value !== 'string' || !value)
+    || new Set(capabilities).size !== capabilities.length))
+    throw new TypeError('Invalid server capabilities')
   if (data.config_schema_version != null) revision(data.config_schema_version)
   let applicationStatus = null
   if (data.application_status != null) {
@@ -162,7 +172,8 @@ function clientInfo(data) {
   return { id: data.id, instanceId: data.instance_id, type: data.type,
     isActive: data.is_active, clientVersion: data.client_version,
     protocolVersion: data.protocol_version, configSchemaVersion: data.config_schema_version ?? null,
-    applicationStatus, dateStatusReported: data.date_status_reported ?? null }
+    applicationStatus, dateStatusReported: data.date_status_reported ?? null,
+    serverCapabilities: capabilities === null ? null : [...capabilities] }
 }
 
 function credentialPolicy(data) {
@@ -300,7 +311,8 @@ class Client {
     } catch (cause) {
       throw new PAMError('NetworkError', 'HTTP request failed', { cause })
     }
-    if (invalidateCredentials && [401, 403, 404, 426].includes(response.status)) {
+    const optionalMetadata = ['/application/', '/client/', '/policies/', '/policy/'].includes(path)
+    if (invalidateCredentials && ([401, 403].includes(response.status) || (response.status === 404 && !optionalMetadata))) {
       this.#latestCredentials.clear()
       this.#credentialGeneration++
     }
@@ -462,9 +474,9 @@ class Client {
       }
       return value
     } catch (error) {
-      const denied = [401, 403, 404].includes(error.statusCode) || error.code === 'client_upgrade_required'
+      const denied = [401, 403, 404].includes(error.statusCode)
         || (error.statusCode === 400 && error.code === 'credential_not_found')
-      const temporary = error instanceof PAMError && (error.code === 'NetworkError'
+      const temporary = error instanceof PAMError && !error.isCompatibilityError && (error.code === 'NetworkError'
         || (error.statusCode >= 500 && error.statusCode < 600))
       if (denied) { this.#latestCredentials.clear(); this.#credentialGeneration++ }
       const latest = this.#latestCredentials.get(selector)

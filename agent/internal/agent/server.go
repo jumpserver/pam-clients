@@ -70,6 +70,10 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts":
 		value, err := a.Accounts(r.Context())
 		if err != nil {
+			if incompatible(err) {
+				reply(426, map[string]string{"code": "client_upgrade_required"})
+				return
+			}
 			reply(503, map[string]string{"code": "account_query_failed"})
 			return
 		}
@@ -82,6 +86,10 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		value, err := a.AccountCredential(r.Context(), accountID)
 		if err != nil {
+			if incompatible(err) {
+				reply(426, map[string]string{"code": "client_upgrade_required"})
+				return
+			}
 			reply(403, map[string]string{"code": "credential_query_failed"})
 			return
 		}

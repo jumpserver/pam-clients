@@ -90,6 +90,7 @@ class ClientInfo:
     config_schema_version: Optional[int]
     application_status: Optional[ApplicationStatus] = None
     date_status_reported: Optional[str] = None
+    server_capabilities: Optional[list[str]] = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ClientInfo":
@@ -97,12 +98,19 @@ class ClientInfo:
         if client_type not in ("sdk", "agent"):
             raise ValueError("Invalid client type")
         schema = _count(data, "config_schema_version") if data.get("config_schema_version") is not None else None
+        capabilities = data.get("server_capabilities")
+        if capabilities is not None:
+            if not isinstance(capabilities, list) or any(not isinstance(value, str) or not value for value in capabilities):
+                raise ValueError("Invalid server capabilities")
+            if len(set(capabilities)) != len(capabilities):
+                raise ValueError("Duplicate server capability")
         return cls(
             _string(data, "id"), _string(data, "instance_id"), client_type,
             _boolean(data, "is_active"), _string(data, "client_version"),
             _count(data, "protocol_version"), schema,
             ApplicationStatus.from_dict(data["application_status"]) if data.get("application_status") else None,
             _string(data, "date_status_reported") if data.get("date_status_reported") is not None else None,
+            list(capabilities) if capabilities is not None else None,
         )
 
 

@@ -1,0 +1,25 @@
+{
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "compatibility-app",
+  "app_secret": "synthetic-compatibility-secret",
+  "org_id": "compatibility-org",
+  "instance_id": "orders-node-1",
+  "delivery": {
+    "delivery_mode": "json",
+    "delivery_root": "/opt/orders/credentials",
+    "app_user": "orders"
+  },
+  "rules": [
+    {
+      "accounts": [{"account_id": "orders-account-a", "allow_account_switch": true}],
+      "config_update": {
+        "file": "/opt/orders/config.txt",
+        "format": "auto",
+        "fields_map": {"DB_USER": "username", "DB_PASSWORD": "secret"}
+      },
+      "credential_check": {"path": "/usr/local/libexec/orders/check-new-db"},
+      "service_action": {"path": "/usr/local/libexec/orders/reload"},
+      "application_check": {"path": "/usr/local/libexec/orders/check-running-db", "confirm_on_success": true}
+    }
+  ]
+}

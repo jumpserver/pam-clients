@@ -31,4 +31,9 @@ public final class PAMException extends RuntimeException {
   public String getRequestId() {
     return requestId;
   }
+
+  public boolean isCompatibilityError() {
+    if (statusCode == 401 || statusCode == 403 || statusCode == 404) return false;
+    return statusCode == 426 || "client_upgrade_required".equals(code);
+  }
 }

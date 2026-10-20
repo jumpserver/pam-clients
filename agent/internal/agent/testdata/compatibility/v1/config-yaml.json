@@ -1,0 +1,23 @@
+{
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "compatibility-app",
+  "app_secret": "synthetic-compatibility-secret",
+  "org_id": "compatibility-org",
+  "instance_id": "orders-node-1",
+  "reconcile_interval": 60,
+  "delivery": {
+    "delivery_mode": "json",
+    "delivery_root": "/opt/orders/credentials",
+    "app_user": "orders"
+  },
+  "rules": [
+    {
+      "accounts": [{"account_id": "orders-account-a"}],
+      "config_update": {
+        "file": "/opt/orders/config.yml",
+        "fields_map": {"DB_USER": "username", "DB_PASSWORD": "secret"}
+      },
+      "service_action": {"unit": "orders.service", "operation": "reload"}
+    }
+  ]
+}

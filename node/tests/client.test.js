@@ -24,6 +24,54 @@ function client(instanceId = 'node', source = 'jms-pam') {
   })
 }
 
+test('compatibility errors preserve cached values without accepting stale data as a successful upgrade', async () => {
+  const instance = 'node-compat-cycle'
+  const sdk = client(instance)
+  const control = async fault => {
+    const url = new URL('/__control', server.endpoint)
+    url.search = new URLSearchParams({ instance, fault })
+    assert.equal((await fetch(url)).status, 200)
+  }
+  try {
+    const initial = await sdk.getAccount({ accountId: 'account' })
+    await control(426)
+    for (const allowLocalFallback of [true, false]) {
+      await assert.rejects(sdk.getAccount({ accountId: 'account', allowLocalFallback }), error => error instanceof PAMError && error.isCompatibilityError)
+    }
+    await control(503)
+    const retained = await sdk.getAccount({ accountId: 'account' })
+    assert.equal(retained.fromLocal, true)
+    assert.equal(retained.secret, initial.secret)
+    await control(401)
+    await assert.rejects(sdk.getAccount({ accountId: 'account' }), error => error instanceof PAMError && !error.isCompatibilityError)
+    await control(503)
+    await assert.rejects(sdk.getAccount({ accountId: 'account' }), PAMError)
+  } finally { sdk.close() }
+})
+
+test('optional metadata handles legacy and future capabilities without invalidating cached values', async () => {
+  for (const [instance, capabilities] of [
+    ['node-compat-legacy', null],
+    ['node-compat-capabilities', ['account_lookup', 'application_status', 'future_optional_capability']],
+  ]) {
+    const sdk = client(instance)
+    try { assert.deepEqual((await sdk.getClientInfo()).serverCapabilities, capabilities) }
+    finally { sdk.close() }
+  }
+  const bad = client('node-compat-bad-capabilities')
+  try { await assert.rejects(bad.getClientInfo(), PAMError) } finally { bad.close() }
+  const instance = 'node-compat-missing'
+  const sdk = client(instance)
+  try {
+    await sdk.getAccount({ accountId: 'account' })
+    await assert.rejects(sdk.getClientInfo(), error => error.statusCode === 404)
+    const url = new URL('/__control', server.endpoint)
+    url.search = new URLSearchParams({ instance, fault: 503 })
+    await fetch(url)
+    assert.equal((await sdk.getAccount({ accountId: 'account' })).fromLocal, true)
+  } finally { sdk.close() }
+})
+
 test('status reporting is best effort, reports complete usage and preserves cached credentials', async () => {
   const sdk = client('node-status')
   try {

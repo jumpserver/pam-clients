@@ -39,6 +39,18 @@ Scripts must be idempotent, use protected paths, and keep secrets out of argumen
 
 See the [complete configuration and script contract](README.zh-hans.md). Local tests cover updates, retained-state recovery, revocation, templates, scripts, failure paths, confirmation and socket lifecycle. Linux systemd installation and real service actions need target-host validation.
 
+## Configuration compatibility and upgrades
+
+The Agent uses independent local file versions: `config_version` for `agent.json` and `state_version` for retained state. Both currently use version `1`, independently of the Agent release and HTTP/WebSocket protocol version. Existing files without these fields are read as v1; no configuration edits are required. New installations and foreground initialization write `config_version: 1`.
+
+Loading or starting the Agent does not rewrite existing configuration or state. Normal atomic state persistence adds `state_version: 1` while retaining credentials, authorization, delivered revisions and pending results. Adding a configuration version does not change instance identity or trigger application actions by itself. Existing `files`/`action` rules remain supported alongside staged rules.
+
+Before replacing the binary, keep the existing configuration and state paths and run the new binary's `check-config --config PATH`. Unknown format versions stop startup with a clear error and leave the files intact. Invalid version values and unknown configuration fields are rejected; diagnostics identify field names or JSON byte offsets without printing credential values. Future format changes require a compatible reader or an explicit migration. Roll back only to an Agent that supports the current file formats; restoring an old state backup can discard subsequent revocations and rotation progress.
+
+Older binaries that do not recognize `config_version` cannot read a newly versioned configuration. Keep the original unversioned configuration when upgrading an existing installation; generated versioned configurations require an Agent with this support.
+
+A backend HTTP 426 is a compatibility failure, not identity revocation. The Agent keeps already authorized local values and records `sync_error: client_upgrade_required`; live query APIs still return 426. Health and usage reports expose the error, and a successful sync clears it. A compatibility error never restores a previously denied identity or confirms credential application. See [protocol compatibility](../docs/protocol-compatibility.md).
+
 ## CLI and foreground operation
 
 ```bash

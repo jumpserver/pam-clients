@@ -44,6 +44,7 @@ export interface ClientInfo {
   clientVersion: string; protocolVersion: number; configSchemaVersion: number | null
   applicationStatus?: ApplicationStatus | null
   dateStatusReported?: string | null
+  serverCapabilities?: string[] | null
 }
 export type ApplicationState = 'starting' | 'running' | 'degraded' | 'stopping' | 'stopped' | 'error'
 export interface ApplicationStatus {
@@ -110,6 +111,7 @@ export class PAMError extends Error {
   statusCode?: number
   detail?: string
   requestId?: string
+  readonly isCompatibilityError: boolean
 }
 export class Client {
   constructor(options: ClientOptions)

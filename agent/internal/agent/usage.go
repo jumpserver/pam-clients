@@ -96,6 +96,9 @@ func (a *Agent) AccountUsageSnapshot() pam.ApplicationStatus {
 	}
 	if a.state.Status == "error" {
 		report.Status, report.ErrorCode = "degraded", "agent_sync_failed"
+		if a.state.SyncError != "" {
+			report.ErrorCode = a.state.SyncError
+		}
 	}
 	used := make(map[string]bool)
 	for _, usage := range a.state.AccountUsage {

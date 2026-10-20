@@ -68,6 +68,11 @@ func (c *Client) Close() error {
 	defer c.mu.Unlock()
 	if !c.closed {
 		c.closed = true
+		// Stop the managed dispatcher before Close returns. AfterFunc alone
+		// cancels asynchronously and can leave another queued hook running.
+		if c.watcher != nil {
+			c.watcher.Stop()
+		}
 		c.cancel()
 		c.http.CloseIdleConnections()
 		clear(c.latestCredentials)
@@ -126,7 +131,8 @@ func (c *Client) requestInternal(ctx context.Context, method, path string, data 
 		return &PAMError{Code: "NetworkError", Detail: "HTTP request failed", Err: err}
 	}
 	defer response.Body.Close()
-	if invalidateCredentials && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404 || response.StatusCode == 426) {
+	optionalMetadata := path == "/application/" || path == "/client/" || path == "/policies/" || path == "/policy/"
+	if invalidateCredentials && (response.StatusCode == 401 || response.StatusCode == 403 || (response.StatusCode == 404 && !optionalMetadata)) {
 		c.mu.Lock()
 		clear(c.latestCredentials)
 		c.credentialGeneration++
@@ -355,12 +361,12 @@ func (c *Client) getCredential(ctx context.Context, selector CredentialSelector,
 	}
 	var failure *PAMError
 	if errors.As(err, &failure) {
-		denied := failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404 || failure.Code == "client_upgrade_required" || (failure.StatusCode == 400 && failure.Code == "credential_not_found")
+		denied := failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404 || (failure.StatusCode == 400 && failure.Code == "credential_not_found")
 		if denied {
 			clear(c.latestCredentials)
 			c.credentialGeneration++
 		}
-		temporary := failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600)
+		temporary := !failure.IsCompatibilityError() && (failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600))
 		latest, found := c.latestCredentials[selector]
 		if allowLocalFallback && temporary && !denied && !c.closed && ctx.Err() == nil && found {
 			value = latest

@@ -9,7 +9,8 @@ BASE_DIR = Path(__file__).parent
 setup(
     name="jms-pam",
     version=run_path(str(BASE_DIR / "jms_pam" / "_version.py"))["__version__"],
-    packages=find_packages(),
+    # The live demo is run from source and has separate database dependencies.
+    packages=find_packages(exclude=("database_app", "database_app.*")),
     package_data={"jms_pam": ["py.typed"]},
     install_requires=["requests>=2.31.0", "websocket-client>=1.6.1"],
     description="JumpServer PAM Python SDK",

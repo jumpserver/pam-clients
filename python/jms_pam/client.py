@@ -130,9 +130,13 @@ class Client:
                 timeout=self.timeout,
             )
         except PAMError as error:
+            optional_metadata = path in {
+                f"{CLIENT_PATH}/application/", f"{CLIENT_PATH}/client/",
+                f"{CLIENT_PATH}/policies/", f"{CLIENT_PATH}/policy/",
+            }
             if invalidate_credentials and (
-                error.status_code in (401, 403, 404)
-                or error.code == "client_upgrade_required"
+                error.status_code in (401, 403)
+                or (error.status_code == 404 and not optional_metadata)
                 or (error.status_code == 400 and error.code == "credential_not_found")
             ):
                 with self._credentials_lock:
@@ -193,11 +197,11 @@ class Client:
         except PAMError as error:
             denied = (
                 error.status_code in (401, 403, 404)
-                or error.code == "client_upgrade_required"
                 or (error.status_code == 400 and error.code == "credential_not_found")
             )
-            temporary = error.code == "NetworkError" or (
-                error.status_code is not None and 500 <= error.status_code < 600
+            temporary = not error.is_compatibility_error and (
+                error.code == "NetworkError"
+                or (error.status_code is not None and 500 <= error.status_code < 600)
             )
             with self._credentials_lock:
                 if denied:

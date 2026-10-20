@@ -1,0 +1,27 @@
+{
+  "identity": "$IDENTITY",
+  "local_delivery_hash": "$DELIVERY_HASH",
+  "credentials": {
+    "db": {
+      "key": "db", "revision": 3, "account_revision": 1,
+      "event_id": "pending-event-1",
+      "asset_id": "database-asset", "asset": "database", "address": "127.0.0.1",
+      "account_id": "account", "account": "orders", "username": "orders",
+      "secret_type": "password", "secret": "synthetic-retained-password"
+    }
+  },
+  "delivered": {"db": 3},
+  "applied": {"db": {"key": "db", "revision": 3, "account_id": "account", "confirmed": false}},
+  "authorized": {"db": true},
+  "wanted_revisions": {"db": 4},
+  "pending_events": {
+    "db": {"event": "credential.updated", "event_id": "pending-event-1", "credential_key": "db", "revision": 3, "account_id": "account", "account_revision": 1}
+  },
+  "pending_commands": {
+    "command-1": {"event": "application.restart.requested", "command_id": "command-1", "event_id": "command-event-1"}
+  },
+  "scope": {"credential_keys": ["db"], "confirmation_keys": ["db"]},
+  "config_digest": "retained-snapshot-digest",
+  "access_denied": false,
+  "sync_status": "success"
+}

@@ -234,7 +234,7 @@ HTTP, network, authentication and response decoding failures use the SDK excepti
 
 `PAMException`
 
-All SDKs use protocol version 1; Agent configuration uses schema version 1. A client_upgrade_required response (HTTP 426) requires checking compatibility and upgrading. Unknown optional fields and notification events are tolerated; unsupported policy modes must not be applied or confirmed. Received event receipts are sent automatically and do not prove credential application.
+All SDKs use protocol version 1; Agent configuration uses schema version 1. A client_upgrade_required response (HTTP 426) requires checking compatibility and upgrading. Unknown optional fields and notification events are tolerated; unsupported policy modes must not be applied or confirmed. Received event receipts are sent automatically and do not prove credential application. Client metadata may include server_capabilities. Missing or null means unknown; unknown names are tolerated. Capabilities describe server features, not authorization.
 
 ## Go Agent integration
 

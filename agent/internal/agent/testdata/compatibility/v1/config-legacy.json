@@ -1,0 +1,19 @@
+{
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "compatibility-app",
+  "app_secret": "synthetic-compatibility-secret",
+  "org_id": "compatibility-org",
+  "instance_id": "orders-node-1",
+  "delivery": {
+    "delivery_mode": "socket",
+    "delivery_root": "/opt/orders/credentials",
+    "app_user": "orders"
+  },
+  "rules": [
+    {
+      "keys": ["orders-db"],
+      "files": [{"path": "/opt/orders/database.json"}],
+      "action": {"unit": "orders.service"}
+    }
+  ]
+}

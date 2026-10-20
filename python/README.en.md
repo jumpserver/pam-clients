@@ -1,5 +1,7 @@
 # JumpServer PAM Python SDK and Go Agent
 
+For a runnable application that reads/writes PostgreSQL and Redis and verifies SDK / Agent credential switches, see the [database application demo](database_app/README.md).
+
 Applications can connect to JumpServer directly with the Python SDK or run the Go Agent on the application host. The Agent runs in the foreground on Linux, macOS and Windows; its built-in systemd installer is Linux-only. Clients fetch rotation credentials at startup and keep a signed Credential Event Stream WebSocket open for subscription-account snapshots and later updates. Credential updates, newer reconnect snapshots and manual account switch requests trigger a fetch.
 
 ## Python interface conventions

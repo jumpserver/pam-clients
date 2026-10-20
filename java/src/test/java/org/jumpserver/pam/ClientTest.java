@@ -59,6 +59,65 @@ class ClientTest {
     }
   }
 
+  private void compatibilityFault(String instance, int status) throws Exception {
+    URI uri = URI.create(endpoint.replace("/prefix", "") + "/__control?instance=" + instance + "&fault=" + status);
+    assertEquals(200, HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
+        .send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.discarding()).statusCode());
+  }
+
+  @Test
+  void compatibilityFailurePreservesCacheButNeverAcceptsStaleUpgradeData() throws Exception {
+    String instance = "java-compat-cycle";
+    try (Client sdk = client(instance, "jms-pam")) {
+      Account initial = sdk.getAccount("account");
+      compatibilityFault(instance, 426);
+      assertTrue(assertThrows(PAMException.class, () -> sdk.getAccount("account")).isCompatibilityError());
+      assertTrue(assertThrows(PAMException.class, () -> sdk.getAccount("account", false)).isCompatibilityError());
+      compatibilityFault(instance, 503);
+      Account retained = sdk.getAccount("account");
+      assertTrue(retained.isFromLocal());
+      assertEquals(initial.getSecret(), retained.getSecret());
+      compatibilityFault(instance, 401);
+      assertFalse(assertThrows(PAMException.class, () -> sdk.getAccount("account")).isCompatibilityError());
+      compatibilityFault(instance, 503);
+      assertThrows(PAMException.class, () -> sdk.getAccount("account"));
+    }
+  }
+
+  @Test
+  void optionalMetadataSupportsLegacyAndFutureCapabilities() throws Exception {
+    try (Client sdk = client("java-compat-legacy", "jms-pam")) {
+      assertNull(sdk.getClientInfo().getServerCapabilities());
+    }
+    try (Client sdk = client("java-compat-capabilities", "jms-pam")) {
+      assertTrue(sdk.getClientInfo().getServerCapabilities().contains("future_optional_capability"));
+    }
+    try (Client sdk = client("java-compat-bad-capabilities", "jms-pam")) {
+      assertThrows(PAMException.class, sdk::getClientInfo);
+    }
+    String instance = "java-compat-missing";
+    try (Client sdk = client(instance, "jms-pam")) {
+      sdk.getAccount("account");
+      assertEquals(404, assertThrows(PAMException.class, sdk::getClientInfo).getStatusCode());
+      compatibilityFault(instance, 503);
+      assertTrue(sdk.getAccount("account").isFromLocal());
+    }
+  }
+
+  @Test
+  void malformedCompatibilityResponsesRemainExplicitFailures() throws Exception {
+    for (String fault : List.of("426-invalid", "426-timeout")) {
+      try (Client sdk = new Client(new Client.Options(endpoint, "contract-app", "contract-secret", "java-compat-" + fault)
+          .orgId("contract-org").timeout(Duration.ofMillis(200)))) {
+        String key = "cache-" + fault;
+        sdk.getCredential(key);
+        assertTrue(assertThrows(PAMException.class, () -> sdk.getCredential(key)).isCompatibilityError());
+        compatibilityFault("java-compat-" + fault, 503);
+        assertTrue(sdk.getCredential(key).isFromLocal());
+      }
+    }
+  }
+
   @Test
   void accountProjectionAndEventResult() {
     try (Client sdk = client("java-account-event", "jms-pam")) {

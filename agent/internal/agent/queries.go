@@ -20,7 +20,7 @@ type CredentialResult struct {
 
 func temporary(ctx context.Context, err error) bool {
 	var failure *pam.PAMError
-	return ctx.Err() == nil && errors.As(err, &failure) && (failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600))
+	return ctx.Err() == nil && errors.As(err, &failure) && !failure.IsCompatibilityError() && (failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600))
 }
 
 // Accounts lists metadata without fetching passwords. Offline results contain

@@ -39,6 +39,7 @@ type Applied struct {
 }
 
 type State struct {
+	StateVersion      int                     `json:"state_version"`
 	Events            map[string]pam.Event    `json:"pending_events"`
 	Identity          string                  `json:"identity"`
 	LocalDeliveryHash string                  `json:"local_delivery_hash"`
@@ -53,6 +54,7 @@ type State struct {
 	Digest            string                  `json:"config_digest"`
 	Denied            bool                    `json:"access_denied"`
 	Status            string                  `json:"sync_status"`
+	SyncError         string                  `json:"sync_error,omitempty"`
 }
 
 type Agent struct {
@@ -68,7 +70,7 @@ func New(config Config, remote Remote) (*Agent, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	state := State{Events: map[string]pam.Event{}, Latest: map[string]Credential{}, Delivered: map[string]int64{}, Applied: map[string]Applied{}, Authorized: map[string]bool{}, Wanted: map[string]int64{}, Commands: map[string]pam.Event{}}
+	state := State{StateVersion: CurrentStateVersion, Events: map[string]pam.Event{}, Latest: map[string]Credential{}, Delivered: map[string]int64{}, Applied: map[string]Applied{}, Authorized: map[string]bool{}, Wanted: map[string]int64{}, Commands: map[string]pam.Event{}}
 	identity, _ := json.Marshal([]string{config.Endpoint, config.AppID, config.OrgID, config.InstanceID})
 	if config.Local {
 		identity = append(identity, []byte("local")...)
@@ -91,8 +93,8 @@ func New(config Config, remote Remote) (*Agent, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal(raw, &state); err != nil {
-			return nil, errors.New("invalid retained Agent state")
+		if err = decodeState(raw, &state); err != nil {
+			return nil, err
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, err
@@ -139,15 +141,25 @@ func (a *Agent) persist() error { return writeJSON(a.Config.StateFile, a.state) 
 
 func denied(err error) bool {
 	var failure *pam.PAMError
-	return errors.As(err, &failure) && (failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404 || failure.StatusCode == 426 || failure.Code == "client_upgrade_required")
+	return errors.As(err, &failure) && (failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404)
+}
+
+func incompatible(err error) bool {
+	var failure *pam.PAMError
+	return errors.As(err, &failure) && failure.IsCompatibilityError()
 }
 
 func (a *Agent) failure(err error, identity bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.Status = "error"
+	a.state.SyncError = "agent_sync_failed"
+	if incompatible(err) {
+		a.state.SyncError = "client_upgrade_required"
+	}
 	if identity && denied(err) {
 		a.state.Denied = true
+		a.state.SyncError = "agent_access_denied"
 	}
 	if persistence := a.persist(); persistence != nil {
 		return persistence
@@ -178,7 +190,11 @@ func (a *Agent) Health() map[string]string {
 	if a.state.Denied {
 		status = "denied"
 	}
-	return map[string]string{"status": status, "sync_status": a.state.Status}
+	health := map[string]string{"status": status, "sync_status": a.state.Status}
+	if a.state.SyncError != "" {
+		health["error_code"] = a.state.SyncError
+	}
+	return health
 }
 
 // HandleEvent reduces local authorization before any HTTP work. A failed refresh
@@ -262,7 +278,7 @@ func (a *Agent) synchronize(ctx context.Context) (result error) {
 	}()
 	a.mu.Lock()
 	legacyConfirmationKeys := append([]string(nil), a.state.Scope.ConfirmationKeys...)
-	options := pam.AgentSyncOptions{ConfigDigest: a.state.Digest, SyncStatus: a.state.Status, DeliveryScope: a.Config.DeliveryScope(), RestartSupported: a.Config.Delivery.Mode == "environment" && a.Config.Delivery.Operation == "restart"}
+	options := pam.AgentSyncOptions{ConfigDigest: a.state.Digest, SyncStatus: a.state.Status, SyncError: a.state.SyncError, DeliveryScope: a.Config.DeliveryScope(), RestartSupported: a.Config.Delivery.Mode == "environment" && a.Config.Delivery.Operation == "restart"}
 	for key, value := range a.state.Latest {
 		options.Credentials = append(options.Credentials, pam.KnownRevision{Key: key, Revision: value.Revision})
 	}
@@ -363,7 +379,7 @@ func (a *Agent) synchronize(ctx context.Context) (result error) {
 			var failure *pam.PAMError
 			isPAM := errors.As(fetchErr, &failure)
 			revoked := isPAM && (failure.StatusCode == 400 || failure.StatusCode == 403 || failure.StatusCode == 404) && (failure.Code == "credential_not_found" || failure.Code == "credential_not_selected" || failure.Code == "credential_not_authorized" || failure.Code == "credential_not_bound")
-			if isPAM && (failure.StatusCode == 401 || failure.StatusCode == 426 || (failure.StatusCode == 403 && !revoked) || failure.Code == "client_upgrade_required") {
+			if isPAM && (failure.StatusCode == 401 || (failure.StatusCode == 403 && !revoked) || failure.IsCompatibilityError()) {
 				return a.failure(fetchErr, true)
 			}
 			if revoked || denied(fetchErr) {
@@ -472,6 +488,7 @@ func (a *Agent) synchronize(ctx context.Context) (result error) {
 	a.mu.Lock()
 	a.state.Digest = response.ConfigDigest
 	a.state.Status = "success"
+	a.state.SyncError = ""
 	err = a.persist()
 	a.mu.Unlock()
 	if err != nil {

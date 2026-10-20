@@ -120,7 +120,7 @@ func TestCredentialCacheBoundaries(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("Non-transient failure used cache")
 			}
-			if fault == "401" || fault == "403" || fault == "404" || fault == "426" || fault == "revoked" {
+			if fault == "401" || fault == "403" || fault == "404" || fault == "revoked" {
 				if len(client.latestCredentials) != 0 {
 					t.Fatal("Denied cache retained")
 				}
@@ -206,6 +206,9 @@ func TestManagedEventsReconnectAndSelfClose(t *testing.T) {
 			revisions = append(revisions, c.Revision)
 			if c.Revision >= 3 {
 				client.Close()
+				if !errors.Is(ctx.Err(), context.Canceled) {
+					t.Error("Close returned before canceling the managed handler context")
+				}
 			}
 			return nil
 		},

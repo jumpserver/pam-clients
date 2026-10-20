@@ -93,6 +93,7 @@ type ClientInfo struct {
 	ConfigSchemaVersion *int               `json:"config_schema_version"`
 	ApplicationStatus   *ApplicationStatus `json:"application_status"`
 	DateStatusReported  *string            `json:"date_status_reported"`
+	ServerCapabilities  []string           `json:"server_capabilities"`
 }
 type CredentialPolicy struct {
 	ID                        string         `json:"id"`
@@ -151,6 +152,19 @@ func validClientInfo(data map[string]json.RawMessage) error {
 	json.Unmarshal(data["type"], &clientType)
 	if clientType != "sdk" && clientType != "agent" {
 		return fmt.Errorf("invalid client type")
+	}
+	if raw, ok := data["server_capabilities"]; ok && string(raw) != "null" {
+		var capabilities []string
+		if err := json.Unmarshal(raw, &capabilities); err != nil {
+			return fmt.Errorf("invalid server capabilities")
+		}
+		seen := map[string]bool{}
+		for _, capability := range capabilities {
+			if capability == "" || seen[capability] {
+				return fmt.Errorf("invalid server capabilities")
+			}
+			seen[capability] = true
+		}
 	}
 	if raw, ok := data["config_schema_version"]; ok && string(raw) != "null" {
 		if err := metadataFields(data, nil, nil, []string{"config_schema_version"}); err != nil {
@@ -308,6 +322,15 @@ type PAMError struct {
 
 func (e *PAMError) Error() string { return fmt.Sprintf("[%s] %s", e.Code, e.Detail) }
 func (e *PAMError) Unwrap() error { return e.Err }
+
+// IsCompatibilityError separates unsupported versions from permission denial.
+// Compatibility errors are explicit failures, but do not revoke retained values.
+func (e *PAMError) IsCompatibilityError() bool {
+	if e == nil || e.StatusCode == 401 || e.StatusCode == 403 || e.StatusCode == 404 {
+		return false
+	}
+	return e.StatusCode == 426 || e.Code == "client_upgrade_required"
+}
 
 func required(data map[string]json.RawMessage, names ...string) error {
 	for _, name := range names {

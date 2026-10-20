@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	pam "github.com/jumpserver/pam-clients/go"
-	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -142,6 +141,7 @@ type Rule struct {
 type Config struct {
 	// Local is chosen by the CLI for current-user foreground runs, never by Core.
 	Local            bool                  `json:"-"`
+	ConfigVersion    int                   `json:"config_version,omitempty"`
 	Endpoint         string                `json:"endpoint"`
 	AppID            string                `json:"app_id"`
 	AppSecret        string                `json:"app_secret"`
@@ -198,6 +198,9 @@ func loadBootstrapConfig(path string) (Config, error) {
 }
 
 func (c Config) compactDefaults() Config {
+	if c.ConfigVersion == 0 {
+		c.ConfigVersion = CurrentConfigVersion
+	}
 	if c.StateFile == DefaultState {
 		c.StateFile = ""
 	}
@@ -221,6 +224,11 @@ func validKey(key string) bool {
 }
 
 func (c Config) Validate() error {
+	// Zero is the legacy value for configurations constructed in Go. An explicit
+	// zero in JSON is rejected by decodeConfig, rather than treated as omitted.
+	if c.ConfigVersion != 0 && c.ConfigVersion != CurrentConfigVersion {
+		return unsupportedVersion("configuration", "config_version", c.ConfigVersion, CurrentConfigVersion)
+	}
 	if c.Endpoint == "" || c.AppID == "" || c.AppSecret == "" || c.InstanceID == "" || !absolute(c.StateFile) || c.ReconcileSeconds < 1 {
 		return errors.New("identity, stable instance ID, state path and positive reconcile interval are required")
 	}
@@ -478,14 +486,16 @@ func (a Action) timeout() time.Duration {
 
 func decodeConfig(raw []byte) (Config, error) {
 	var config Config
+	version, err := readFormatVersion(raw, "configuration", "config_version", CurrentConfigVersion)
+	if err != nil {
+		return config, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
-		return config, errors.New("invalid Agent configuration JSON or unknown field")
+		return config, formatJSONError("configuration", err)
 	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return config, errors.New("Agent configuration must contain one JSON object")
-	}
+	config.ConfigVersion = version
 	return config, nil
 }
 func validateScope(scope pam.AgentScope) error {

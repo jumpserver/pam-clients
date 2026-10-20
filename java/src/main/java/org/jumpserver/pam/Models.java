@@ -135,6 +135,7 @@ public final class Models {
     private final Long configSchemaVersion;
     private final ApplicationStatus applicationStatus;
     private final String dateStatusReported;
+    private final List<String> serverCapabilities;
 
     ClientInfo(JsonNode value) {
       id = string(value, "id");
@@ -149,10 +150,24 @@ public final class Models {
           value.hasNonNull("config_schema_version") ? count(value, "config_schema_version") : null;
       applicationStatus = value.hasNonNull("application_status") ? new ApplicationStatus(value.get("application_status")) : null;
       dateStatusReported = value.hasNonNull("date_status_reported") ? string(value, "date_status_reported") : null;
+      if (value.hasNonNull("server_capabilities")) {
+        JsonNode capabilities = value.get("server_capabilities");
+        if (!capabilities.isArray()) throw new IllegalArgumentException("Invalid server capabilities");
+        List<String> names = new ArrayList<>();
+        for (JsonNode capability : capabilities) {
+          if (!capability.isTextual() || capability.asText().isEmpty() || names.contains(capability.asText()))
+            throw new IllegalArgumentException("Invalid server capability");
+          names.add(capability.asText());
+        }
+        serverCapabilities = Collections.unmodifiableList(names);
+      } else {
+        serverCapabilities = null;
+      }
     }
 
     public ApplicationStatus getApplicationStatus() { return applicationStatus; }
     public String getDateStatusReported() { return dateStatusReported; }
+    public List<String> getServerCapabilities() { return serverCapabilities; }
 
     public String getId() {
       return id;

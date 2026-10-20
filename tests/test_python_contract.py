@@ -7,6 +7,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from threading import Timer
+from urllib.parse import urlencode
 from urllib.request import urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
@@ -17,6 +18,60 @@ from jms_pam.models import KnownRevision
 
 @unittest.skipUnless(os.environ.get("JMS_TEST_ENDPOINT"), "Run through tests/run.py")
 class PythonContractTests(unittest.TestCase):
+    def control(self, instance, fault):
+        url = os.environ["JMS_TEST_ENDPOINT"].removesuffix("/prefix") + "/__control?" + urlencode({"instance": instance, "fault": fault})
+        with urlopen(url) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_compatibility_errors_preserve_cache_but_fail_explicitly(self):
+        instance = "python-compat-cycle"
+        with self.client(instance) as client:
+            initial = client.get_account(account_id="account")
+            self.control(instance, 426)
+            for fresh in (False, True):
+                with self.assertRaises(PAMError) as result:
+                    client.get_account(account_id="account", allow_local_fallback=not fresh)
+                self.assertTrue(result.exception.is_compatibility_error)
+            self.control(instance, 503)
+            retained = client.get_account(account_id="account")
+            self.assertTrue(retained.from_local)
+            self.assertEqual(retained.secret, initial.secret)
+            self.control(instance, 401)
+            with self.assertRaises(PAMError) as result:
+                client.get_account(account_id="account")
+            self.assertFalse(result.exception.is_compatibility_error)
+            self.control(instance, 503)
+            with self.assertRaises(PAMError):
+                client.get_account(account_id="account")
+
+    def test_optional_metadata_compatibility(self):
+        with self.client("python-compat-legacy") as client:
+            self.assertIsNone(client.get_client_info().server_capabilities)
+        with self.client("python-compat-capabilities") as client:
+            self.assertIn("future_optional_capability", client.get_client_info().server_capabilities)
+        with self.client("python-compat-bad-capabilities") as client, self.assertRaises(PAMError):
+            client.get_client_info()
+        instance = "python-compat-missing"
+        with self.client(instance) as client:
+            client.get_account(account_id="account")
+            with self.assertRaises(PAMError):
+                client.get_client_info()
+            self.control(instance, 503)
+            self.assertTrue(client.get_account(account_id="account").from_local)
+
+    def test_malformed_426_response_is_not_a_temporary_outage(self):
+        for fault in ("426-invalid", "426-timeout"):
+            instance = "python-compat-" + fault
+            with self.client(instance, timeout=0.1) as client:
+                key = "cache-" + fault
+                client.get_credential(key=key)
+                with self.assertRaises(PAMError) as result:
+                    client.get_credential(key=key)
+                self.assertTrue(result.exception.is_compatibility_error)
+                self.assertEqual(len(client._latest_credentials), 1)
+                self.control(instance, 503)
+                self.assertTrue(client.get_credential(key=key).from_local)
+
     def client(self, instance="python-contract", **options):
         return Client(
             os.environ["JMS_TEST_ENDPOINT"],

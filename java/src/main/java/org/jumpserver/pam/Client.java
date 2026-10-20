@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.crypto.Mac;
@@ -242,27 +243,38 @@ public final class Client implements AutoCloseable {
       builder
           .header("Content-Type", "application/json")
           .method(method, HttpRequest.BodyPublishers.ofByteArray(body));
+    // Retain the status as soon as headers arrive, even if the body later times
+    // out. A partial 426 response must not become a temporary cache fallback.
+    AtomicInteger responseStatus = new AtomicInteger();
+    boolean optionalMetadata =
+        Arrays.asList("/application/", "/client/", "/policies/", "/policy/").contains(path);
     CompletableFuture<HttpResponse<byte[]>> future =
-        track(http.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofByteArray()));
+        track(
+            http.sendAsync(
+                builder.build(),
+                info -> {
+                  responseStatus.set(info.statusCode());
+                  if (invalidateCredentials
+                      && (info.statusCode() == 401
+                          || info.statusCode() == 403
+                          || (info.statusCode() == 404 && !optionalMetadata))) {
+                    synchronized (credentialsLock) {
+                      latestCredentials.clear();
+                      credentialGeneration++;
+                    }
+                  }
+                  return HttpResponse.BodySubscribers.ofByteArray();
+                }));
     HttpResponse<byte[]> response;
     try {
       response = future.get(options.timeout.toMillis(), TimeUnit.MILLISECONDS);
     } catch (InterruptedException error) {
       future.cancel(true);
       Thread.currentThread().interrupt();
-      throw new PAMException("NetworkError", 0, "HTTP request interrupted", null, error);
+      throw new PAMException("NetworkError", responseStatus.get(), "HTTP request interrupted", null, error);
     } catch (Exception error) {
       future.cancel(true);
-      throw new PAMException("NetworkError", 0, "HTTP request failed", null, error);
-    }
-    if (invalidateCredentials && (response.statusCode() == 401
-        || response.statusCode() == 403
-        || response.statusCode() == 404
-        || response.statusCode() == 426)) {
-      synchronized (credentialsLock) {
-        latestCredentials.clear();
-        credentialGeneration++;
-      }
+      throw new PAMException("NetworkError", responseStatus.get(), "HTTP request failed", null, error);
     }
     JsonNode payload;
     try {
@@ -466,11 +478,11 @@ public final class Client implements AutoCloseable {
           error.getStatusCode() == 401
               || error.getStatusCode() == 403
               || error.getStatusCode() == 404
-              || error.getCode().equals("client_upgrade_required")
               || (error.getStatusCode() == 400 && error.getCode().equals("credential_not_found"));
       boolean temporary =
-          error.getCode().equals("NetworkError")
-              || (error.getStatusCode() >= 500 && error.getStatusCode() < 600);
+          !error.isCompatibilityError()
+              && (error.getCode().equals("NetworkError")
+                  || (error.getStatusCode() >= 500 && error.getStatusCode() < 600));
       synchronized (credentialsLock) {
         if (denied) {
           latestCredentials.clear();

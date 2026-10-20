@@ -28,6 +28,9 @@ class Transport:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Client is closed")
+            # Read headers before the body so a body timeout retains HTTP 426
+            # instead of becoming an unqualified temporary network failure.
+            options.setdefault("stream", True)
             try:
                 response = self.session.request(method, url, **options)
             except requests.RequestException as error:

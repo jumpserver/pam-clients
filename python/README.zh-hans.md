@@ -1,5 +1,7 @@
 # JumpServer PAM Python SDK 与 Go Agent
 
+实际连接 PostgreSQL 和 Redis、验证 SDK / Agent 凭据切换，可运行 [数据库应用 Demo](database_app/README.md)。
+
 应用可以使用 Python SDK 直接连接 JumpServer，也可以在应用主机运行 Go Agent。Agent 可在 Linux、macOS 和 Windows 前台运行；内置 systemd 安装仅支持 Linux。客户端启动时获取轮换凭据，并通过签名认证的凭据事件流 WebSocket 接收订阅账号快照和后续更新；`credential.updated`、重连快照中的新版本以及管理员手动发送的账号切换请求会触发取密。
 
 ## Python 接口风格

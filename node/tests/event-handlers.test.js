@@ -48,6 +48,21 @@ test('authorization, upgrade, malformed success fail explicitly', async () => {
 
 })
 
+test('malformed or timed out 426 responses remain compatibility failures', async () => {
+  for (const fault of ['426-invalid', '426-timeout']) {
+    const sdk = client(`node-compat-${fault}`, { timeout: 100 })
+    try {
+      const key = `cache-${fault}`
+      await sdk.getCredential({ key })
+      await assert.rejects(sdk.getCredential({ key }), error => error instanceof PAMError && error.isCompatibilityError)
+      const url = new URL('/__control', server.endpoint)
+      url.search = new URLSearchParams({ instance: `node-compat-${fault}`, fault: 503 })
+      await fetch(url)
+      assert.equal((await sdk.getCredential({ key })).fromLocal, true)
+    } finally { sdk.close() }
+  }
+})
+
 test('snapshot scope removes unauthorized credentials before exposing the event', async () => {
   const sdk = client('node-cache-scope')
   try {

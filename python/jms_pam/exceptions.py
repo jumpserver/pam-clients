@@ -18,6 +18,13 @@ class PAMError(Exception):
         self.original_error = original_error
         super().__init__(f"[{code}] {detail or message}")
 
+    @property
+    def is_compatibility_error(self):
+        """Unsupported versions fail explicitly without revoking retained values."""
+        if self.status_code in (401, 403, 404):
+            return False
+        return self.status_code == 426 or self.code == "client_upgrade_required"
+
 
 REVOKED_CODES = frozenset(
     (

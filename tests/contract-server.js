@@ -129,6 +129,11 @@ async function startServer() {
       let result;
       if (["/application/", "/client/", "/policies/", "/policy/"].includes(route)) {
         assert.equal(request.method, "GET");
+        if (data.instance_id.includes("compat-missing")) {
+          response.statusCode = 404;
+          response.end(JSON.stringify({code: "not_found"}));
+          return;
+        }
         const policies = [{
           id: "11111111-1111-4111-8111-111111111111", key: "db/空 格?=&", name: "Database rotation",
           mode: "alternating_rotation", is_active: true, status: "waiting_switch", revision: 2,
@@ -152,6 +157,11 @@ async function startServer() {
             date_status_reported: applicationStatuses.has(data.instance_id) ? "2026-10-13T00:00:00Z" : null,
             secret: "DO_NOT_LOG_SECRET"};
           if (data.instance_id.includes("invalid")) result.is_active = "true";
+          if (data.instance_id.includes("compat-capabilities")) {
+            result.server_capabilities = ["account_lookup", "application_status", "future_optional_capability"];
+            result.future_optional_field = {ignored: true};
+          }
+          if (data.instance_id.includes("compat-bad-capabilities")) result.server_capabilities = ["account_lookup", 1];
         } else if (route === "/policies/") {
           result = {policies: policies.filter(p => !data.search || data.search.startsWith("fault:") || p.key.includes(data.search) || p.name.includes(data.search))};
           if (data.search === "fault:invalid-list") result.policies = null;
@@ -179,6 +189,12 @@ async function startServer() {
         credentialRequests.set(selector, attempts);
         if (data.key?.startsWith("cache-") && attempts > 1) {
           const fault = data.key.slice(6);
+          if (fault === "426-invalid") { response.statusCode = 426; response.end("invalid"); return; }
+          if (fault === "426-timeout") {
+            response.writeHead(426);
+            response.flushHeaders();
+            return;
+          }
           if (fault === "timeout") {
             // Headers arrive, but the body never completes. Client timeout must cancel it.
             response.writeHead(200);
@@ -390,11 +406,15 @@ async function startServer() {
     socket.on("close", () => instanceSockets.get(instance).delete(socket));
     const count = (connections.get(instance) || 0) + 1;
     connections.set(instance, count);
+    // A controlled Agent reconnect observes the current revision; reconnecting
+    // alone must not advertise a revision that the HTTP fixture cannot serve.
+    const snapshotRevision = instance.startsWith("agent-native-")
+      ? controls.get(instance)?.revision || 2 : count + 1;
     socket.send(JSON.stringify({ event: "pong" }));
     socket.send(
       JSON.stringify({
         event: "snapshot",
-        credentials: [{ key: "db", credential_mode: "alternating_rotation", revision: count + 1 }],
+        credentials: [{ key: "db", credential_mode: "alternating_rotation", revision: snapshotRevision }],
       }),
     );
     if (instance.startsWith("retry-")) return;
