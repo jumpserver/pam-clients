@@ -1,6 +1,6 @@
 # JumpServer PAM Go SDK
 
-使用 `account_id` 取得事件指定帳號。完成連線驗證與切換後，透過 `event_id` 回報 `success` 或 `failed`；收到事件或取密成功不代表套用成功。事件與重連快照包含 `event_id`、`account_id`、`account_revision`，套用前須檢查帳號版本。指令先以 `running` 認領；處理須具冪等性。
+實作下方的帳號變更回呼並啟動託管監聽即可。SDK 負責快照、即時取密、帳號與版本校驗、重試、指令認領及結果回報。業務回呼必須完成真實連線驗證、連線池切換與舊連線釋放後再返回。Python、Node.js 使用子類鉤子，Go 使用 OnAccountChanged，Java 使用 AccountEventListener。未實作業務切換時，範例會明確失敗。
 
 ## 環境需求
 
@@ -252,7 +252,7 @@ func main() {
 ## 常用方法
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
-- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
 - `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
 - `ListAccounts(ctx, search)`
 - `ListAccountsPage(ctx, limit, offset, search)`
@@ -273,10 +273,9 @@ func main() {
 回報應用狀態和目前使用的帳號 ID。支援 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次都是完整快照，空帳號清單會清除先前記錄。由應用在狀態變更或自己的心跳中呼叫，不會自動啟動背景回報。Python、Java、Node.js 遇到網路或 API 錯誤時預設回傳 false；Go 使用 `TryReportStatus`。嚴格模式可取得錯誤，無效參數仍會明確提示。呼叫使用設定的 HTTP 逾時，請避開影響業務回應的路徑。回報不會取得密碼、確認輪換或清除憑據快取。`error_code` 僅傳機器可讀錯誤碼，不要傳密碼或例外原文。透過 ClientInfo 查詢最後回報和時間。
 
 ```go
-ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
-    Status: "running", AccountIDs: []string{account.ID},
-})
-// ReportStatus(ctx, report) returns an error when details are needed.
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
 
 

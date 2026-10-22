@@ -1,6 +1,6 @@
 # JumpServer PAM Go SDK
 
-Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `success` ou `failed` com `event_id`. Receber ou buscar não significa aplicar. Eventos e snapshots incluem `event_id`, `account_id` e `account_revision`; verifique a versão. Reivindique comandos com `running` e use operações idempotentes.
+Implemente o callback de mudança de conta e inicie o listener gerenciado. O SDK trata snapshots, consulta em tempo real, validação de conta e versão, tentativas, reivindicação de comandos e resultados. Retorne apenas após validar a conexão real, trocar o pool e fechar conexões antigas. Python e Node.js usam subclasses, Go usa OnAccountChanged e Java AccountEventListener. O exemplo falha até implementar a troca real.
 
 ## Requisitos
 
@@ -252,7 +252,7 @@ Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `
 ## Métodos comuns
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
-- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
 - `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
 - `ListAccounts(ctx, search)`
 - `ListAccountsPage(ctx, limit, offset, search)`
@@ -273,10 +273,9 @@ Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `
 Informe um retrato completo do estado e dos IDs das contas em uso. Estados: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Uma lista vazia remove o uso anterior. Chame nas mudanças de estado ou no heartbeat da aplicação. Python, Java e Node.js retornam false em falhas de rede/API; Go oferece `TryReportStatus`. Variantes estritas expõem os erros. Argumentos inválidos são rejeitados. As chamadas usam o timeout HTTP configurado. O relatório não busca segredos, confirma rotação nem invalida o cache. Não inclua segredos ou mensagens de exceção em `error_code`. ClientInfo fornece o último relatório e sua data.
 
 ```go
-ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
-    Status: "running", AccountIDs: []string{account.ID},
-})
-// ReportStatus(ctx, report) returns an error when details are needed.
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
 
 

@@ -30,6 +30,12 @@
 
 每个客户端实例对应一个稳定、唯一的应用副本 ID。取密直接返回账号、资产及缓存来源，错误包含错误码及 HTTP 状态。事件接收回执自动发送，仅表示读取事件。订阅和轮换均在校验事件账号版本、验证真实连接、切换连接池并释放旧连接后，按 event_id 上报应用结果。指令只有认领成功才执行，业务处理失败的原始错误会保留。
 
+新接入使用托管账号回调：Python `on_account_changed`、Go `EventHandlers.OnAccountChanged`、Java `AccountEventListener`、Node.js `onAccountChanged`，配合已有的 `watch_events` / `WatchEvents` / `watchEvents`。SDK 自动处理快照、实时取密、账号与版本检查、失败重试、指令认领和结果上报。回调成功返回代表业务已验证并切换连接；只有此时 SDK 才确认成功。结果上报失败只重试上报，同一次监听不重复已完成动作。处理仍须支持进程重启后的幂等执行。
+
+托管回调自动上报其已应用账号；普通 pull 应用可调用 `report_accounts` / `ReportAccounts` / `reportAccounts` 主动声明完整使用账号列表，空列表清除记录。该声明复用状态上报，不扩大授权、不改变订阅范围，也不确认轮换。Agent 的本地 `POST /v1/usage` 与 `report_accounts` CLI 提供同样的声明能力，并保留本机规则声明的账号。
+
+上述托管回调和使用账号声明需要包含这些接口的新版 SDK / Agent；仅升级 Core 不会升级应用主机上的客户端。旧客户端继续使用原有接口，Python 和 Node.js 的推荐示例会明确拒绝缺少托管回调能力的旧 SDK。
+
 各 SDK 使用协议版本 1，Agent 配置版本为 1。遇到 `client_upgrade_required`（HTTP 426）需检查兼容性并升级；未知可选字段和通知事件可以传给应用，未实现的策略类型不得应用或确认。
 
 程序版本与协议、本地配置及状态版本分别管理。实例信息增加可选服务端能力列表；旧响应缺少此字段时保持 v1 接入方式。兼容错误仍显式报错，但不会撤销已有凭据；可选元数据接口缺失也不清理缓存。完整规则及四语言错误分类接口见 [协议兼容规则](docs/protocol-compatibility.md)。

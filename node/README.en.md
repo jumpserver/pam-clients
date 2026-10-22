@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
+Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.
 
 ## Requirements
 
@@ -207,7 +207,7 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 ## Common methods
 
 - `getApplication({signal}) / getClientInfo({signal})`
-- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
 - `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
 - `listAccounts({search, signal})`
 - `listAccountsPage({limit, offset, search, signal})`
@@ -228,8 +228,8 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
 
 ```javascript
-const accepted = await client.reportStatus({status: 'running', accountId: account.id})
-await client.reportStatus({status: 'stopped'})
+const accepted = await client.reportAccounts([account.id])
+await client.reportAccounts([])
 ```
 
 

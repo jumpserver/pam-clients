@@ -1,6 +1,6 @@
 # JumpServer PAM Java SDK
 
-Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng thay đổi trước khi báo `success` hoặc `failed` qua `event_id`. Nhận sự kiện hoặc lấy mật khẩu không có nghĩa là áp dụng thành công. Sự kiện và snapshot có `event_id`, `account_id`, `account_revision`; hãy kiểm tra phiên bản. Nhận lệnh bằng `running` và xử lý lặp lại an toàn.
+Triển khai hàm xử lý thay đổi tài khoản rồi bắt đầu bộ lắng nghe được quản lý. SDK xử lý ảnh chụp trạng thái, lấy dữ liệu trực tiếp, kiểm tra tài khoản và phiên bản, thử lại, nhận quyền thực thi lệnh và báo cáo kết quả. Chỉ trả về sau khi kiểm tra kết nối thật, chuyển nhóm kết nối và giải phóng kết nối cũ. Python và Node.js dùng lớp con, Go dùng OnAccountChanged, Java dùng AccountEventListener. Ví dụ sẽ thất bại cho đến khi triển khai chuyển đổi thực tế.
 
 ## Yêu cầu môi trường
 
@@ -145,48 +145,29 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 ```java
 package org.jumpserver.pam;
 
-import java.util.List;
 import org.jumpserver.pam.Models.Account;
-import org.jumpserver.pam.Models.Event;
 
 public final class EventsDemo {
-  private static void applyAccount(Account account) {
-    throw new UnsupportedOperationException("Implement connection validation, pool switching and old connection cleanup");
-  }
-  private static void applyEvent(Client client, Event event) {
-    if (event.getEvent().equals("application.restart.requested"))
-      throw new UnsupportedOperationException("Implement restart and health check");
-    Account account = client.getAccount(event.getAccountId(), false);
-    if (account.getRevision() != event.getAccountRevision())
-      throw new IllegalArgumentException("Event account version is superseded");
-    applyAccount(account);
-  }
-  private static void handleEvent(Client client, Event event) {
-    if (!event.getCommandId().isEmpty()
-        && !client.reportApplicationCommandResult(event.getCommandId(), "running", null).isAccepted()) return;
-    try { applyEvent(client, event); }
-    catch (RuntimeException error) {
-      client.confirmEvent(event.getEventId(), "failed", "application_failed");
-      throw error;
-    }
-    client.confirmEvent(event.getEventId());
-  }
   public static void main(String[] args) {
     Client.Options options = new Client.Options(System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
         System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID")).orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
       Thread stop = new Thread(client::close, "jms-pam-shutdown");
       Runtime.getRuntime().addShutdownHook(stop);
-      try (EventStream stream = client.watchCredentialEvents()) {
-        for (Event event : stream) {
-          List<Event> updates = !event.getCommandId().isEmpty() || event.getEvent().equals("credential.updated")
-              ? List.of(event) : event.getEvent().equals("snapshot") ? event.getCredentials() : List.of();
-          // Reconcile removed connections on snapshots; release revoked accounts.
-          for (Event update : updates) {
-            try { handleEvent(client, update); }
-            catch (RuntimeException error) { System.err.println(error.getClass().getSimpleName()); }
+      try {
+        // SDK handles snapshots, fresh fetches, versions, retries and event results.
+        // Pull-only code can use client.reportAccounts(List.of(accountId)); List.of() clears usage.
+        client.watchEvents(new AccountEventListener() {
+          public void onAccountChanged(Account account) {
+            // Validate, switch the pool and release old connections before returning.
+            throw new UnsupportedOperationException("Implement application account switching");
           }
-        }
+          public void onAccountRevoked(String accountId) {
+            throw new UnsupportedOperationException("Implement revoked account cleanup");
+          }
+        });
+      } catch (InterruptedException error) {
+        Thread.currentThread().interrupt();
       } finally { Runtime.getRuntime().removeShutdownHook(stop); }
     }
   }
@@ -202,7 +183,7 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 ## Phương thức thông dụng
 
 - `getApplication() / getClientInfo()`
-- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `reportAccounts(accountIds) / reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
 - `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
 - `listAccounts() / listAccounts(search)`
 - `listAccountsPage(limit, offset, search)`
@@ -223,8 +204,8 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 Báo cáo ảnh chụp đầy đủ về trạng thái và ID tài khoản đang sử dụng. Trạng thái: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Danh sách rỗng xóa thông tin sử dụng trước đó. Gọi khi trạng thái thay đổi hoặc từ heartbeat của ứng dụng. Python, Java và Node.js trả về false khi lỗi mạng/API; Go cung cấp `TryReportStatus`. Biến thể nghiêm ngặt cung cấp chi tiết lỗi. Tham số không hợp lệ bị từ chối. Lời gọi dùng thời gian chờ HTTP đã cấu hình. Báo cáo không lấy bí mật, xác nhận luân chuyển hoặc xóa bộ nhớ đệm. Không đặt bí mật hay thông báo ngoại lệ trong `error_code`. ClientInfo trả về báo cáo cuối và thời gian.
 
 ```java
-boolean accepted = client.reportStatus("running", account.getId());
-client.reportStatus("stopped", java.util.Collections.emptyList());
+boolean accepted = client.reportAccounts(java.util.List.of(account.getId()));
+client.reportAccounts(java.util.Collections.emptyList());
 ```
 
 

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -62,6 +63,8 @@ func run(args []string) error {
   get_secret ACCOUNT_ID [--config PATH | --socket PATH]
                                             Get account secret JSON, with API/local source
   confirm EVENT_ID --socket PATH             Confirm successful application of an event
+  report_accounts [ACCOUNT_ID ...] --socket PATH
+                                            Replace explicit account usage (empty clears it)
   check-config [--local] --config PATH       Validate private configuration
   version                                   Show version and platform
 `)
@@ -157,6 +160,44 @@ func run(args []string) error {
 			return errors.New("Agent installation requires Linux and root")
 		}
 		return agent.Install(ctx, options)
+	case "report_accounts", "report-accounts":
+		ids := []string{}
+		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			ids = append(ids, args[0])
+			args = args[1:]
+		}
+		socket := flags.String("socket", "", "running Agent socket; otherwise read --config")
+		if err := flags.Parse(args); err != nil {
+			return err
+		}
+		if len(flags.Args()) != 0 {
+			return errors.New("unexpected usage arguments")
+		}
+		if *socket == "" {
+			settings, err := agent.LoadConfig(*config)
+			if err != nil {
+				return fmt.Errorf("cannot load Agent configuration: %w", err)
+			}
+			*socket = settings.Delivery.Socket
+		}
+		body, _ := json.Marshal(map[string]any{"account_ids": ids})
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)
+		}}
+		defer transport.CloseIdleConnections()
+		client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/v1/usage", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			return errors.New("local account usage request failed")
+		}
+		defer response.Body.Close()
+		if response.StatusCode != 200 {
+			return errors.New("local account usage rejected")
+		}
+		_, err = io.Copy(os.Stdout, io.LimitReader(response.Body, 4096))
+		return err
 	case "confirm":
 		if len(args) == 0 {
 			return errors.New("credential key is required")
@@ -194,7 +235,7 @@ func run(args []string) error {
 		_, err = io.Copy(os.Stdout, io.LimitReader(response.Body, 4096))
 		return err
 	default:
-		return errors.New("use run, init-local, install, get_accounts, get_secret, check-config, confirm or version")
+		return errors.New("use run, init-local, install, get_accounts, get_secret, report_accounts, check-config, confirm or version")
 	}
 }
 

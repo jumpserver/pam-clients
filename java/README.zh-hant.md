@@ -1,6 +1,6 @@
 # JumpServer PAM Java SDK
 
-使用 `account_id` 取得事件指定帳號。完成連線驗證與切換後，透過 `event_id` 回報 `success` 或 `failed`；收到事件或取密成功不代表套用成功。事件與重連快照包含 `event_id`、`account_id`、`account_revision`，套用前須檢查帳號版本。指令先以 `running` 認領；處理須具冪等性。
+實作下方的帳號變更回呼並啟動託管監聽即可。SDK 負責快照、即時取密、帳號與版本校驗、重試、指令認領及結果回報。業務回呼必須完成真實連線驗證、連線池切換與舊連線釋放後再返回。Python、Node.js 使用子類鉤子，Go 使用 OnAccountChanged，Java 使用 AccountEventListener。未實作業務切換時，範例會明確失敗。
 
 ## 環境需求
 
@@ -145,48 +145,29 @@ public final class ApplicationInfoDemo {
 ```java
 package org.jumpserver.pam;
 
-import java.util.List;
 import org.jumpserver.pam.Models.Account;
-import org.jumpserver.pam.Models.Event;
 
 public final class EventsDemo {
-  private static void applyAccount(Account account) {
-    throw new UnsupportedOperationException("Implement connection validation, pool switching and old connection cleanup");
-  }
-  private static void applyEvent(Client client, Event event) {
-    if (event.getEvent().equals("application.restart.requested"))
-      throw new UnsupportedOperationException("Implement restart and health check");
-    Account account = client.getAccount(event.getAccountId(), false);
-    if (account.getRevision() != event.getAccountRevision())
-      throw new IllegalArgumentException("Event account version is superseded");
-    applyAccount(account);
-  }
-  private static void handleEvent(Client client, Event event) {
-    if (!event.getCommandId().isEmpty()
-        && !client.reportApplicationCommandResult(event.getCommandId(), "running", null).isAccepted()) return;
-    try { applyEvent(client, event); }
-    catch (RuntimeException error) {
-      client.confirmEvent(event.getEventId(), "failed", "application_failed");
-      throw error;
-    }
-    client.confirmEvent(event.getEventId());
-  }
   public static void main(String[] args) {
     Client.Options options = new Client.Options(System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
         System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID")).orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
       Thread stop = new Thread(client::close, "jms-pam-shutdown");
       Runtime.getRuntime().addShutdownHook(stop);
-      try (EventStream stream = client.watchCredentialEvents()) {
-        for (Event event : stream) {
-          List<Event> updates = !event.getCommandId().isEmpty() || event.getEvent().equals("credential.updated")
-              ? List.of(event) : event.getEvent().equals("snapshot") ? event.getCredentials() : List.of();
-          // Reconcile removed connections on snapshots; release revoked accounts.
-          for (Event update : updates) {
-            try { handleEvent(client, update); }
-            catch (RuntimeException error) { System.err.println(error.getClass().getSimpleName()); }
+      try {
+        // SDK handles snapshots, fresh fetches, versions, retries and event results.
+        // Pull-only code can use client.reportAccounts(List.of(accountId)); List.of() clears usage.
+        client.watchEvents(new AccountEventListener() {
+          public void onAccountChanged(Account account) {
+            // Validate, switch the pool and release old connections before returning.
+            throw new UnsupportedOperationException("Implement application account switching");
           }
-        }
+          public void onAccountRevoked(String accountId) {
+            throw new UnsupportedOperationException("Implement revoked account cleanup");
+          }
+        });
+      } catch (InterruptedException error) {
+        Thread.currentThread().interrupt();
       } finally { Runtime.getRuntime().removeShutdownHook(stop); }
     }
   }
@@ -202,7 +183,7 @@ public final class EventsDemo {
 ## 常用方法
 
 - `getApplication() / getClientInfo()`
-- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `reportAccounts(accountIds) / reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
 - `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
 - `listAccounts() / listAccounts(search)`
 - `listAccountsPage(limit, offset, search)`
@@ -223,8 +204,8 @@ public final class EventsDemo {
 回報應用狀態和目前使用的帳號 ID。支援 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次都是完整快照，空帳號清單會清除先前記錄。由應用在狀態變更或自己的心跳中呼叫，不會自動啟動背景回報。Python、Java、Node.js 遇到網路或 API 錯誤時預設回傳 false；Go 使用 `TryReportStatus`。嚴格模式可取得錯誤，無效參數仍會明確提示。呼叫使用設定的 HTTP 逾時，請避開影響業務回應的路徑。回報不會取得密碼、確認輪換或清除憑據快取。`error_code` 僅傳機器可讀錯誤碼，不要傳密碼或例外原文。透過 ClientInfo 查詢最後回報和時間。
 
 ```java
-boolean accepted = client.reportStatus("running", account.getId());
-client.reportStatus("stopped", java.util.Collections.emptyList());
+boolean accepted = client.reportAccounts(java.util.List.of(account.getId()));
+client.reportAccounts(java.util.Collections.emptyList());
 ```
 
 

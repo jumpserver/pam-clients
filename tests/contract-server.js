@@ -79,13 +79,16 @@ async function startServer() {
       const control = controls.get(instance) || {};
       if (url.searchParams.has("revision")) control.revision = Number(url.searchParams.get("revision"));
       if (url.searchParams.has("fault")) control.fault = Number(url.searchParams.get("fault"));
+      if (url.searchParams.has("result_failures")) control.resultFailures = Number(url.searchParams.get("result_failures"));
+      if (url.searchParams.has("account_id")) control.accountId = url.searchParams.get("account_id");
       for (const field of ["delivery_root", "socket_path", "app_user", "delivery_mode"])
         if (url.searchParams.has(field)) control[field] = url.searchParams.get(field);
       controls.set(instance, control);
       const event = url.searchParams.get("event");
       if (event) for (const socket of instanceSockets.get(instance) || []) socket.send(JSON.stringify({
         event, event_id: "controlled-" + control.revision, credential_mode: "alternating_rotation",
-        credential_key: "db", revision: control.revision, account_id: "account",
+        credential_key: "db", revision: control.revision, account_id: control.accountId || "account",
+        account_revision: control.revision,
       }));
       response.end("{}");
       return;
@@ -239,7 +242,7 @@ async function startServer() {
               },
             },
             account: {
-              id: "account",
+              id: data.instance_id.startsWith("managed-") ? data.account_id || "account" : "account",
               name: "db-user",
               username: "app",
               secret_type: "password",
@@ -329,7 +332,12 @@ async function startServer() {
         assert.ok(["success", "failed"].includes(data.status));
         assert.equal(data.key, undefined);
         assert.equal(data.revision, undefined);
-        result = {accepted: true, status: data.status};
+        const control = controls.get(data.instance_id);
+        if (control?.resultFailures > 0) {
+          control.resultFailures--;
+          response.statusCode = 503;
+          result = {code: "unavailable"};
+        } else result = {accepted: true, status: data.status};
       } else if (route === "/confirm/") {
         assert.equal(data.account_id, "account");
         assert.equal(data.revision, 2);
@@ -408,24 +416,27 @@ async function startServer() {
     connections.set(instance, count);
     // A controlled Agent reconnect observes the current revision; reconnecting
     // alone must not advertise a revision that the HTTP fixture cannot serve.
-    const snapshotRevision = instance.startsWith("agent-native-")
+    const managed = instance.startsWith("managed-");
+    const snapshotRevision = instance.startsWith("agent-native-") || managed
       ? controls.get(instance)?.revision || 2 : count + 1;
     socket.send(JSON.stringify({ event: "pong" }));
     socket.send(
       JSON.stringify({
         event: "snapshot",
-        credentials: [{ key: "db", credential_mode: "alternating_rotation", revision: snapshotRevision }],
+        credentials: [{ key: "db", credential_mode: "alternating_rotation", revision: snapshotRevision,
+          ...(managed ? {event_id: "managed-" + snapshotRevision, account_id: controls.get(instance)?.accountId || "account", account_revision: snapshotRevision} : {}) }],
       }),
     );
     if (instance.startsWith("retry-")) return;
     socket.send(
       JSON.stringify({
         event: "credential.updated",
-        event_id: "updated-" + count,
+        event_id: managed ? "managed-" + snapshotRevision : "updated-" + count,
         credential_key: "db",
         credential_mode: "alternating_rotation",
         account_id: "account",
         revision: 2,
+        ...(managed ? {account_id: controls.get(instance)?.accountId || "account", revision: snapshotRevision, account_revision: snapshotRevision} : {}),
       }),
     );
     socket.send(

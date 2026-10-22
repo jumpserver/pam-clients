@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-Récupérez le compte via `account_id`. Validez et appliquez le changement avant de signaler `success` ou `failed` avec `event_id`. Réception et récupération ne prouvent pas l’application. Les événements et instantanés contiennent `event_id`, `account_id` et `account_revision` ; vérifiez la version. Réservez les commandes avec `running` et rendez les traitements idempotents.
+Implémentez le callback de changement de compte puis démarrez l’écoute gérée. Le SDK traite les instantanés, la lecture en temps réel, la validation du compte et de sa version, les tentatives, les commandes et les résultats. Ne retournez qu’après validation de la connexion réelle, bascule du pool et fermeture des anciennes connexions. Python et Node.js utilisent des sous-classes, Go OnAccountChanged et Java AccountEventListener. L’exemple échoue tant que la bascule n’est pas implémentée.
 
 ## Prérequis
 
@@ -207,7 +207,7 @@ Récupérez le compte via `account_id`. Validez et appliquez le changement avant
 ## Méthodes courantes
 
 - `getApplication({signal}) / getClientInfo({signal})`
-- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
 - `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
 - `listAccounts({search, signal})`
 - `listAccountsPage({limit, offset, search, signal})`
@@ -228,8 +228,8 @@ Récupérez le compte via `account_id`. Validez et appliquez le changement avant
 Signalez un instantané complet de l’état et des ID des comptes utilisés. États : `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Une liste vide efface les usages précédents. Appelez lors des changements d’état ou depuis le heartbeat de l’application. Python, Java et Node.js renvoient false en cas d’erreur réseau/API ; Go propose `TryReportStatus`. Les variantes strictes exposent les erreurs. Les arguments invalides sont rejetés. Le délai HTTP configuré s’applique. Le rapport ne récupère pas de secrets, ne confirme pas de rotation et n’invalide pas le cache. N’incluez ni secrets ni messages d’exception dans `error_code`. ClientInfo fournit le dernier rapport et sa date.
 
 ```javascript
-const accepted = await client.reportStatus({status: 'running', accountId: account.id})
-await client.reportStatus({status: 'stopped'})
+const accepted = await client.reportAccounts([account.id])
+await client.reportAccounts([])
 ```
 
 

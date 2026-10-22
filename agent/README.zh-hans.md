@@ -70,9 +70,24 @@ Agent 将声明账号与当前账号的映射保存在已有的 `state_file` 的
 curl --unix-socket /run/jms-pam-agent/agent.sock http://localhost/v1/usage
 ```
 
+
+应用也可显式声明自己当前使用的账号，不需要取密或确认事件：
+
+```bash
+jms-pam-agent report_accounts '<account-id>' --socket /run/jms-pam-agent/agent.sock
+# 不传账号会清除应用的显式声明，本机 rules 的声明仍保留。
+jms-pam-agent report_accounts --socket /run/jms-pam-agent/agent.sock
+curl --unix-socket /run/jms-pam-agent/agent.sock -H 'Content-Type: application/json' \
+  -d '{"account_ids":["<account-id>"]}' http://localhost/v1/usage
+```
+
+每次调用替换应用的完整显式使用列表，服务端授权核对成功后存入原有私有状态文件；重启后恢复，并与本机规则声明合并上报。该方法不扩大授权或交付范围，也不确认轮换。
+
 ## 本机配置
 
 从应用接入向导下载配置，安装时指定稳定的实例 ID。通常只需编辑 `rules`：一个规则声明业务实际使用的账号，以及如何更新配置、让服务重新读取配置、验证运行中的连接。Core 不能通过事件修改本机脚本和目标路径。
+
+向导可直接选择“本地取密与凭据交付”“更新业务配置”或“A/B 账号轮换”。更新配置时选择已授权账号、业务文件、用户名和密码字段，以及 systemd 动作或本机脚本，即可生成完整 `rules`。轮换还需填写业务连接验证脚本，成功后才确认事件。脚本须预先部署在应用主机上；未绑定通知订阅或轮换策略时，不会主动同步凭据。
 
 ```json
 {

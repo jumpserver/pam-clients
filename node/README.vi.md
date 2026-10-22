@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng thay đổi trước khi báo `success` hoặc `failed` qua `event_id`. Nhận sự kiện hoặc lấy mật khẩu không có nghĩa là áp dụng thành công. Sự kiện và snapshot có `event_id`, `account_id`, `account_revision`; hãy kiểm tra phiên bản. Nhận lệnh bằng `running` và xử lý lặp lại an toàn.
+Triển khai hàm xử lý thay đổi tài khoản rồi bắt đầu bộ lắng nghe được quản lý. SDK xử lý ảnh chụp trạng thái, lấy dữ liệu trực tiếp, kiểm tra tài khoản và phiên bản, thử lại, nhận quyền thực thi lệnh và báo cáo kết quả. Chỉ trả về sau khi kiểm tra kết nối thật, chuyển nhóm kết nối và giải phóng kết nối cũ. Python và Node.js dùng lớp con, Go dùng OnAccountChanged, Java dùng AccountEventListener. Ví dụ sẽ thất bại cho đến khi triển khai chuyển đổi thực tế.
 
 ## Yêu cầu môi trường
 
@@ -207,7 +207,7 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 ## Phương thức thông dụng
 
 - `getApplication({signal}) / getClientInfo({signal})`
-- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
 - `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
 - `listAccounts({search, signal})`
 - `listAccountsPage({limit, offset, search, signal})`
@@ -228,8 +228,8 @@ Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng tha
 Báo cáo ảnh chụp đầy đủ về trạng thái và ID tài khoản đang sử dụng. Trạng thái: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Danh sách rỗng xóa thông tin sử dụng trước đó. Gọi khi trạng thái thay đổi hoặc từ heartbeat của ứng dụng. Python, Java và Node.js trả về false khi lỗi mạng/API; Go cung cấp `TryReportStatus`. Biến thể nghiêm ngặt cung cấp chi tiết lỗi. Tham số không hợp lệ bị từ chối. Lời gọi dùng thời gian chờ HTTP đã cấu hình. Báo cáo không lấy bí mật, xác nhận luân chuyển hoặc xóa bộ nhớ đệm. Không đặt bí mật hay thông báo ngoại lệ trong `error_code`. ClientInfo trả về báo cáo cuối và thời gian.
 
 ```javascript
-const accepted = await client.reportStatus({status: 'running', accountId: account.id})
-await client.reportStatus({status: 'stopped'})
+const accepted = await client.reportAccounts([account.id])
+await client.reportAccounts([])
 ```
 
 

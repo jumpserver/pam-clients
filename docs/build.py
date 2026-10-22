@@ -26,7 +26,7 @@ EXAMPLES = {
 NATIVE_METHODS = {
     "go": [
         "GetApplication(ctx) / GetClientInfo(ctx)",
-        "TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)",
+        "ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)",
         "ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})",
         "ListAccounts(ctx, search)",
         "ListAccountsPage(ctx, limit, offset, search)",
@@ -45,7 +45,7 @@ NATIVE_METHODS = {
     ],
     "java": [
         "getApplication() / getClientInfo()",
-        "reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)",
+        "reportAccounts(accountIds) / reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)",
         "listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)",
         "listAccounts() / listAccounts(search)",
         "listAccountsPage(limit, offset, search)",
@@ -64,7 +64,7 @@ NATIVE_METHODS = {
     ],
     "node": [
         "getApplication({signal}) / getClientInfo({signal})",
-        "reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})",
+        "reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})",
         "listPolicies({search, signal}) / getPolicy({key, policyId, signal})",
         "listAccounts({search, signal})",
         "listAccountsPage({limit, offset, search, signal})",
@@ -139,10 +139,10 @@ APPLICATION_INFO_EXAMPLES = {
 
 
 STATUS_EXAMPLES = {
-    'python': ('python', 'client.report_status("running", account_id=account.id)\nclient.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")\nclient.report_status("stopped")'),
-    'go': ('go', 'ok := client.TryReportStatus(ctx, pam.ApplicationStatus{\n    Status: "running", AccountIDs: []string{account.ID},\n})\n// ReportStatus(ctx, report) returns an error when details are needed.'),
-    'java': ('java', 'boolean accepted = client.reportStatus("running", account.getId());\nclient.reportStatus("stopped", java.util.Collections.emptyList());'),
-    'node': ('javascript', "const accepted = await client.reportStatus({status: 'running', accountId: account.id})\nawait client.reportStatus({status: 'stopped'})"),
+    'python': ('python', 'client.report_accounts([account.id])\nclient.report_accounts([])  # Clear the complete explicit usage snapshot.\nclient.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")'),
+    'go': ('go', 'err := client.ReportAccounts(ctx, []string{account.ID})\n// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.\n// ReportStatus(ctx, report) also reports application health.'),
+    'java': ('java', 'boolean accepted = client.reportAccounts(java.util.List.of(account.getId()));\nclient.reportAccounts(java.util.Collections.emptyList());'),
+    'node': ('javascript', "const accepted = await client.reportAccounts([account.id])\nawait client.reportAccounts([])"),
 }
 
 

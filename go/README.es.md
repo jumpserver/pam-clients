@@ -1,6 +1,6 @@
 # JumpServer PAM Go SDK
 
-Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
+Implementa el callback de cambio de cuenta e inicia el listener administrado. El SDK gestiona instantáneas, consulta en tiempo real, validación de cuenta y versión, reintentos, reclamación de comandos y resultados. Retorna solo tras verificar la conexión real, cambiar el pool y cerrar conexiones antiguas. Python y Node.js usan subclases, Go usa OnAccountChanged y Java AccountEventListener. El ejemplo falla hasta implementar el cambio real.
 
 ## Requisitos
 
@@ -252,7 +252,7 @@ Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de inf
 ## Métodos habituales
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
-- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
 - `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
 - `ListAccounts(ctx, search)`
 - `ListAccountsPage(ctx, limit, offset, search)`
@@ -273,10 +273,9 @@ Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de inf
 Informe una instantánea completa del estado y los IDs de las cuentas en uso. Estados: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Una lista vacía borra el uso anterior. Llame al cambiar el estado o desde el heartbeat de la aplicación. Python, Java y Node.js devuelven false ante errores de red/API; Go ofrece `TryReportStatus`. Las variantes estrictas muestran los errores. Los argumentos inválidos se rechazan. Se utiliza el timeout HTTP configurado. El informe no obtiene secretos, confirma rotaciones ni invalida la caché. No incluya secretos ni mensajes de excepción en `error_code`. ClientInfo devuelve el último informe y su fecha.
 
 ```go
-ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
-    Status: "running", AccountIDs: []string{account.ID},
-})
-// ReportStatus(ctx, report) returns an error when details are needed.
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
 
 

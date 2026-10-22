@@ -20,6 +20,16 @@ type AccountUsage struct {
 }
 
 func (a *Agent) restoreAccountUsage() error {
+	seen := make(map[string]bool)
+	if len(a.state.ReportedAccounts) > 200 {
+		return errors.New("invalid reported account usage")
+	}
+	for _, id := range a.state.ReportedAccounts {
+		if !validKey(id) || seen[id] {
+			return errors.New("invalid reported account usage")
+		}
+		seen[id] = true
+	}
 	retained := a.state.AccountUsage
 	a.state.AccountUsage = make(map[string]AccountUsage)
 	for _, rule := range a.Config.Rules {
@@ -101,6 +111,9 @@ func (a *Agent) AccountUsageSnapshot() pam.ApplicationStatus {
 		}
 	}
 	used := make(map[string]bool)
+	for _, id := range a.state.ReportedAccounts {
+		used[id] = true
+	}
 	for _, usage := range a.state.AccountUsage {
 		if usage.AccountID != "" {
 			used[usage.AccountID] = true
@@ -111,6 +124,52 @@ func (a *Agent) AccountUsageSnapshot() pam.ApplicationStatus {
 	}
 	sort.Strings(report.AccountIDs)
 	return report
+}
+
+// ReportAccounts replaces the application's explicit usage declaration. Rules
+// remain administrator-owned and their account use is reported independently.
+// This records no secrets and never confirms an event or expands delivery scope.
+func (a *Agent) ReportAccounts(ctx context.Context, accountIDs []string) error {
+	if len(accountIDs) > 200 {
+		return errors.New("too many reported accounts")
+	}
+	seen := make(map[string]bool)
+	for _, id := range accountIDs {
+		if !validKey(id) || seen[id] {
+			return errors.New("invalid reported accounts")
+		}
+		seen[id] = true
+	}
+	accounts, err := a.remote.ListAuthorizedAccounts(ctx)
+	if err != nil {
+		return errors.New("cannot verify account authorization")
+	}
+	authorized := make(map[string]bool)
+	for _, account := range accounts {
+		authorized[account.ID] = true
+	}
+	for _, id := range accountIDs {
+		if !authorized[id] {
+			return errors.New("reported account is not authorized")
+		}
+	}
+	a.mu.Lock()
+	if a.state.Denied {
+		a.mu.Unlock()
+		return errors.New("agent access denied")
+	}
+	previous := a.state.ReportedAccounts
+	a.state.ReportedAccounts = append([]string(nil), accountIDs...)
+	sort.Strings(a.state.ReportedAccounts)
+	err = a.persist()
+	if err != nil {
+		a.state.ReportedAccounts = previous
+	}
+	a.mu.Unlock()
+	if err == nil {
+		a.reportAccountUsage(ctx)
+	}
+	return err
 }
 
 func (a *Agent) reportAccountUsage(ctx context.Context) {

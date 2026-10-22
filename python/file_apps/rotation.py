@@ -53,7 +53,7 @@ def handle_event(client, output, event, keys, confirm=False):
                 LOG.info("Removed revoked policy %s", key)
         return False
     else:
-        return event.get("event") == "configuration.updated"
+        return event.get("event") == "application.scope.updated"
     for update in updates:
         if update.get("credential_mode") != KIND:
             continue

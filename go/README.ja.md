@@ -1,6 +1,6 @@
 # JumpServer PAM Go SDK
 
-`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
+以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。
 
 ## 動作要件
 
@@ -252,7 +252,7 @@ func main() {
 ## 主なメソッド
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
-- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
 - `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
 - `ListAccounts(ctx, search)`
 - `ListAccountsPage(ctx, limit, offset, search)`
@@ -273,10 +273,9 @@ func main() {
 実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
 
 ```go
-ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
-    Status: "running", AccountIDs: []string{account.ID},
-})
-// ReportStatus(ctx, report) returns an error when details are needed.
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
 
 

@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
+实现下面的账号变更回调并启动托管监听即可。SDK 负责快照、实时取密、账号与版本校验、重试、指令认领和结果回报。业务回调必须完成真实连接验证、连接池切换和旧连接释放后再返回。Python、Node.js 使用子类钩子，Go 使用 OnAccountChanged，Java 使用 AccountEventListener。未实现业务切换时，示例会明确失败。
 
 ## 环境要求
 
@@ -207,7 +207,7 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 ## 常用方法
 
 - `getApplication({signal}) / getClientInfo({signal})`
-- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
 - `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
 - `listAccounts({search, signal})`
 - `listAccountsPage({limit, offset, search, signal})`
@@ -228,8 +228,8 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 上报应用运行状态和当前使用的账号 ID，支持 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次上报都是完整快照，空账号列表会清除此前使用记录。由应用在状态变化或自己的心跳中调用，不会自动启动后台上报。Python、Java、Node.js 遇到网络、API 错误或旧 Core 不支持接口时默认返回 false；Go 使用 `TryReportStatus` 获得相同行为。严格调用方式可以获取具体错误，参数错误仍会明确提示。调用遵循配置的 HTTP 超时，请放在不影响业务响应的执行路径。上报不会取密、确认轮换或清空已有凭据缓存。`error_code` 只传机器可读错误码，不要传密码或异常原文。`get_client_info` / `GetClientInfo` / `getClientInfo` 可以读取最后一次上报及其时间。
 
 ```javascript
-const accepted = await client.reportStatus({status: 'running', accountId: account.id})
-await client.reportStatus({status: 'stopped'})
+const accepted = await client.reportAccounts([account.id])
+await client.reportAccounts([])
 ```
 
 

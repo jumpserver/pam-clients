@@ -231,11 +231,11 @@ class Client:
 
     def _reconcile_latest_credentials(self, event):
         name = event.get("event")
-        if name not in {"snapshot", "credential.revoked", "configuration.updated"}:
+        if name not in {"snapshot", "credential.revoked", "application.scope.updated"}:
             return
         with self._credentials_lock:
             self._credential_generation += 1
-            if name == "configuration.updated":
+            if name == "application.scope.updated":
                 # Push snapshots cannot prove the full pull authorization scope.
                 self._latest_credentials = {selector: value for selector, value in self._latest_credentials.items() if selector[0] != "account_id"}
                 return
@@ -337,6 +337,10 @@ class Client:
             if raise_on_error:
                 raise
             return False
+
+    def report_accounts(self, account_ids: Iterable[str], *, raise_on_error: bool = False) -> bool:
+        """Declare the complete set of accounts in use; this never confirms an event."""
+        return self.report_status("running", account_ids=account_ids, raise_on_error=raise_on_error)
 
     def list_policies(self, *, search: str = "") -> list[CredentialPolicy]:
         """Read all visible bound policies, including disabled ones, without secrets."""
@@ -613,6 +617,26 @@ class Client:
         Failures retry after fetching the current credential again. For rotation,
         confirm_credential must be called explicitly after a successful switch.
         """
+
+    def _uses_account_events(self) -> bool:
+        return type(self).on_account_changed is not Client.on_account_changed
+
+    def on_account_changed(self, account: Account) -> None:
+        """Validate, switch connections and release old connections before returning.
+
+        Override to opt into managed account events. The SDK fetches the exact
+        event version, retries failed updates, and reports success only after this
+        callback returns. Callbacks must be idempotent across process restarts.
+        """
+        raise NotImplementedError("Implement application account switching")
+
+    def on_account_revoked(self, account_id: str) -> None:
+        """Release connections for an account removed from the push scope."""
+        raise NotImplementedError("Implement revoked account cleanup")
+
+    def on_application_restart(self) -> None:
+        """Optional command hook; return only after restart and health verification."""
+        raise NotImplementedError("Application restart is not configured")
 
     def on_credential_revoked(self, event: dict[str, Any]) -> None:
         """Override to stop using revoked credentials and release connections."""

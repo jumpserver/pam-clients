@@ -12,22 +12,31 @@ import (
 // EventHandlers run serially, independently of the WebSocket reader. Credential
 // handlers must be idempotent. Only the application may confirm a successful switch.
 type EventHandlers struct {
-	OnEvent             func(context.Context, Event) error
-	OnCredentialChanged func(context.Context, Credential) error
-	OnCredentialRevoked func(context.Context, Event) error
-	OnError             func(context.Context, error, *Event)
+	// OnAccountChanged opts into managed account events. Return only after
+	// connection validation, pool switching and old connection cleanup.
+	OnAccountChanged     func(context.Context, Account) error
+	OnAccountRevoked     func(context.Context, string) error
+	OnApplicationRestart func(context.Context) error
+	OnEvent              func(context.Context, Event) error
+	OnCredentialChanged  func(context.Context, Credential) error
+	OnCredentialRevoked  func(context.Context, Event) error
+	OnError              func(context.Context, error, *Event)
 }
 
 // EventWatcher owns one managed event listener. Stop requests cancellation;
 // Wait waits for handlers and the reader. Do not call Wait from a handler.
 type EventWatcher struct {
-	client   *Client
-	ctx      context.Context
-	cancel   context.CancelFunc
-	handlers EventHandlers
-	done     chan struct{}
-	err      error
-	pending  map[CredentialSelector]pendingCredential
+	client        *Client
+	ctx           context.Context
+	cancel        context.CancelFunc
+	handlers      EventHandlers
+	done          chan struct{}
+	err           error
+	pending       map[CredentialSelector]pendingCredential
+	appliedEvents map[string]accountEventResult
+	appliedOrder  []string
+	usedAccounts  map[CredentialSelector]string
+	accountScope  map[CredentialSelector]bool
 }
 
 type pendingCredential struct {
@@ -55,7 +64,8 @@ func (c *Client) StartEvents(ctx context.Context, handlers EventHandlers) (*Even
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	w := &EventWatcher{client: c, ctx: ctx, cancel: cancel, handlers: handlers,
-		done: make(chan struct{}), pending: make(map[CredentialSelector]pendingCredential)}
+		done: make(chan struct{}), pending: make(map[CredentialSelector]pendingCredential),
+		appliedEvents: make(map[string]accountEventResult), usedAccounts: make(map[CredentialSelector]string)}
 	c.watcher = w
 	go w.run()
 	return w, nil
@@ -120,6 +130,10 @@ func eventSelector(event Event) (CredentialSelector, bool) {
 }
 
 func (w *EventWatcher) refresh(update, event Event, delay time.Duration) {
+	if w.handlers.OnAccountChanged != nil {
+		w.refreshAccount(update, event, delay)
+		return
+	}
 	selector, valid := eventSelector(update)
 	if !valid || w.ctx.Err() != nil {
 		return
@@ -153,7 +167,7 @@ func (w *EventWatcher) refresh(update, event Event, delay time.Duration) {
 }
 
 func (w *EventWatcher) dispatch(event Event) {
-	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "configuration.updated" {
+	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "application.scope.updated" {
 		clear(w.pending)
 	}
 	if w.handlers.OnEvent != nil {
@@ -166,18 +180,47 @@ func (w *EventWatcher) dispatch(event Event) {
 	}
 	switch event.Event {
 	case "snapshot":
+		if w.handlers.OnAccountChanged != nil {
+			retained := make(map[CredentialSelector]bool)
+			for _, update := range event.Credentials {
+				if selector, ok := accountEventSelector(update); ok {
+					retained[selector] = true
+				}
+			}
+			w.accountScope = retained
+			w.revokeAccounts(retained, event)
+		}
 		for _, update := range event.Credentials {
 			w.refresh(update, event, 0)
 		}
 	case "credential.updated":
-		if event.CommandID == "" {
+		if event.CommandID == "" || w.handlers.OnAccountChanged != nil {
 			w.refresh(event, event, 0)
 		}
 	case "credential.revoked":
+		if w.handlers.OnAccountChanged != nil {
+			retained := make(map[CredentialSelector]bool)
+			key := event.CredentialKey
+			if key == "" {
+				key = event.Key
+			}
+			delete(w.accountScope, CredentialSelector{AccountID: event.AccountID})
+			delete(w.accountScope, CredentialSelector{Key: "policy:" + key})
+			for selector, id := range w.usedAccounts {
+				if id != event.AccountID && selector.Key != "policy:"+key {
+					retained[selector] = true
+				}
+			}
+			w.revokeAccounts(retained, event)
+		}
 		if w.handlers.OnCredentialRevoked != nil {
 			if err := invokeEventHook(func() error { return w.handlers.OnCredentialRevoked(w.ctx, event) }); err != nil {
 				w.report(err, &event)
 			}
+		}
+	case "credential.switch.requested", "application.restart.requested":
+		if w.handlers.OnAccountChanged != nil && event.CommandID != "" {
+			w.refresh(event, event, 0)
 		}
 	}
 }

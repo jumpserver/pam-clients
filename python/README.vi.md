@@ -224,69 +224,26 @@ from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-def apply_account(account):
-    # Validate a new connection, switch the pool, then release old connections.
-    # Never log account.secret or authentication headers.
-    raise NotImplementedError("Implement the application's account update first")
-
-
-def restart_application():
-    raise NotImplementedError("Implement application restart and health check first")
+if not hasattr(Client, 'on_account_changed'):
+    raise RuntimeError('Upgrade jms-pam to a version with managed account events')
 
 
 class ApplicationClient(Client):
-    def apply_event(self, event):
-        if event.get("event") == "application.restart.requested":
-            restart_application()
-            return
-        account = self.get_account(
-            account_id=event["account_id"], allow_local_fallback=False,
-        )
-        if account.revision != event["account_revision"]:
-            raise ValueError("The event account version is superseded")
-        apply_account(account)
+    def on_account_changed(self, account):
+        # Validate a new connection, switch the pool, then release old connections.
+        # Return only after the application uses the account. Never log secrets.
+        raise NotImplementedError("Implement application account switching")
 
-    def handle_event(self, event):
-        event_id = event["event_id"]
-        if event.get("command_id"):
-            claim = self.report_application_command_result(
-                command_id=event["command_id"], status="running",
-            )
-            if not claim.accepted:
-                return
-        try:
-            self.apply_event(event)
-        except Exception:
-            self.confirm_event(
-                event_id=event_id, status="failed", error_code="application_failed",
-            )
-            raise
-        # A fetch or delivery receipt never confirms application success.
-        self.confirm_event(event_id=event_id)
-
-    def run(self):
-        for event in self.watch_credential_events():
-            if event.get("command_id"):
-                updates = [event]
-            elif event.get("event") == "snapshot":
-                updates = event.get("credentials", [])
-                # Release application connections absent from the new scope.
-            elif event.get("event") == "credential.updated":
-                updates = [event]
-            elif event.get("event") == "credential.revoked":
-                # Release connections for event["account_id"].
-                continue
-            else:
-                continue
-            for update in updates:
-                try:
-                    self.handle_event(update)
-                except Exception as error:
-                    self.on_event_error(error, update)
+    def on_account_revoked(self, account_id):
+        # Close the application connections for this account.
+        raise NotImplementedError("Implement revoked account cleanup")
 
 
 with ApplicationClient(instance_id=instance_id, **client_options) as client:
-    client.run()
+    # SDK handles snapshots, fresh fetches, versions, retries and event results.
+    # Applied accounts are reported automatically; pull-only code can use:
+    # client.report_accounts([account_id])  # [] clears explicit SDK usage.
+    client.watch_events()
 ```
 <!-- python-events-example:end -->
 
@@ -312,9 +269,9 @@ API key cũ được giữ để tương thích. Tích hợp mới dùng `get_ac
 Báo cáo ảnh chụp đầy đủ về trạng thái và ID tài khoản đang sử dụng. Trạng thái: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Danh sách rỗng xóa thông tin sử dụng trước đó. Gọi khi trạng thái thay đổi hoặc từ heartbeat của ứng dụng. Python, Java và Node.js trả về false khi lỗi mạng/API; Go cung cấp `TryReportStatus`. Biến thể nghiêm ngặt cung cấp chi tiết lỗi. Tham số không hợp lệ bị từ chối. Lời gọi dùng thời gian chờ HTTP đã cấu hình. Báo cáo không lấy bí mật, xác nhận luân chuyển hoặc xóa bộ nhớ đệm. Không đặt bí mật hay thông báo ngoại lệ trong `error_code`. ClientInfo trả về báo cáo cuối và thời gian.
 
 ```python
-client.report_status("running", account_id=account.id)
+client.report_accounts([account.id])
+client.report_accounts([])  # Clear the complete explicit usage snapshot.
 client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
-client.report_status("stopped")
 ```
 
 

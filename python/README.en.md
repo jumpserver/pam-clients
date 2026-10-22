@@ -25,7 +25,7 @@ with Client(instance_id=instance_id, **client_options) as client:
 
 `get_account` returns the account directly, including the secret, asset and cache provenance.
 
-Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
+Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.
 
 The original request-object API under `jms_pam.credential.v1` remains available for compatibility and emits `DeprecationWarning`. New integrations use the `Client` API shown here. Regenerate SDK access configuration when migrating to it.
 
@@ -284,69 +284,26 @@ from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-def apply_account(account):
-    # Validate a new connection, switch the pool, then release old connections.
-    # Never log account.secret or authentication headers.
-    raise NotImplementedError("Implement the application's account update first")
-
-
-def restart_application():
-    raise NotImplementedError("Implement application restart and health check first")
+if not hasattr(Client, 'on_account_changed'):
+    raise RuntimeError('Upgrade jms-pam to a version with managed account events')
 
 
 class ApplicationClient(Client):
-    def apply_event(self, event):
-        if event.get("event") == "application.restart.requested":
-            restart_application()
-            return
-        account = self.get_account(
-            account_id=event["account_id"], allow_local_fallback=False,
-        )
-        if account.revision != event["account_revision"]:
-            raise ValueError("The event account version is superseded")
-        apply_account(account)
+    def on_account_changed(self, account):
+        # Validate a new connection, switch the pool, then release old connections.
+        # Return only after the application uses the account. Never log secrets.
+        raise NotImplementedError("Implement application account switching")
 
-    def handle_event(self, event):
-        event_id = event["event_id"]
-        if event.get("command_id"):
-            claim = self.report_application_command_result(
-                command_id=event["command_id"], status="running",
-            )
-            if not claim.accepted:
-                return
-        try:
-            self.apply_event(event)
-        except Exception:
-            self.confirm_event(
-                event_id=event_id, status="failed", error_code="application_failed",
-            )
-            raise
-        # A fetch or delivery receipt never confirms application success.
-        self.confirm_event(event_id=event_id)
-
-    def run(self):
-        for event in self.watch_credential_events():
-            if event.get("command_id"):
-                updates = [event]
-            elif event.get("event") == "snapshot":
-                updates = event.get("credentials", [])
-                # Release application connections absent from the new scope.
-            elif event.get("event") == "credential.updated":
-                updates = [event]
-            elif event.get("event") == "credential.revoked":
-                # Release connections for event["account_id"].
-                continue
-            else:
-                continue
-            for update in updates:
-                try:
-                    self.handle_event(update)
-                except Exception as error:
-                    self.on_event_error(error, update)
+    def on_account_revoked(self, account_id):
+        # Close the application connections for this account.
+        raise NotImplementedError("Implement revoked account cleanup")
 
 
 with ApplicationClient(instance_id=instance_id, **client_options) as client:
-    client.run()
+    # SDK handles snapshots, fresh fetches, versions, retries and event results.
+    # Applied accounts are reported automatically; pull-only code can use:
+    # client.report_accounts([account_id])  # [] clears explicit SDK usage.
+    client.watch_events()
 ```
 <!-- python-events-example:end -->
 
@@ -372,9 +329,9 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
 
 ```python
-client.report_status("running", account_id=account.id)
+client.report_accounts([account.id])
+client.report_accounts([])  # Clear the complete explicit usage snapshot.
 client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
-client.report_status("stopped")
 ```
 
 

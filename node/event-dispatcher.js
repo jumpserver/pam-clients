@@ -57,10 +57,15 @@ class EventSubscription {
   #queue = new EventQueue()
   #pending = new Map()
   #readerError
+  #accountEvents
+  #applied = new Map()
+  #used = new Map()
+  #scope
   running = true
 
   constructor(client, { signal, clientSignal }) {
     this.#client = client
+    this.#accountEvents = client._usesAccountEvents?.() === true
     this.#signal = AbortSignal.any([this.#stop.signal, clientSignal, ...(signal ? [signal] : [])])
     this.done = this.#run()
     // A background failure remains observable via done without becoming an
@@ -116,6 +121,7 @@ class EventSubscription {
 
   async #refresh(update, event, delay = 0) {
     if (this.#signal.aborted) return
+    if (this.#accountEvents) return this.#refreshAccount(update, event, delay)
     const selector = this.#selector(update)
     if (!selector) return
     const target = selector.accountId ? `account:${selector.accountId}` : `key:${selector.key}`
@@ -137,8 +143,89 @@ class EventSubscription {
     }
   }
 
+  #accountSelector(update) {
+    if (update.commandId) return ['credential.updated', 'credential.switch.requested', 'application.restart.requested'].includes(update.event)
+      ? `command:${update.commandId}` : undefined
+    if (update.credentialMode === 'alternating_rotation') {
+      const key = update.credentialKey || update.key
+      return key ? `policy:${key}` : undefined
+    }
+    if (update.credentialMode === 'subscription' && update.accountId) return `account:${update.accountId}`
+  }
+
+  #remember(eventId, result) {
+    this.#applied.set(eventId, result)
+    if (this.#applied.size > 256) this.#applied.delete(this.#applied.keys().next().value)
+  }
+
+  async #reportUsage() {
+    try { await this.#client.reportAccounts([...new Set(this.#used.values())].sort(), { signal: this.#signal }) }
+    catch { /* Telemetry must not repeat or fail a business action. */ }
+  }
+
+  async #refreshAccount(update, event, delay = 0) {
+    const target = this.#accountSelector(update)
+    if (!target || !update.eventId) return
+    const usageTarget = this.#accountSelector({ ...update, commandId: undefined })
+    if (update.event !== 'application.restart.requested' && this.#scope && !this.#scope.has(usageTarget)) return
+    const previous = this.#pending.get(target)
+    if (Number.isSafeInteger(previous?.update.revision) && previous.update.revision > update.revision) return
+    try {
+      let result = this.#applied.get(update.eventId)
+      if (!result) {
+        if (update.commandId) {
+          const claim = await this.#client.reportApplicationCommandResult({ commandId: update.commandId, status: 'running', signal: this.#signal })
+          if (!claim.accepted) { this.#pending.delete(target); return }
+        }
+        try {
+          if (update.event === 'application.restart.requested')
+            await activeHook.run(this, () => this.#client.onApplicationRestart({ signal: this.#signal }))
+          else {
+            if (!['subscription', 'alternating_rotation'].includes(update.credentialMode)) throw new Error('Unsupported credential mode')
+            const account = await this.#client.getAccount({ accountId: update.accountId, allowLocalFallback: false, signal: this.#signal })
+            if (account.id !== update.accountId || !Number.isSafeInteger(update.accountRevision) || account.revision !== update.accountRevision)
+              throw new Error('Event account version is superseded')
+            if (this.#signal.aborted) return
+            await this.#call(this.#client.onAccountChanged, account)
+            this.#used.set(this.#accountSelector({ ...update, commandId: undefined }), update.accountId)
+          }
+        } catch (error) {
+          if (update.commandId) this.#remember(update.eventId, { status: 'failed', errorCode: 'application_failed' })
+          else {
+            try { await this.#client.confirmEvent({ eventId: update.eventId, status: 'failed', errorCode: 'application_failed', signal: this.#signal }) }
+            catch { /* Preserve the original business error. */ }
+          }
+          throw error
+        }
+        result = { status: 'success', errorCode: '' }
+        this.#remember(update.eventId, result)
+      }
+      if (this.#signal.aborted) return
+      await this.#client.confirmEvent({ eventId: update.eventId, ...result, signal: this.#signal })
+      this.#pending.delete(target)
+      await this.#reportUsage()
+    } catch (error) {
+      if (this.#signal.aborted) return
+      await this.#report(error, event)
+      delay = Math.min(Math.max(1000, delay * 2), 30000)
+      this.#pending.set(target, { update, event, delay, due: performance.now() + delay })
+    }
+  }
+
+  async #revokeAccounts(retained, event) {
+    for (const [target, accountId] of this.#used) {
+      if (retained.has(target)) continue
+      try {
+        await this.#call(this.#client.onAccountRevoked, accountId)
+        this.#used.delete(target)
+        this.#applied.clear()
+      } catch (error) { await this.#report(error, event) }
+    }
+    await this.#reportUsage()
+  }
+
   async #dispatch(event) {
-    if (['snapshot', 'credential.revoked', 'configuration.updated'].includes(event.event))
+    if (['snapshot', 'credential.revoked', 'application.scope.updated'].includes(event.event))
       this.#pending.clear()
     try {
       await this.#call(this.#client.onEvent, event)
@@ -147,6 +234,10 @@ class EventSubscription {
     }
     if (this.#signal.aborted) return
     if (event.event === 'snapshot') {
+      if (this.#accountEvents) {
+        this.#scope = new Set((event.credentials || []).map(update => this.#accountSelector(update)))
+        await this.#revokeAccounts(this.#scope, event)
+      }
       for (const update of event.credentials || []) {
         try {
           await this.#refresh(update, event)
@@ -154,9 +245,17 @@ class EventSubscription {
           await this.#report(error, event)
         }
       }
+    } else if (this.#accountEvents && event.commandId) {
+      await this.#refresh(event, event)
     } else if (event.event === 'credential.updated' && !event.commandId) {
       await this.#refresh(event, event)
     } else if (event.event === 'credential.revoked') {
+      if (this.#accountEvents) {
+        const key = event.credentialKey || event.key
+        this.#scope?.delete(`policy:${key}`)
+        this.#scope?.delete(`account:${event.accountId}`)
+        await this.#revokeAccounts(new Set([...this.#used].filter(([target, id]) => id !== event.accountId && target !== `policy:${key}`).map(([target]) => target)), event)
+      }
       try {
         await this.#call(this.#client.onCredentialRevoked, event)
       } catch (error) {

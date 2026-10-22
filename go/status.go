@@ -18,6 +18,12 @@ type ApplicationStatus struct {
 
 var statusErrorCode = regexp.MustCompile(`^[A-Za-z0-9_.:-]*$`)
 
+// ReportAccounts declares the complete set of accounts in use. It is telemetry,
+// independent of event receipts and successful rotation confirmation.
+func (c *Client) ReportAccounts(ctx context.Context, accountIDs []string) error {
+	return c.ReportStatus(ctx, ApplicationStatus{Status: "running", AccountIDs: accountIDs})
+}
+
 func (report ApplicationStatus) validate() error {
 	switch report.Status {
 	case "starting", "running", "degraded", "stopping", "stopped", "error":

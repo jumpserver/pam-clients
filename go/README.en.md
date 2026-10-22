@@ -1,6 +1,6 @@
 # JumpServer PAM Go SDK
 
-Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
+Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.
 
 ## Requirements
 
@@ -252,7 +252,7 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 ## Common methods
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
-- `TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
+- `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
 - `ListPolicies(ctx, search) / GetPolicy(ctx, PolicySelector{Key: ...})`
 - `ListAccounts(ctx, search)`
 - `ListAccountsPage(ctx, limit, offset, search)`
@@ -273,10 +273,9 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
 
 ```go
-ok := client.TryReportStatus(ctx, pam.ApplicationStatus{
-    Status: "running", AccountIDs: []string{account.ID},
-})
-// ReportStatus(ctx, report) returns an error when details are needed.
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
 
 

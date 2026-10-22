@@ -1,6 +1,6 @@
 # JumpServer PAM Node.js SDK
 
-`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
+以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。
 
 ## 動作要件
 
@@ -207,7 +207,7 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 ## 主なメソッド
 
 - `getApplication({signal}) / getClientInfo({signal})`
-- `reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
+- `reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
 - `listPolicies({search, signal}) / getPolicy({key, policyId, signal})`
 - `listAccounts({search, signal})`
 - `listAccountsPage({limit, offset, search, signal})`
@@ -228,8 +228,8 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
 
 ```javascript
-const accepted = await client.reportStatus({status: 'running', accountId: account.id})
-await client.reportStatus({status: 'stopped'})
+const accepted = await client.reportAccounts([account.id])
+await client.reportAccounts([])
 ```
 
 

@@ -1,6 +1,6 @@
 # JumpServer PAM Java SDK
 
-`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
+以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。
 
 ## 動作要件
 
@@ -145,48 +145,29 @@ public final class ApplicationInfoDemo {
 ```java
 package org.jumpserver.pam;
 
-import java.util.List;
 import org.jumpserver.pam.Models.Account;
-import org.jumpserver.pam.Models.Event;
 
 public final class EventsDemo {
-  private static void applyAccount(Account account) {
-    throw new UnsupportedOperationException("Implement connection validation, pool switching and old connection cleanup");
-  }
-  private static void applyEvent(Client client, Event event) {
-    if (event.getEvent().equals("application.restart.requested"))
-      throw new UnsupportedOperationException("Implement restart and health check");
-    Account account = client.getAccount(event.getAccountId(), false);
-    if (account.getRevision() != event.getAccountRevision())
-      throw new IllegalArgumentException("Event account version is superseded");
-    applyAccount(account);
-  }
-  private static void handleEvent(Client client, Event event) {
-    if (!event.getCommandId().isEmpty()
-        && !client.reportApplicationCommandResult(event.getCommandId(), "running", null).isAccepted()) return;
-    try { applyEvent(client, event); }
-    catch (RuntimeException error) {
-      client.confirmEvent(event.getEventId(), "failed", "application_failed");
-      throw error;
-    }
-    client.confirmEvent(event.getEventId());
-  }
   public static void main(String[] args) {
     Client.Options options = new Client.Options(System.getenv("JMS_ENDPOINT"), System.getenv("JMS_APP_ID"),
         System.getenv("JMS_APP_SECRET"), System.getenv("JMS_INSTANCE_ID")).orgId(System.getenv("JMS_ORG_ID"));
     try (Client client = new Client(options)) {
       Thread stop = new Thread(client::close, "jms-pam-shutdown");
       Runtime.getRuntime().addShutdownHook(stop);
-      try (EventStream stream = client.watchCredentialEvents()) {
-        for (Event event : stream) {
-          List<Event> updates = !event.getCommandId().isEmpty() || event.getEvent().equals("credential.updated")
-              ? List.of(event) : event.getEvent().equals("snapshot") ? event.getCredentials() : List.of();
-          // Reconcile removed connections on snapshots; release revoked accounts.
-          for (Event update : updates) {
-            try { handleEvent(client, update); }
-            catch (RuntimeException error) { System.err.println(error.getClass().getSimpleName()); }
+      try {
+        // SDK handles snapshots, fresh fetches, versions, retries and event results.
+        // Pull-only code can use client.reportAccounts(List.of(accountId)); List.of() clears usage.
+        client.watchEvents(new AccountEventListener() {
+          public void onAccountChanged(Account account) {
+            // Validate, switch the pool and release old connections before returning.
+            throw new UnsupportedOperationException("Implement application account switching");
           }
-        }
+          public void onAccountRevoked(String accountId) {
+            throw new UnsupportedOperationException("Implement revoked account cleanup");
+          }
+        });
+      } catch (InterruptedException error) {
+        Thread.currentThread().interrupt();
       } finally { Runtime.getRuntime().removeShutdownHook(stop); }
     }
   }
@@ -202,7 +183,7 @@ public final class EventsDemo {
 ## 主なメソッド
 
 - `getApplication() / getClientInfo()`
-- `reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
+- `reportAccounts(accountIds) / reportStatus(status, accountId) / reportStatus(ApplicationStatus) / reportStatusStrict(report)`
 - `listPolicies() / listPolicies(search) / getPolicy(key) / getPolicyById(policyId)`
 - `listAccounts() / listAccounts(search)`
 - `listAccountsPage(limit, offset, search)`
@@ -223,8 +204,8 @@ public final class EventsDemo {
 実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
 
 ```java
-boolean accepted = client.reportStatus("running", account.getId());
-client.reportStatus("stopped", java.util.Collections.emptyList());
+boolean accepted = client.reportAccounts(java.util.List.of(account.getId()));
+client.reportAccounts(java.util.Collections.emptyList());
 ```
 
 

@@ -10,10 +10,59 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	pam "github.com/jumpserver/pam-clients/go"
 )
+
+func TestExplicitAccountUsageIsAuthorizedPersistentAndIndependentOfConfirmation(t *testing.T) {
+	config, remote, service := usageFixture(t)
+	remote.value.Account.ID = "account-b"
+	if err := service.ReportAccounts(context.Background(), []string{"account-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(service.AccountUsageSnapshot().AccountIDs, []string{"account-a", "account-b"}) {
+		t.Fatal("explicit usage replaced administrator-owned rules")
+	}
+	restarted, err := New(config, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(restarted.AccountUsageSnapshot().AccountIDs, []string{"account-a", "account-b"}) {
+		t.Fatal("explicit usage was not restored")
+	}
+	if remote.fetched != 0 || remote.confirmed != 0 {
+		t.Fatal("usage reporting fetched or confirmed credentials")
+	}
+	if err := restarted.ReportAccounts(context.Background(), []string{}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(restarted.AccountUsageSnapshot().AccountIDs, []string{"account-a"}) {
+		t.Fatal("empty declaration did not clear explicit usage")
+	}
+}
+
+func TestExplicitAccountUsageRejectsUnauthorizedAndMalformedReports(t *testing.T) {
+	_, remote, service := usageFixture(t)
+	for _, ids := range [][]string{{"unauthorized"}, {"account-a", "account-a"}, {""}} {
+		if err := service.ReportAccounts(context.Background(), ids); err == nil {
+			t.Fatal("invalid report was accepted")
+		}
+	}
+	for _, body := range []string{`{}`, `{"account_ids":null}`, `{"account_ids":["unauthorized"]}`, `{"account_ids":[]} {}`, `{"account_ids":[],"secret":"unused"}`} {
+		response := httptest.NewRecorder()
+		service.ServeHTTP(response, httptest.NewRequest("POST", "/v1/usage", strings.NewReader(body)))
+		if response.Code != 400 {
+			t.Fatalf("invalid local usage report accepted: %d", response.Code)
+		}
+	}
+	response := httptest.NewRecorder()
+	service.ServeHTTP(response, httptest.NewRequest("POST", "/v1/usage", strings.NewReader(`{"account_ids":["account-a"]}`)))
+	if response.Code != 200 || remote.fetched != 0 || remote.confirmed != 0 {
+		t.Fatal("valid local declaration failed or confirmed a credential")
+	}
+}
 
 func usageFixture(t *testing.T) (Config, *fakeRemote, *Agent) {
 	t.Helper()

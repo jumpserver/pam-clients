@@ -1,5 +1,6 @@
 """Subclass hooks with independent event reading and ordered credential delivery."""
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread, current_thread
@@ -25,6 +26,10 @@ class EventDispatcher:
         self.reader = Thread(target=self._read, name="jms-pam-event-reader")
         self.worker = None
         self.reader_error = None
+        self.account_events = client._uses_account_events() is True
+        self.applied_events = OrderedDict()
+        self.used_accounts = {}
+        self.account_scope = None
 
     def start(self, background: bool) -> None:
         self.background = background
@@ -113,6 +118,8 @@ class EventDispatcher:
     def _refresh(self, update, event, delay=0) -> None:
         if self.stop_event.is_set():
             return
+        if self.account_events:
+            return self._refresh_account(update, event, delay)
         selector = self._selector(update)
         if selector is None:
             return
@@ -145,23 +152,136 @@ class EventDispatcher:
         else:
             self.pending.pop(selector, None)
 
+    @staticmethod
+    def _account_selector(update):
+        if update.get('command_id'):
+            if update.get('event') in ('credential.updated', 'credential.switch.requested', 'application.restart.requested'):
+                return 'command', update['command_id']
+            return None
+        if update.get('credential_mode') == 'alternating_rotation':
+            key = update.get('credential_key') or update.get('key')
+            return ('policy', key) if key else None
+        if update.get('credential_mode') == 'subscription' and update.get('account_id'):
+            return 'account', update['account_id']
+        return None
+
+    def _remember_application(self, event_id, result):
+        self.applied_events[event_id] = result
+        self.applied_events.move_to_end(event_id)
+        if len(self.applied_events) > 256:
+            self.applied_events.popitem(last=False)
+
+    def _report_usage(self):
+        # Usage is telemetry; its failure must never repeat a business action.
+        try:
+            self.client.report_accounts(sorted(set(self.used_accounts.values())))
+        except Exception:
+            pass
+
+    def _refresh_account(self, update, event, delay=0):
+        selector = self._account_selector(update)
+        event_id = update.get('event_id')
+        if selector is None or not isinstance(event_id, str) or not event_id:
+            return
+        usage_selector = self._account_selector({**update, 'command_id': None})
+        if update.get('event') != 'application.restart.requested' and self.account_scope is not None and usage_selector not in self.account_scope:
+            return
+        previous = self.pending.get(selector)
+        if previous and previous.update.get('revision', 0) > update.get('revision', 0):
+            return
+        try:
+            result = self.applied_events.get(event_id)
+            if result is None:
+                if update.get('command_id'):
+                    claim = self.client.report_application_command_result(
+                        command_id=update['command_id'], status='running',
+                    )
+                    if not claim.accepted:
+                        self.pending.pop(selector, None)
+                        return
+                try:
+                    if update.get('event') == 'application.restart.requested':
+                        self.client.on_application_restart()
+                    else:
+                        if update.get('credential_mode') not in ('subscription', 'alternating_rotation'):
+                            raise ValueError('Unsupported credential mode')
+                        account = self.client.get_account(
+                            account_id=update['account_id'], allow_local_fallback=False,
+                        )
+                        if account.id != update['account_id'] or type(update.get('account_revision')) is not int or account.revision != update['account_revision']:
+                            raise ValueError('The event account version is superseded')
+                        if self.stop_event.is_set():
+                            return
+                        self.client.on_account_changed(account)
+                        target = ('policy', update.get('credential_key') or update.get('key')) if update.get('credential_mode') == 'alternating_rotation' else ('account', account.id)
+                        self.used_accounts[target] = account.id
+                except Exception:
+                    if update.get('command_id'):
+                        self._remember_application(event_id, ('failed', 'application_failed'))
+                    else:
+                        try:
+                            self.client.confirm_event(event_id=event_id, status='failed', error_code='application_failed')
+                        except Exception:
+                            pass
+                    raise
+                result = ('success', '')
+                self._remember_application(event_id, result)
+            if self.stop_event.is_set():
+                return
+            self.client.confirm_event(event_id=event_id, status=result[0], error_code=result[1])
+            self.pending.pop(selector, None)
+            self._report_usage()
+        except Exception as error:
+            self._report_error(error, event)
+            delay = min(max(1, delay * 2), 30)
+            self.pending[selector] = PendingCredential(update, event, delay, monotonic() + delay)
+
+    def _revoke_accounts(self, retained):
+        for selector, account_id in list(self.used_accounts.items()):
+            if selector in retained:
+                continue
+            self.client.on_account_revoked(account_id)
+            del self.used_accounts[selector]
+            self.applied_events.clear()
+        self._report_usage()
+
     def _dispatch(self, event) -> None:
         name = event.get("event")
-        if name in {"snapshot", "credential.revoked", "configuration.updated"}:
+        if name in {"snapshot", "credential.revoked", "application.scope.updated"}:
             # The following snapshot supplies the currently authorized scope.
             self.pending.clear()
         self._call(self.client.on_event, event, event)
         if self.stop_event.is_set():
             return
         if name == "snapshot":
+            if self.account_events:
+                self.account_scope = {self._account_selector(item) for item in event.get('credentials', [])}
+                try:
+                    self._revoke_accounts(self.account_scope)
+                except Exception as error:
+                    self._report_error(error, event)
             for update in event.get("credentials", []):
                 try:
                     self._refresh(update, event)
                 except Exception as error:
                     self._report_error(error, event)
+        elif self.account_events and event.get('command_id'):
+            self._refresh(event, event)
         elif name == "credential.updated" and not event.get("command_id"):
             self._refresh(event, event)
         elif name == "credential.revoked":
+            if self.account_events:
+                account_id = event.get('account_id')
+                key = event.get('credential_key') or event.get('key')
+                if self.account_scope is not None:
+                    self.account_scope.discard(('account', account_id))
+                    self.account_scope.discard(('policy', key))
+                retained = {selector for selector, value in self.used_accounts.items()
+                            if value != account_id and selector != ('policy', key)}
+                try:
+                    self._revoke_accounts(retained)
+                except Exception as error:
+                    self._report_error(error, event)
             self._call(self.client.on_credential_revoked, event, event)
 
     def _retry(self) -> None:

@@ -28,6 +28,10 @@ def main():
             env=environment,
             check=True,
         )
+        subprocess.run(
+            [sys.executable, str(CLIENTS / "tests" / "test_python_managed_events.py")],
+            env=environment, check=True,
+        )
         for module in ("go", "agent"):
             subprocess.run(
                 ["go", "test", "-race", "./..."],

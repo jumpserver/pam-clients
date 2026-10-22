@@ -47,6 +47,7 @@ type State struct {
 	Delivered         map[string]int64        `json:"delivered"`
 	Applied           map[string]Applied      `json:"applied"`
 	AccountUsage      map[string]AccountUsage `json:"account_usage"`
+	ReportedAccounts  []string                `json:"reported_accounts,omitempty"`
 	Authorized        map[string]bool         `json:"authorized"`
 	Wanted            map[string]int64        `json:"wanted_revisions"`
 	Commands          map[string]pam.Event    `json:"pending_commands"`
@@ -206,7 +207,7 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 		return errors.Join(a.recordEvent("received", event), a.command(ctx, event))
 	}
 	switch event.Event {
-	case "snapshot", "credential.revoked", "credential.updated", "configuration.updated":
+	case "snapshot", "credential.revoked", "credential.updated", "application.scope.updated":
 	default:
 		return a.recordEvent("received", event)
 	}

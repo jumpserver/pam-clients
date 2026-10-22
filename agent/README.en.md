@@ -93,6 +93,19 @@ Query the local snapshot through the Socket, replacing the path when configured 
 curl --unix-socket /run/jms-pam-agent/agent.sock http://localhost/v1/usage
 ```
 
+
+Applications can explicitly declare their complete account usage without fetching secrets or confirming events:
+
+```bash
+jms-pam-agent report_accounts '<account-id>' --socket /run/jms-pam-agent/agent.sock
+# An empty declaration clears application-reported usage, preserving local rules.
+jms-pam-agent report_accounts --socket /run/jms-pam-agent/agent.sock
+curl --unix-socket /run/jms-pam-agent/agent.sock -H 'Content-Type: application/json' \
+  -d '{"account_ids":["<account-id>"]}' http://localhost/v1/usage
+```
+
+Each call replaces the explicit usage list after checking online application authorization. The existing private state file retains it across restarts. Reports combine these accounts with local rule declarations; they do not expand authorization or delivery scope, and never confirm rotation.
+
 ## Local configuration and update flow
 
 The downloaded bootstrap is already a complete configuration. Keep its identity and delivery fields, then add a rule such as:

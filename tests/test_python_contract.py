@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import unittest
+import time
 from contextlib import closing
 from pathlib import Path
 from threading import Timer
@@ -18,6 +19,38 @@ from jms_pam.models import KnownRevision
 
 @unittest.skipUnless(os.environ.get("JMS_TEST_ENDPOINT"), "Run through tests/run.py")
 class PythonContractTests(unittest.TestCase):
+    def test_managed_account_events_retry_result_and_report_current_rotation_account(self):
+        class ManagedClient(Client):
+            def on_account_changed(self, account):
+                applied.append((account.id, account.revision))
+            def on_account_revoked(self, account_id):
+                pass
+            def on_event_error(self, error, event):
+                pass
+        instance = 'managed-python-result'
+        applied = []
+        endpoint = os.environ['JMS_TEST_ENDPOINT']
+        def control(**values):
+            with urlopen(endpoint.removesuffix('/prefix') + '/__control?' + urlencode({'instance': instance, **values})) as response:
+                self.assertEqual(response.status, 200)
+        def until(check):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if check():
+                    return
+                time.sleep(0.025)
+            self.fail('managed events did not converge')
+        control(result_failures=1)
+        with ManagedClient(endpoint, app_id='contract-app', app_secret='contract-secret',
+                           instance_id=instance, org_id='contract-org') as client:
+            client.start_events()
+            until(lambda: client.get_client_info().application_status is not None
+                  and client.get_client_info().application_status.account_ids == ['account'])
+            self.assertEqual(applied, [('account', 2)])
+            control(revision=3, account_id='backup', event='credential.updated')
+            until(lambda: client.get_client_info().application_status.account_ids == ['backup'])
+            self.assertEqual(applied[-1], ('backup', 3))
+
     def control(self, instance, fault):
         url = os.environ["JMS_TEST_ENDPOINT"].removesuffix("/prefix") + "/__control?" + urlencode({"instance": instance, "fault": fault})
         with urlopen(url) as response:

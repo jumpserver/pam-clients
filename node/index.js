@@ -392,6 +392,10 @@ class Client {
     }
   }
 
+  reportAccounts(accountIds, options = {}) {
+    return this.reportStatus({ ...options, status: 'running', accountIds })
+  }
+
   listPolicies({ search = '', signal } = {}) {
     if (typeof search !== 'string' || [...search].length > 128)
       throw new TypeError('search must be a string of at most 128 characters')
@@ -487,9 +491,9 @@ class Client {
   }
 
   #reconcileLatestCredentials(event) {
-    if (!['snapshot', 'credential.revoked', 'configuration.updated'].includes(event.event)) return
+    if (!['snapshot', 'credential.revoked', 'application.scope.updated'].includes(event.event)) return
     this.#credentialGeneration++
-    if (event.event === 'configuration.updated') {
+    if (event.event === 'application.scope.updated') {
       for (const selector of this.#latestCredentials.keys()) if (selector.startsWith('account:')) this.#latestCredentials.delete(selector)
       return
     }
@@ -668,6 +672,16 @@ class Client {
 
   onEvent(event, options) {}
   onCredentialChanged(credential, options) {}
+
+  _usesAccountEvents() { return this.onAccountChanged !== Client.prototype.onAccountChanged }
+
+  // Return only after validating the connection, switching the pool and releasing old connections.
+  // The managed listener then confirms success; failed updates retry automatically.
+  onAccountChanged(account, options) { throw new Error('Implement application account switching') }
+
+  onAccountRevoked(accountId, options) { throw new Error('Implement revoked account cleanup') }
+
+  onApplicationRestart(options) { throw new Error('Application restart is not configured') }
   onCredentialRevoked(event, options) {}
   onEventError(error, event) {
     console.warn('Credential event handler failed:', error?.constructor?.name || 'Error')

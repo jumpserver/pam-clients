@@ -31,6 +31,36 @@ class EventHandlerTest {
         .orgId("contract-org");
   }
 
+  @Test
+  void managedResultRetryDoesNotRepeatBusinessAndRotationReplacesUsage() throws Exception {
+    String instance = "managed-java-result";
+    control(instance, "result_failures=1");
+    AtomicInteger applied = new AtomicInteger();
+    try (Client sdk = new Client(options(instance));
+        EventSubscription subscription = sdk.startEvents(new AccountEventListener() {
+          public void onAccountChanged(Account account) {
+            assertFalse(account.isFromLocal());
+            applied.incrementAndGet();
+          }
+          public void onAccountRevoked(String id) {}
+          public void onEventError(Exception error, Event event) {}
+        })) {
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (sdk.getClientInfo().getApplicationStatus() == null && System.nanoTime() < deadline)
+        Thread.sleep(25);
+      assertNotNull(sdk.getClientInfo().getApplicationStatus());
+      while (sdk.getClientInfo().getApplicationStatus().getAccountIds().isEmpty() && System.nanoTime() < deadline)
+        Thread.sleep(25);
+      assertEquals(List.of("account"), sdk.getClientInfo().getApplicationStatus().getAccountIds());
+      assertEquals(1, applied.get());
+      control(instance, "revision=3&account_id=backup&event=credential.updated");
+      while (!sdk.getClientInfo().getApplicationStatus().getAccountIds().equals(List.of("backup")) && System.nanoTime() < deadline)
+        Thread.sleep(25);
+      assertEquals(List.of("backup"), sdk.getClientInfo().getApplicationStatus().getAccountIds());
+      assertTrue(applied.get() >= 2);
+    }
+  }
+
   private void control(String instance, String query) throws Exception {
     URI uri =
         URI.create(
@@ -115,7 +145,7 @@ class EventHandlerTest {
                           "{\"event\":\""
                               + (change.equals("revoked")
                                   ? "credential.revoked"
-                                  : "configuration.updated")
+                                  : "application.scope.updated")
                               + "\"}")));
         if (change.equals("retain") || change.equals("configuration")) {
           assertTrue(sdk.getCredential("cache-503").isFromLocal());

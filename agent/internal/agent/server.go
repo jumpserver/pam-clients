@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -67,6 +68,21 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(200, a.Health())
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/usage":
 		reply(200, a.AccountUsageSnapshot())
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/usage":
+		var request struct {
+			AccountIDs []string `json:"account_ids"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&request) != nil || request.AccountIDs == nil || decoder.Decode(new(any)) != io.EOF {
+			reply(400, map[string]string{"code": "invalid_account_usage"})
+			return
+		}
+		if err := a.ReportAccounts(r.Context(), request.AccountIDs); err != nil {
+			reply(400, map[string]string{"code": "account_usage_rejected"})
+			return
+		}
+		reply(200, map[string]bool{"accepted": true})
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts":
 		value, err := a.Accounts(r.Context())
 		if err != nil {

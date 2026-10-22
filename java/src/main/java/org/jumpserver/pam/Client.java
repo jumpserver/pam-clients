@@ -325,6 +325,11 @@ public final class Client implements AutoCloseable {
     return reportStatus(new ApplicationStatus(status, Collections.singletonList(accountId), ""));
   }
 
+  /** Declare all accounts in use. Usage reporting never confirms an event. */
+  public boolean reportAccounts(List<String> accountIds) {
+    return reportStatus("running", accountIds);
+  }
+
   public boolean reportStatus(String status, List<String> accountIds) {
     return reportStatus(new ApplicationStatus(status, accountIds, ""));
   }
@@ -504,10 +509,10 @@ public final class Client implements AutoCloseable {
     String name = event.getEvent();
     if (!name.equals("snapshot")
         && !name.equals("credential.revoked")
-        && !name.equals("configuration.updated")) return;
+        && !name.equals("application.scope.updated")) return;
     synchronized (credentialsLock) {
       credentialGeneration++;
-      if (name.equals("configuration.updated")) {
+      if (name.equals("application.scope.updated")) {
         latestCredentials.keySet().removeIf(selector -> selector.startsWith("account_id:"));
         return;
       }

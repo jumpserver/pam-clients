@@ -121,6 +121,7 @@ export class Client {
   reportStatus(options: RequestOptions & {
     status: ApplicationState; accountId?: string; accountIds?: string[]; errorCode?: string; raiseOnError?: boolean
   }): Promise<boolean>
+  reportAccounts(accountIds: string[], options?: RequestOptions & { raiseOnError?: boolean }): Promise<boolean>
   listPolicies(options?: RequestOptions & { search?: string }): Promise<CredentialPolicy[]>
   getPolicy(options: RequestOptions &
     ({ key: string; policyId?: never } | { key?: never; policyId: string })): Promise<CredentialPolicy>
@@ -141,6 +142,10 @@ export class Client {
   stopEvents(): Promise<void>
   onEvent(event: Event, options: EventHandlerOptions): void | Promise<void>
   onCredentialChanged(credential: Credential, options: EventHandlerOptions): void | Promise<void>
+  /** Opt into managed account events. Return only after the application uses the new connection. */
+  onAccountChanged(account: RetrievedAccount, options: EventHandlerOptions): void | Promise<void>
+  onAccountRevoked(accountId: string, options: EventHandlerOptions): void | Promise<void>
+  onApplicationRestart(options: EventHandlerOptions): void | Promise<void>
   onCredentialRevoked(event: Event, options: EventHandlerOptions): void | Promise<void>
   onEventError(error: unknown, event?: Event): void | Promise<void>
   listApplicationCommands(options?: RequestOptions): Promise<Event[]>

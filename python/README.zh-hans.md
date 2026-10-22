@@ -25,7 +25,7 @@ with Client(instance_id=instance_id, **client_options) as client:
 
 `get_account` 直接返回账号，包含密码、资产信息和缓存来源标记。
 
-使用 `account_id` 获取事件指定的账号。应用完成连接验证、连接池切换等操作后，通过 `event_id` 上报 `success` 或 `failed`。收到事件或成功取密不代表应用成功。事件和重连快照条目包含 `event_id`、`account_id`、`account_revision`，应用前须检查账号版本。重启和手动切换指令先用 `running` 认领。业务处理须幂等，重连可能重复事件。
+实现下面的账号变更回调并启动托管监听即可。SDK 负责快照、实时取密、账号与版本校验、重试、指令认领和结果回报。业务回调必须完成真实连接验证、连接池切换和旧连接释放后再返回。Python、Node.js 使用子类钩子，Go 使用 OnAccountChanged，Java 使用 AccountEventListener。未实现业务切换时，示例会明确失败。
 
 旧的 `jms_pam.credential.v1` 请求对象接口作为兼容入口保留，并发出 `DeprecationWarning`。新代码使用本页示例中的 `Client` 接口；升级时同步重新生成 SDK 接入配置。
 
@@ -284,69 +284,26 @@ from jms_pam import Client
 from jms_pam_config import client_options, instance_id
 
 
-def apply_account(account):
-    # Validate a new connection, switch the pool, then release old connections.
-    # Never log account.secret or authentication headers.
-    raise NotImplementedError("Implement the application's account update first")
-
-
-def restart_application():
-    raise NotImplementedError("Implement application restart and health check first")
+if not hasattr(Client, 'on_account_changed'):
+    raise RuntimeError('Upgrade jms-pam to a version with managed account events')
 
 
 class ApplicationClient(Client):
-    def apply_event(self, event):
-        if event.get("event") == "application.restart.requested":
-            restart_application()
-            return
-        account = self.get_account(
-            account_id=event["account_id"], allow_local_fallback=False,
-        )
-        if account.revision != event["account_revision"]:
-            raise ValueError("The event account version is superseded")
-        apply_account(account)
+    def on_account_changed(self, account):
+        # Validate a new connection, switch the pool, then release old connections.
+        # Return only after the application uses the account. Never log secrets.
+        raise NotImplementedError("Implement application account switching")
 
-    def handle_event(self, event):
-        event_id = event["event_id"]
-        if event.get("command_id"):
-            claim = self.report_application_command_result(
-                command_id=event["command_id"], status="running",
-            )
-            if not claim.accepted:
-                return
-        try:
-            self.apply_event(event)
-        except Exception:
-            self.confirm_event(
-                event_id=event_id, status="failed", error_code="application_failed",
-            )
-            raise
-        # A fetch or delivery receipt never confirms application success.
-        self.confirm_event(event_id=event_id)
-
-    def run(self):
-        for event in self.watch_credential_events():
-            if event.get("command_id"):
-                updates = [event]
-            elif event.get("event") == "snapshot":
-                updates = event.get("credentials", [])
-                # Release application connections absent from the new scope.
-            elif event.get("event") == "credential.updated":
-                updates = [event]
-            elif event.get("event") == "credential.revoked":
-                # Release connections for event["account_id"].
-                continue
-            else:
-                continue
-            for update in updates:
-                try:
-                    self.handle_event(update)
-                except Exception as error:
-                    self.on_event_error(error, update)
+    def on_account_revoked(self, account_id):
+        # Close the application connections for this account.
+        raise NotImplementedError("Implement revoked account cleanup")
 
 
 with ApplicationClient(instance_id=instance_id, **client_options) as client:
-    client.run()
+    # SDK handles snapshots, fresh fetches, versions, retries and event results.
+    # Applied accounts are reported automatically; pull-only code can use:
+    # client.report_accounts([account_id])  # [] clears explicit SDK usage.
+    client.watch_events()
 ```
 <!-- python-events-example:end -->
 
@@ -372,9 +329,9 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 上报应用运行状态和当前使用的账号 ID，支持 `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。每次上报都是完整快照，空账号列表会清除此前使用记录。由应用在状态变化或自己的心跳中调用，不会自动启动后台上报。Python、Java、Node.js 遇到网络、API 错误或旧 Core 不支持接口时默认返回 false；Go 使用 `TryReportStatus` 获得相同行为。严格调用方式可以获取具体错误，参数错误仍会明确提示。调用遵循配置的 HTTP 超时，请放在不影响业务响应的执行路径。上报不会取密、确认轮换或清空已有凭据缓存。`error_code` 只传机器可读错误码，不要传密码或异常原文。`get_client_info` / `GetClientInfo` / `getClientInfo` 可以读取最后一次上报及其时间。
 
 ```python
-client.report_status("running", account_id=account.id)
+client.report_accounts([account.id])
+client.report_accounts([])  # Clear the complete explicit usage snapshot.
 client.report_status("degraded", account_ids=[account.id], error_code="db_unavailable")
-client.report_status("stopped")
 ```
 
 
