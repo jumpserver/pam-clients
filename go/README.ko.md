@@ -20,9 +20,12 @@ export JMS_ACCOUNT_ID='<account-id>'
 
 ```
 
-Go는 모듈 버전 태그로 배포합니다. Java와 Node.js는 Release 1.0.2의 SDK 소스 패키지를 사용하며 설치에 Maven 또는 Node.js가 필요합니다. 다음 명령은 애플리케이션 디렉터리에서 실행하고 Java 의존성은 pom.xml에 추가합니다. 예제는 설치된 패키지를 가져옵니다.
+아래 명령으로 같은 Core에 포함된 클라이언트 소스를 설치하세요. 배포된 1.0.2에는 관리형 콜백이 없습니다. jumpserver.example.com을 Core 주소로 바꾸고 Go 로컬 대체 경로를 포함한 jms-pam-clients 디렉터리를 보관하세요.
 
 ```bash
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/go/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+go mod edit -replace github.com/jumpserver/pam-clients/go=./jms-pam-clients/go &&
 go get github.com/jumpserver/pam-clients/go@v1.0.2
 ```
 

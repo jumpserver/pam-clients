@@ -20,12 +20,12 @@ export JMS_ACCOUNT_ID='<account-id>'
 
 ```
 
-Go 通过模块版本标签分发。Java 和 Node.js 可从 1.0.2 Release 获取 SDK 源码包，安装需要 Maven 或 Node.js。以下安装命令在应用目录执行；Java 依赖添加到 pom.xml。下方示例使用安装后的包导入。
+通过下方命令安装当前 Core 随附的客户端源码，避免已发布的 1.0.2 包缺少托管回调。将 jumpserver.example.com 替换为 Core 地址；保留解压后的 jms-pam-clients 目录，Go 模块使用本地替换路径。
 
 ```bash
-curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
-tar -xzf jms-pam-java.tar.gz
-mvn -f ./java/pom.xml install
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/java/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+mvn -f ./jms-pam-clients/java/pom.xml install
 ```
 
 ```xml

@@ -32,6 +32,36 @@ class EventHandlerTest {
   }
 
   @Test
+  void revokedAccountCleanupRetriesWhileTheEventStreamIsIdle() throws Exception {
+    String instance = "managed-java-cleanup-retry";
+    CountDownLatch applied = new CountDownLatch(1), reconnected = new CountDownLatch(2);
+    CountDownLatch cleaned = new CountDownLatch(1);
+    AtomicInteger attempts = new AtomicInteger();
+    try (Client sdk = new Client(options(instance));
+        EventSubscription subscription = sdk.startEvents(new AccountEventListener() {
+          public void onAccountChanged(Account account) { applied.countDown(); }
+          public void onEvent(Event event) {
+            if (event.getEvent().equals("snapshot")) reconnected.countDown();
+          }
+          public void onAccountRevoked(String id) {
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("temporary cleanup failure");
+            cleaned.countDown();
+          }
+          public void onEventError(Exception error, Event event) {}
+        })) {
+      assertTrue(applied.await(5, TimeUnit.SECONDS));
+      assertTrue(reconnected.await(5, TimeUnit.SECONDS));
+      control(instance, "event=credential.revoked&revision=2");
+      assertTrue(cleaned.await(5, TimeUnit.SECONDS));
+      assertEquals(2, attempts.get());
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (!sdk.getClientInfo().getApplicationStatus().getAccountIds().isEmpty()
+          && System.nanoTime() < deadline) Thread.sleep(25);
+      assertEquals(List.of(), sdk.getClientInfo().getApplicationStatus().getAccountIds());
+    }
+  }
+
+  @Test
   void managedResultRetryDoesNotRepeatBusinessAndRotationReplacesUsage() throws Exception {
     String instance = "managed-java-result";
     control(instance, "result_failures=1");

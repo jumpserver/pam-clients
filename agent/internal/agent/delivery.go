@@ -74,6 +74,10 @@ func resolveRule(rule Rule, latest map[string]Credential) (Payload, []string, bo
 			matches := value.AccountID == selector
 			if account.AllowAccountSwitch {
 				matches = value.AccountSwitch != nil && contains(value.AccountSwitch.AccountIDs, selector)
+			} else if direct, exists := latest["account:"+selector]; exists && direct.AccountID == selector && key != "account:"+selector {
+				// An explicit non-switching rule addresses the account notification,
+				// even while a rotation currently publishes that same account.
+				matches = false
 			}
 			if !matches {
 				continue
@@ -94,6 +98,42 @@ func resolveRule(rule Rule, latest map[string]Credential) (Payload, []string, bo
 		matched = append(matched, candidate)
 	}
 	return payload, matched, complete, nil
+}
+
+// A switching rule represents one business destination, even when an ordinary
+// password notification also covers one of its A/B accounts. Keep an explicitly
+// declared non-switching destination, but do not apply standby-account updates
+// to the destination that follows the rotation's current account.
+func redundantAccountNotifications(rules []Rule, latest map[string]Credential) []string {
+	covered, rotating := map[string]bool{}, map[string]bool{}
+	for _, rule := range rules {
+		_, matched, _, err := resolveRule(rule, latest)
+		if err != nil {
+			continue
+		}
+		for _, key := range matched {
+			covered[key] = true
+		}
+		for _, account := range rule.Accounts {
+			if !account.AllowAccountSwitch {
+				continue
+			}
+			for _, key := range matched {
+				if pair := latest[key].AccountSwitch; pair != nil && contains(pair.AccountIDs, account.AccountID) {
+					for _, id := range pair.AccountIDs {
+						rotating[id] = true
+					}
+				}
+			}
+		}
+	}
+	var redundant []string
+	for key, value := range latest {
+		if strings.HasPrefix(key, "account:") && value.AccountSwitch == nil && rotating[value.AccountID] && !covered[key] {
+			redundant = append(redundant, key)
+		}
+	}
+	return redundant
 }
 
 func environment(c Credential) ([]byte, error) {

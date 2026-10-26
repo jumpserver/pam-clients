@@ -20,12 +20,12 @@ export JMS_ACCOUNT_ID='<account-id>'
 
 ```
 
-Go được phân phối bằng thẻ phiên bản mô-đun. Java và Node.js có gói nguồn SDK trong Release 1.0.2; cần Maven hoặc Node.js để cài. Chạy các lệnh trong thư mục ứng dụng và thêm phụ thuộc Java vào pom.xml. Ví dụ dùng gói đã cài.
+Cài mã nguồn máy khách đi kèm cùng Core; gói 1.0.2 chưa có callback được quản lý. Thay jumpserver.example.com bằng địa chỉ Core và giữ thư mục jms-pam-clients, kể cả đường dẫn thay thế mô-đun Go.
 
 ```bash
-curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-node.tar.gz
-tar -xzf jms-pam-node.tar.gz
-npm install ./node
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/node/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+npm install ./jms-pam-clients/node
 ```
 
 ```javascript

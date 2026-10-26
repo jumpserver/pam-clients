@@ -26,17 +26,18 @@ type EventHandlers struct {
 // EventWatcher owns one managed event listener. Stop requests cancellation;
 // Wait waits for handlers and the reader. Do not call Wait from a handler.
 type EventWatcher struct {
-	client        *Client
-	ctx           context.Context
-	cancel        context.CancelFunc
-	handlers      EventHandlers
-	done          chan struct{}
-	err           error
-	pending       map[CredentialSelector]pendingCredential
-	appliedEvents map[string]accountEventResult
-	appliedOrder  []string
-	usedAccounts  map[CredentialSelector]string
-	accountScope  map[CredentialSelector]bool
+	client             *Client
+	ctx                context.Context
+	cancel             context.CancelFunc
+	handlers           EventHandlers
+	done               chan struct{}
+	err                error
+	pending            map[CredentialSelector]pendingCredential
+	pendingRevocations map[CredentialSelector]pendingRevocation
+	appliedEvents      map[string]accountEventResult
+	appliedOrder       []string
+	usedAccounts       map[CredentialSelector]string
+	accountScope       map[CredentialSelector]bool
 }
 
 type pendingCredential struct {
@@ -44,6 +45,13 @@ type pendingCredential struct {
 	event  Event
 	delay  time.Duration
 	due    time.Time
+}
+
+type pendingRevocation struct {
+	accountID string
+	event     Event
+	delay     time.Duration
+	due       time.Time
 }
 
 func (c *Client) StartEvents(ctx context.Context, handlers EventHandlers) (*EventWatcher, error) {
@@ -167,7 +175,7 @@ func (w *EventWatcher) refresh(update, event Event, delay time.Duration) {
 }
 
 func (w *EventWatcher) dispatch(event Event) {
-	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "application.scope.updated" {
+	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "application.scope.updated" || event.Event == "configuration.updated" {
 		clear(w.pending)
 	}
 	if w.handlers.OnEvent != nil {
@@ -233,6 +241,20 @@ func (w *EventWatcher) retry() {
 			earliest = &copy
 		}
 	}
+	var revoked CredentialSelector
+	var cleanup *pendingRevocation
+	for selector, item := range w.pendingRevocations {
+		if cleanup == nil || item.due.Before(cleanup.due) {
+			copy := item
+			revoked, cleanup = selector, &copy
+		}
+	}
+	if cleanup != nil && (earliest == nil || !cleanup.due.After(earliest.due)) {
+		if !cleanup.due.After(time.Now()) {
+			w.revokeAccount(revoked, cleanup.accountID, cleanup.event, cleanup.delay)
+		}
+		return
+	}
 	if earliest != nil && !earliest.due.After(time.Now()) {
 		w.refresh(earliest.update, earliest.event, earliest.delay)
 	}
@@ -263,6 +285,7 @@ func (w *EventWatcher) run() {
 		w.cancel()
 		<-readerDone
 		clear(w.pending)
+		clear(w.pendingRevocations)
 		close(w.done)
 	}()
 	ticker := time.NewTicker(100 * time.Millisecond)

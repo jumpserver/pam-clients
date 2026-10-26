@@ -21,6 +21,7 @@ public final class EventSubscription implements AutoCloseable {
   private final AtomicBoolean stopped = new AtomicBoolean();
   private final CountDownLatch finished = new CountDownLatch(1);
   private final Map<String, PendingCredential> pending = new HashMap<>();
+  private final Map<String, PendingRevocation> pendingRevocations = new HashMap<>();
   private final Map<String, String> appliedEvents = new LinkedHashMap<>();
   private final Map<String, String> usedAccounts = new HashMap<>();
   private Set<String> accountScope;
@@ -32,6 +33,19 @@ public final class EventSubscription implements AutoCloseable {
 
     PendingCredential(Event update, Event event, long delay) {
       this.update = update;
+      this.event = event;
+      this.delay = delay;
+      this.due = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(delay);
+    }
+  }
+
+  private static final class PendingRevocation {
+    final String accountId;
+    final Event event;
+    final long delay, due;
+
+    PendingRevocation(String accountId, Event event, long delay) {
+      this.accountId = accountId;
       this.event = event;
       this.delay = delay;
       this.due = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(delay);
@@ -216,14 +230,27 @@ public final class EventSubscription implements AutoCloseable {
     }
   }
 
+  private void revokeAccount(String target, String accountId, Event event, long delay) {
+    if (stopped.get()) return;
+    try {
+      ((AccountEventListener) listener).onAccountRevoked(accountId);
+      pendingRevocations.remove(target);
+      usedAccounts.remove(target);
+      appliedEvents.clear();
+      reportAccountUsage();
+    } catch (Exception error) {
+      if (stopped.get()) return;
+      report(error, event);
+      pendingRevocations.put(target, new PendingRevocation(
+          accountId, event, Math.min(Math.max(1000, delay * 2), 30000)));
+    }
+  }
+
   private void revokeAccounts(Set<String> retained, Event event) {
+    pendingRevocations.keySet().removeAll(retained);
     for (String target : new ArrayList<>(usedAccounts.keySet())) {
-      if (retained.contains(target)) continue;
-      try {
-        ((AccountEventListener) listener).onAccountRevoked(usedAccounts.get(target));
-        usedAccounts.remove(target);
-        appliedEvents.clear();
-      } catch (Exception error) { report(error, event); }
+      if (retained.contains(target) || pendingRevocations.containsKey(target)) continue;
+      revokeAccount(target, usedAccounts.get(target), event, 0);
     }
     reportAccountUsage();
   }
@@ -232,7 +259,7 @@ public final class EventSubscription implements AutoCloseable {
     String name = event.getEvent();
     if (name.equals("snapshot")
         || name.equals("credential.revoked")
-        || name.equals("application.scope.updated")) pending.clear();
+        || name.equals("application.scope.updated") || name.equals("configuration.updated")) pending.clear();
     try {
       listener.onEvent(event);
     } catch (Exception error) {
@@ -275,6 +302,19 @@ public final class EventSubscription implements AutoCloseable {
     PendingCredential earliest = null;
     for (PendingCredential item : pending.values())
       if (earliest == null || item.due < earliest.due) earliest = item;
+    String target = null;
+    PendingRevocation cleanup = null;
+    for (Map.Entry<String, PendingRevocation> item : pendingRevocations.entrySet()) {
+      if (cleanup == null || item.getValue().due < cleanup.due) {
+        target = item.getKey();
+        cleanup = item.getValue();
+      }
+    }
+    if (cleanup != null && (earliest == null || cleanup.due <= earliest.due)) {
+      if (cleanup.due <= System.nanoTime())
+        revokeAccount(target, cleanup.accountId, cleanup.event, cleanup.delay);
+      return;
+    }
     if (earliest != null && earliest.due <= System.nanoTime())
       refresh(earliest.update, earliest.event, earliest.delay);
   }
@@ -293,6 +333,7 @@ public final class EventSubscription implements AutoCloseable {
     } finally {
       stop();
       pending.clear();
+      pendingRevocations.clear();
       finished.countDown();
     }
   }

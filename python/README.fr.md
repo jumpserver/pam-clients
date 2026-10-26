@@ -129,10 +129,12 @@ L’Agent réconcilie au démarrage, lors d’événements pertinents et toutes 
 
 ## Intégration du SDK Python
 
-Python 3.9+ est requis. Installez jms-pam depuis PyPI ou votre miroir interne avec le Python de l’application, puis téléchargez la configuration depuis l’assistant de connexion.
+Installez le code client fourni par le même Core ; les paquets 1.0.2 ne contiennent pas les callbacks gérés. Remplacez jumpserver.example.com par votre Core et conservez le répertoire jms-pam-clients, y compris le chemin local de remplacement Go.
 
 ```bash
-python3 -m pip install jms-pam
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
 ```
 
 `jms_pam_config.py` est un fichier de configuration de l’application, absent du paquet `jms-pam` sur PyPI. Téléchargez-le depuis l’assistant d’intégration et placez-le à côté du script de l’application, ou créez-le avec le contenu ci-dessous en remplaçant les valeurs par l’identité réelle de l’application. Ne placez pas `client_options` dans le dépôt ou les journaux. Utilisez un `instance_id` stable et unique par réplique.

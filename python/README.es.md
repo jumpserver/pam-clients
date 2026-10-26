@@ -129,10 +129,12 @@ El Agent sincroniza al arrancar, ante eventos pertinentes y cada 300 segundos. L
 
 ## Integración del SDK de Python
 
-Se requiere Python 3.9+. Instale jms-pam desde PyPI o su espejo interno con el Python de la aplicación y descargue la configuración del asistente de conexión.
+Instale el código del cliente incluido en el mismo Core; los paquetes 1.0.2 no incluyen callbacks gestionados. Sustituya jumpserver.example.com por su Core y conserve el directorio jms-pam-clients, incluida la ruta local de reemplazo de Go.
 
 ```bash
-python3 -m pip install jms-pam
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
 ```
 
 `jms_pam_config.py` es un archivo de configuración de la aplicación y no forma parte del paquete `jms-pam` de PyPI. Descárguelo desde el asistente de integración y guárdelo junto al script de la aplicación, o créelo con el contenido siguiente y sustituya los valores por la identidad real de la aplicación. No guarde `client_options` en el repositorio ni en registros. Use un `instance_id` estable y único por réplica.

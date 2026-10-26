@@ -20,12 +20,12 @@ export JMS_ACCOUNT_ID='<account-id>'
 
 ```
 
-Go はモジュールのバージョンタグで配布します。Java と Node.js は Release 1.0.2 の SDK ソースを利用し、インストールに Maven または Node.js が必要です。以下はアプリケーションのディレクトリで実行し、Java の依存関係は pom.xml に追加します。例はインストール済みパッケージを読み込みます。
+以下のコマンドで同じ Core に同梱されたクライアントソースをインストールします。公開済み 1.0.2 には管理コールバックがありません。jumpserver.example.com を Core のアドレスに置き換え、Go のローカル置換パスを含む jms-pam-clients ディレクトリを保持してください。
 
 ```bash
-curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
-tar -xzf jms-pam-java.tar.gz
-mvn -f ./java/pom.xml install
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/java/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+mvn -f ./jms-pam-clients/java/pom.xml install
 ```
 
 ```xml

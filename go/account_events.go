@@ -140,22 +140,44 @@ func (w *EventWatcher) refreshAccount(update, event Event, delay time.Duration) 
 	}
 }
 
+func (w *EventWatcher) revokeAccount(selector CredentialSelector, id string, event Event, delay time.Duration) {
+	if w.ctx.Err() != nil {
+		return
+	}
+	err := errors.New("revoked account cleanup is not configured")
+	if w.handlers.OnAccountRevoked != nil {
+		err = invokeEventHook(func() error { return w.handlers.OnAccountRevoked(w.ctx, id) })
+	}
+	if err != nil {
+		w.report(err, &event)
+		if w.pendingRevocations == nil {
+			w.pendingRevocations = make(map[CredentialSelector]pendingRevocation)
+		}
+		delay = min(max(time.Second, delay*2), 30*time.Second)
+		w.pendingRevocations[selector] = pendingRevocation{id, event, delay, time.Now().Add(delay)}
+		return
+	}
+	delete(w.pendingRevocations, selector)
+	delete(w.usedAccounts, selector)
+	clear(w.appliedEvents)
+	w.appliedOrder = nil
+	w.reportAccountUsage()
+}
+
 func (w *EventWatcher) revokeAccounts(retained map[CredentialSelector]bool, event Event) {
+	for selector := range w.pendingRevocations {
+		if retained[selector] {
+			delete(w.pendingRevocations, selector)
+		}
+	}
 	for selector, id := range w.usedAccounts {
 		if retained[selector] {
 			continue
 		}
-		if w.handlers.OnAccountRevoked == nil {
-			w.report(errors.New("revoked account cleanup is not configured"), &event)
+		if _, pending := w.pendingRevocations[selector]; pending {
 			continue
 		}
-		if err := invokeEventHook(func() error { return w.handlers.OnAccountRevoked(w.ctx, id) }); err != nil {
-			w.report(err, &event)
-			continue
-		}
-		delete(w.usedAccounts, selector)
-		clear(w.appliedEvents)
-		w.appliedOrder = nil
+		w.revokeAccount(selector, id, event, 0)
 	}
 	w.reportAccountUsage()
 }

@@ -87,6 +87,36 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.assertFalse(self.dispatcher.pending)
         self.client.on_account_changed.assert_called_once()
 
+    def test_failed_revocations_retry_without_events_and_do_not_block_other_accounts(self):
+        self.dispatcher.used_accounts = {('account', 'a'): 'a', ('account', 'b'): 'b'}
+        attempts = []
+        def cleanup(account_id):
+            attempts.append(account_id)
+            if account_id == 'a' and attempts.count('a') == 1:
+                raise OSError('temporary cleanup failure')
+        self.client.on_account_revoked.side_effect = cleanup
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': []})
+        self.assertEqual(attempts, ['a', 'b'])
+        self.assertEqual(self.dispatcher.used_accounts, {('account', 'a'): 'a'})
+        self.dispatcher.pending_revocations[('account', 'a')].due = 0
+        self.dispatcher._retry()
+        self.assertEqual(attempts, ['a', 'b', 'a'])
+        self.assertFalse(self.dispatcher.pending_revocations)
+        self.assertFalse(self.dispatcher.used_accounts)
+        self.client.report_accounts.assert_called_with([])
+        self.client.confirm_event.assert_not_called()
+
+    def test_regrant_cancels_failed_revocation_before_it_can_close_new_connections(self):
+        self.dispatcher._dispatch(self.update)
+        self.client.on_account_revoked.side_effect = OSError('temporary cleanup failure')
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': []})
+        self.assertTrue(self.dispatcher.pending_revocations)
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [self.update]})
+        self.assertFalse(self.dispatcher.pending_revocations)
+        self.dispatcher._retry()
+        self.client.on_account_revoked.assert_called_once_with('account-a')
+        self.assertEqual(list(self.dispatcher.used_accounts.values()), ['account-a'])
+
     def test_rejected_or_unknown_commands_do_not_execute(self):
         self.client.report_application_command_result.return_value.accepted = False
         self.dispatcher._dispatch({**self.update, 'command_id': 'command'})

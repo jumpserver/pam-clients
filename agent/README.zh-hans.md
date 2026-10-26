@@ -15,17 +15,14 @@ journalctl -u jms-pam-agent
 
 ## 安装
 
-从应用接入向导下载引导配置，从 [GitHub Release](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2) 下载对应架构的 Agent 和 SHA256SUMS；无需本地编译。
+从应用接入向导下载引导配置，并从同一 Core 下载随附的 Agent 和 SDK 源码。将下方 jumpserver.example.com 替换为 Core 地址。构建主机需 Go 1.23+；可在相同操作系统和 CPU 架构的构建主机生成二进制再复制到应用主机，运行时不需要 Go。v1.0.2 二进制不支持新向导的显式 `format: "auto"` 及新增接口。
 
 ```bash
-VERSION=1.0.2
-ARCH=amd64  # ARM64 使用 arm64
-BASE="https://github.com/jumpserver/pam-clients/releases/download/v$VERSION"
-curl -fLO "$BASE/jms-pam-agent-linux-$ARCH"
-curl -fLO "$BASE/SHA256SUMS"
-sha256sum --check --ignore-missing SHA256SUMS
-sudo install -m 0755 "jms-pam-agent-linux-$ARCH" /usr/local/bin/jms-pam-agent
-chmod 0600 jms_pam_agent.json
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/agent/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+go -C ./jms-pam-clients/agent build -trimpath -o ../../jms-pam-agent ./cmd/jms-pam-agent &&
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent &&
+chmod 0600 jms_pam_agent.json &&
 sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
 ```
 
@@ -271,3 +268,5 @@ jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
 ```
 
 本地先持久化结果，Core 暂时不可用时重试。未知事件、未投递事件和过期账号版本不能确认。旧 KEY/--revision 命令仅保留兼容。
+
+同一应用可以同时配置账号改密通知和 A/B 轮换。对于声明 `allow_account_switch` 的本机规则，Agent 跟随轮换当前账号交付，不会因同一对账号的普通密码通知而把业务配置切回备用账号。其他账号仍独立更新；如果需要将 A/B 账号各自另存一份文件，增加不启用切换的独立账号规则。

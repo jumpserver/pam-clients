@@ -129,10 +129,12 @@ Agent는 시작 시, 관련 이벤트 수신 시, 300초마다 동기화합니�
 
 ## Python SDK 연동
 
-Python 3.9+가 필요합니다. 애플리케이션의 Python 또는 가상 환경에서 PyPI나 사내 미러로 jms-pam을 설치하고 연결 마법사에서 구성을 다운로드하세요.
+아래 명령으로 같은 Core에 포함된 클라이언트 소스를 설치하세요. 배포된 1.0.2에는 관리형 콜백이 없습니다. jumpserver.example.com을 Core 주소로 바꾸고 Go 로컬 대체 경로를 포함한 jms-pam-clients 디렉터리를 보관하세요.
 
 ```bash
-python3 -m pip install jms-pam
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
 ```
 
 `jms_pam_config.py`는 애플리케이션 설정 파일이며 PyPI의 `jms-pam` 패키지에 포함되지 않습니다. 연결 마법사에서 다운로드하여 애플리케이션 스크립트 옆에 저장하거나 아래 내용으로 파일을 만들고 실제 애플리케이션 정보로 바꾸세요. `client_options`를 커밋하거나 로그에 기록하지 마세요. 복제본마다 안정적이고 고유한 `instance_id`를 사용하세요.

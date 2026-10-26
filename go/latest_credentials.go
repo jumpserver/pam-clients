@@ -5,13 +5,13 @@ import "strings"
 // Retain the latest successfully fetched credentials until authorization changes.
 
 func (c *Client) reconcileLatestCredentials(event Event) {
-	if event.Event != "snapshot" && event.Event != "credential.revoked" && event.Event != "application.scope.updated" {
+	if event.Event != "snapshot" && event.Event != "credential.revoked" && event.Event != "application.scope.updated" && event.Event != "configuration.updated" {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.credentialGeneration++
-	if event.Event == "application.scope.updated" {
+	if event.Event == "application.scope.updated" || event.Event == "configuration.updated" {
 		for selector := range c.latestCredentials {
 			if selector.AccountID != "" {
 				delete(c.latestCredentials, selector)

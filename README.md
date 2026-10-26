@@ -44,14 +44,16 @@
 
 ## 在应用中安装 SDK
 
-Python SDK 通过 PyPI 发布，Go SDK 通过带版本的 Go 模块分发。Java 和 Node.js 尚未发布到公共包仓库，可从 [v1.0.2 Release](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2) 下载对应 SDK 源码包后安装；安装需要各自语言的构建工具。
+新接入从当前 Core 的 `/api/v1/accounts/client-source/<language>/` 下载随附源码，使安装版本与文档、向导示例一致。已发布的 v1.0.2 不包含托管回调。将下方 jumpserver.example.com 替换为 Core 地址；保留解压后的 jms-pam-clients 目录，尤其是 Go 的本地模块替换路径。应用身份配置仍从接入向导下载。
 
 在应用详情的接入向导中选择 SDK 语言，可下载当前应用的身份配置并查看对应事件处理示例；完整安装和接口说明在文档中心。向导为 SDK 生成实例 ID 并写入下载文件。部署时复用该文件以保持身份稳定；多个副本应分别生成材料，或为每个副本设置不同且可复用的 `JMS_INSTANCE_ID`。
 
 ### Python
 
 ```bash
-python3 -m pip install jms-pam
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
 ```
 
 导入：`from jms_pam import Client`。
@@ -61,6 +63,9 @@ python3 -m pip install jms-pam
 在应用的 Go module 目录执行：
 
 ```bash
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/go/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+go mod edit -replace github.com/jumpserver/pam-clients/go=./jms-pam-clients/go &&
 go get github.com/jumpserver/pam-clients/go@v1.0.2
 ```
 
@@ -68,10 +73,12 @@ go get github.com/jumpserver/pam-clients/go@v1.0.2
 
 ### Java
 
-下载并解压 Release 的 `jms-pam-java.tar.gz`，将其中 SDK 安装到本地 Maven 仓库：
+下载当前 Core 随附的源码并安装到本地 Maven 仓库：
 
 ```bash
-mvn -f ./java/pom.xml install
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/java/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+mvn -f ./jms-pam-clients/java/pom.xml install
 ```
 
 在应用的 `pom.xml` 添加：
@@ -88,10 +95,12 @@ mvn -f ./java/pom.xml install
 
 ### Node.js
 
-下载并解压 Release 的 `jms-pam-node.tar.gz`，再在应用目录安装解压后的绝对路径：
+在应用目录下载当前 Core 随附源码并安装：
 
 ```bash
-npm install /absolute/path/to/node
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/node/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+npm install ./jms-pam-clients/node
 ```
 
 导入：`const { Client } = require('@jumpserver/pam')`，ESM 可以使用 `import { Client } from '@jumpserver/pam'`。示例为 `node/demo.js`、`node/events.js` 和 `node/hooks.js`。

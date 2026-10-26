@@ -189,10 +189,12 @@ The Agent reconciles on startup, on relevant events and every 300 seconds. Netwo
 
 ## Python SDK integration
 
-Requires Python 3.9+. Install jms-pam from PyPI or your internal mirror using the application Python or virtual environment, then download the application identity configuration from the access wizard.
+Requires Python 3.9+. Use the application Python or virtual environment. Install the client source shipped by the same Core using the commands below; released v1.0.2 packages do not include managed callbacks. Replace jumpserver.example.com with your Core address. Keep the extracted jms-pam-clients directory with your application, including the Go module replacement path.
 
 ```bash
-python3 -m pip install jms-pam
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
 ```
 
 `jms_pam_config.py` is an application configuration file, not part of the `jms-pam` PyPI package. Download it from the application access wizard and save it next to your application script, or create it with the content below and replace every placeholder with the actual application identity. Do not commit or log `client_options`. Use a stable, unique `instance_id` per replica.

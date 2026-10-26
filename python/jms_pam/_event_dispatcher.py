@@ -16,6 +16,14 @@ class PendingCredential:
     due: float
 
 
+@dataclass
+class PendingRevocation:
+    account_id: str
+    event: dict[str, Any]
+    delay: float
+    due: float
+
+
 class EventDispatcher:
     def __init__(self, client, stop_event: Optional[Event] = None):
         self.client = client
@@ -23,6 +31,7 @@ class EventDispatcher:
         self.finished = Event()
         self.events = Queue(maxsize=128)
         self.pending = {}
+        self.pending_revocations = {}
         self.reader = Thread(target=self._read, name="jms-pam-event-reader")
         self.worker = None
         self.reader_error = None
@@ -236,18 +245,36 @@ class EventDispatcher:
             delay = min(max(1, delay * 2), 30)
             self.pending[selector] = PendingCredential(update, event, delay, monotonic() + delay)
 
-    def _revoke_accounts(self, retained):
-        for selector, account_id in list(self.used_accounts.items()):
-            if selector in retained:
-                continue
+    def _revoke_account(self, selector, account_id, event, delay=0):
+        if self.stop_event.is_set():
+            return
+        try:
             self.client.on_account_revoked(account_id)
-            del self.used_accounts[selector]
+        except Exception as error:
+            self._report_error(error, event)
+            delay = min(max(1, delay * 2), 30)
+            self.pending_revocations[selector] = PendingRevocation(
+                account_id, event, delay, monotonic() + delay,
+            )
+        else:
+            self.pending_revocations.pop(selector, None)
+            self.used_accounts.pop(selector, None)
             self.applied_events.clear()
+            self._report_usage()
+
+    def _revoke_accounts(self, retained, event):
+        for selector in list(self.pending_revocations):
+            if selector in retained:
+                del self.pending_revocations[selector]
+        for selector, account_id in list(self.used_accounts.items()):
+            if selector in retained or selector in self.pending_revocations:
+                continue
+            self._revoke_account(selector, account_id, event)
         self._report_usage()
 
     def _dispatch(self, event) -> None:
         name = event.get("event")
-        if name in {"snapshot", "credential.revoked", "application.scope.updated"}:
+        if name in {"snapshot", "credential.revoked", "application.scope.updated", "configuration.updated"}:
             # The following snapshot supplies the currently authorized scope.
             self.pending.clear()
         self._call(self.client.on_event, event, event)
@@ -257,7 +284,7 @@ class EventDispatcher:
             if self.account_events:
                 self.account_scope = {self._account_selector(item) for item in event.get('credentials', [])}
                 try:
-                    self._revoke_accounts(self.account_scope)
+                    self._revoke_accounts(self.account_scope, event)
                 except Exception as error:
                     self._report_error(error, event)
             for update in event.get("credentials", []):
@@ -279,13 +306,21 @@ class EventDispatcher:
                 retained = {selector for selector, value in self.used_accounts.items()
                             if value != account_id and selector != ('policy', key)}
                 try:
-                    self._revoke_accounts(retained)
+                    self._revoke_accounts(retained, event)
                 except Exception as error:
                     self._report_error(error, event)
             self._call(self.client.on_credential_revoked, event, event)
 
     def _retry(self) -> None:
         # Retry at most one credential between events so newer messages can run.
+        revoked = min(self.pending_revocations, key=lambda key: self.pending_revocations[key].due, default=None)
+        if revoked is not None and (
+            not self.pending or self.pending_revocations[revoked].due <= min(item.due for item in self.pending.values())
+        ):
+            pending = self.pending_revocations[revoked]
+            if pending.due <= monotonic():
+                self._revoke_account(revoked, pending.account_id, pending.event, pending.delay)
+            return
         if not self.pending:
             return
         selector = min(self.pending, key=lambda key: self.pending[key].due)
@@ -314,6 +349,7 @@ class EventDispatcher:
             self.request_stop()
             self.reader.join()
             self.pending.clear()
+            self.pending_revocations.clear()
             while not self.events.empty():
                 self.events.get_nowait()
             self.finished.set()

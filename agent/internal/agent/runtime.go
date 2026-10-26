@@ -207,7 +207,7 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 		return errors.Join(a.recordEvent("received", event), a.command(ctx, event))
 	}
 	switch event.Event {
-	case "snapshot", "credential.revoked", "credential.updated", "application.scope.updated":
+	case "snapshot", "credential.revoked", "credential.updated", "application.scope.updated", "configuration.updated":
 	default:
 		return a.recordEvent("received", event)
 	}
@@ -314,6 +314,24 @@ func (a *Agent) synchronize(ctx context.Context) (result error) {
 			a.mu.Unlock()
 		}
 	}
+	// Resolve overlapping notifications before fetching. Fetching an unused
+	// source account would also reset the rotation's no-secret-fetch window.
+	deliveryMetadata := make(map[string]Credential, len(metadata))
+	for key, item := range metadata {
+		if item.Available {
+			deliveryMetadata[key] = Credential{Key: key, AccountID: item.AccountID, AccountSwitch: item.AccountSwitch}
+		}
+	}
+	a.mu.Lock()
+	for _, key := range redundantAccountNotifications(a.Config.Rules, deliveryMetadata) {
+		delete(metadata, key)
+		delete(a.state.Latest, key)
+		delete(a.state.Delivered, key)
+		delete(a.state.Applied, key)
+		delete(a.state.Wanted, key)
+		delete(a.state.Events, key)
+	}
+	a.mu.Unlock()
 	// Signed scope reductions apply even when the delivery configuration is invalid.
 	a.mu.Lock()
 	for key := range a.state.Authorized {

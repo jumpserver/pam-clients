@@ -20,9 +20,12 @@ export JMS_ACCOUNT_ID='<account-id>'
 
 ```
 
-Go é distribuído por tags de módulo. Java e Node.js estão disponíveis como arquivos fonte do SDK no Release 1.0.2; exigem Maven ou Node.js. Execute os comandos no diretório da aplicação e adicione a dependência Java ao pom.xml. Os exemplos importam os pacotes instalados.
+Instale o código do cliente incluído no mesmo Core; os pacotes 1.0.2 não incluem callbacks gerenciados. Substitua jumpserver.example.com pelo seu Core e mantenha o diretório jms-pam-clients, incluindo o caminho local de substituição do Go.
 
 ```bash
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/go/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+go mod edit -replace github.com/jumpserver/pam-clients/go=./jms-pam-clients/go &&
 go get github.com/jumpserver/pam-clients/go@v1.0.2
 ```
 

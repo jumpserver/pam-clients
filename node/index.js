@@ -491,9 +491,9 @@ class Client {
   }
 
   #reconcileLatestCredentials(event) {
-    if (!['snapshot', 'credential.revoked', 'application.scope.updated'].includes(event.event)) return
+    if (!['snapshot', 'credential.revoked', 'application.scope.updated', 'configuration.updated'].includes(event.event)) return
     this.#credentialGeneration++
-    if (event.event === 'application.scope.updated') {
+    if (['application.scope.updated', 'configuration.updated'].includes(event.event)) {
       for (const selector of this.#latestCredentials.keys()) if (selector.startsWith('account:')) this.#latestCredentials.delete(selector)
       return
     }

@@ -6,6 +6,12 @@ import re
 from pathlib import Path
 
 CLIENTS = Path(__file__).resolve().parents[1]
+SOURCE_DIRECTORY = "jms-pam-clients"
+
+def source_archive(language):
+    return f"curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/{language}/ -o jms-pam-clients.tar.gz &&\ntar -xzf jms-pam-clients.tar.gz"
+
+PYTHON_INSTALL = f"{source_archive('python')} &&\npython3 -m pip install --upgrade --force-reinstall ./{SOURCE_DIRECTORY}/python"
 LOCALES = ("en", "zh-hans", "zh-hant", "ja", "ko", "pt-br", "ru", "vi", "es", "fr")
 EXAMPLES = {
     "go": (
@@ -221,17 +227,18 @@ def managed_section(language, texts):
 
 
 NATIVE_INSTALL = {
-    "go": """```bash
+    "go": f"""```bash
+{source_archive('go')} &&
+go mod edit -replace github.com/jumpserver/pam-clients/go=./jms-pam-clients/go &&
 go get github.com/jumpserver/pam-clients/go@v1.0.2
 ```
 
 ```go
 import pam "github.com/jumpserver/pam-clients/go"
 ```""",
-    "java": """```bash
-curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-java.tar.gz
-tar -xzf jms-pam-java.tar.gz
-mvn -f ./java/pom.xml install
+    "java": f"""```bash
+{source_archive("java")} &&
+mvn -f ./{SOURCE_DIRECTORY}/java/pom.xml install
 ```
 
 ```xml
@@ -245,15 +252,14 @@ mvn -f ./java/pom.xml install
 ```java
 import org.jumpserver.pam.Client;
 ```""",
-    "node": """```bash
-curl -fLO https://github.com/jumpserver/pam-clients/releases/download/v1.0.2/jms-pam-node.tar.gz
-tar -xzf jms-pam-node.tar.gz
-npm install ./node
+    "node": f"""```bash
+{source_archive("node")} &&
+npm install ./{SOURCE_DIRECTORY}/node
 ```
 
 ```javascript
-const { Client } = require('@jumpserver/pam')
-// ESM: import { Client } from '@jumpserver/pam'
+const {{ Client }} = require('@jumpserver/pam')
+// ESM: import {{ Client }} from '@jumpserver/pam'
 ```""",
 }
 NATIVE_ENVIRONMENT = """export JMS_ENDPOINT='https://jumpserver.example.com'
@@ -545,7 +551,7 @@ sudo systemctl restart jms-pam-agent
 {texts["sdk_setup"]}
 
 ```bash
-python3 -m pip install jms-pam
+{PYTHON_INSTALL}
 ```
 
 {texts["sdk_config"]}

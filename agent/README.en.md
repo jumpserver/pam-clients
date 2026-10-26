@@ -4,24 +4,18 @@ The standalone Agent is implemented in Go and requires no Python runtime. The bu
 
 ## Install
 
-Download the bootstrap JSON from the application access wizard and the matching Linux binary and SHA256SUMS from [v1.0.2 Release](https://github.com/jumpserver/pam-clients/releases/tag/v1.0.2).
+Download bootstrap configuration and matching Agent/SDK source from the same Core. Replace jumpserver.example.com below with your Core address. Build with Go 1.23+ on a host matching the target OS and CPU architecture, then copy the binary to the application host. Go is not needed at runtime. v1.0.2 binaries do not support explicit `format: "auto"` or the new APIs.
 
 ```bash
-VERSION=1.0.2
-ARCH=amd64  # Use arm64 on ARM64 hosts
-BASE="https://github.com/jumpserver/pam-clients/releases/download/v$VERSION"
-curl -fLO "$BASE/jms-pam-agent-linux-$ARCH"
-curl -fLO "$BASE/SHA256SUMS"
-sha256sum --check --ignore-missing SHA256SUMS
-sudo install -m 0755 "jms-pam-agent-linux-$ARCH" /usr/local/bin/jms-pam-agent
-chmod 0600 jms_pam_agent.json
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/agent/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+go -C ./jms-pam-clients/agent build -trimpath -o ../../jms-pam-agent ./cmd/jms-pam-agent &&
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent &&
+chmod 0600 jms_pam_agent.json &&
 sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
-sudo systemctl start jms-pam-agent
-sudo systemctl status jms-pam-agent
-sudo journalctl -u jms-pam-agent
 ```
 
-The fixed service is `jms-pam-agent.service`. Application AK/SK and a stable `instance_id` identify the Agent. Application account authorization defines on-demand pull access; bound credential policies define proactive sync and push. Release 1.0.2 supplies Linux amd64 / arm64 binaries. Other platforms require a developer-built binary; see [development](../docs/agent-development.md).
+The fixed service is `jms-pam-agent.service`. Application AK/SK and a stable `instance_id` identify the Agent. Application account authorization defines on-demand pull access; bound credential policies define proactive sync and push. For cross-compilation and other platforms, see [development](../docs/agent-development.md).
 
 New applications and account-scope updates may select specific accounts, all accounts, or accounts by attribute. The matched scope must stay within the system-wide application account limit (default 10), configured with `APPLICATION_ACCOUNT_SCOPE_LIMIT` in Core's `config.yml`. Restart Core after changing it. Existing scopes retain their current retrieval access until their account authorization is changed. If a newly limited dynamic scope later grows past the limit, account listing and credential retrieval fail until the scope is narrowed or the limit is raised; the server never silently selects the first 10 accounts. After a new scope is saved, the Agent revokes push account keys outside that scope on its next synchronization.
 
@@ -141,3 +135,5 @@ jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
 ```
 
 Results are persisted locally and retried when Core is unavailable. Unknown events, undelivered events and superseded account versions cannot be confirmed. KEY/--revision is retained for compatibility only.
+
+Account password notifications and A/B rotation may be enabled together. A local rule with `allow_account_switch` follows the current rotation account; an ordinary notification for its A/B pair does not switch that business destination to the standby account. Other account rules still update independently. Add explicit non-switching account rules when separate files for the pair are also required.

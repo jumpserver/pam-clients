@@ -56,6 +56,7 @@ class EventSubscription {
   #signal
   #queue = new EventQueue()
   #pending = new Map()
+  #revocations = new Map()
   #readerError
   #accountEvents
   #applied = new Map()
@@ -212,20 +213,34 @@ class EventSubscription {
     }
   }
 
+  async #revokeAccount(target, accountId, event, delay = 0) {
+    if (this.#signal.aborted) return
+    try {
+      await this.#call(this.#client.onAccountRevoked, accountId)
+      this.#revocations.delete(target)
+      this.#used.delete(target)
+      this.#applied.clear()
+      await this.#reportUsage()
+    } catch (error) {
+      if (this.#signal.aborted) return
+      await this.#report(error, event)
+      delay = Math.min(Math.max(1000, delay * 2), 30000)
+      this.#revocations.set(target, { target, accountId, event, delay, due: performance.now() + delay })
+    }
+  }
+
   async #revokeAccounts(retained, event) {
+    for (const target of this.#revocations.keys())
+      if (retained.has(target)) this.#revocations.delete(target)
     for (const [target, accountId] of this.#used) {
-      if (retained.has(target)) continue
-      try {
-        await this.#call(this.#client.onAccountRevoked, accountId)
-        this.#used.delete(target)
-        this.#applied.clear()
-      } catch (error) { await this.#report(error, event) }
+      if (retained.has(target) || this.#revocations.has(target)) continue
+      await this.#revokeAccount(target, accountId, event)
     }
     await this.#reportUsage()
   }
 
   async #dispatch(event) {
-    if (['snapshot', 'credential.revoked', 'application.scope.updated'].includes(event.event))
+    if (['snapshot', 'credential.revoked', 'application.scope.updated', 'configuration.updated'].includes(event.event))
       this.#pending.clear()
     try {
       await this.#call(this.#client.onEvent, event)
@@ -268,6 +283,14 @@ class EventSubscription {
     let earliest
     for (const item of this.#pending.values())
       if (!earliest || item.due < earliest.due) earliest = item
+    let cleanup
+    for (const item of this.#revocations.values())
+      if (!cleanup || item.due < cleanup.due) cleanup = item
+    if (cleanup && (!earliest || cleanup.due <= earliest.due)) {
+      if (cleanup.due <= performance.now())
+        await this.#revokeAccount(cleanup.target, cleanup.accountId, cleanup.event, cleanup.delay)
+      return
+    }
     if (earliest && earliest.due <= performance.now())
       await this.#refresh(earliest.update, earliest.event, earliest.delay)
   }
@@ -302,6 +325,7 @@ class EventSubscription {
       await reader
       this.#signal.removeEventListener('abort', abort)
       this.#pending.clear()
+      this.#revocations.clear()
       this.#queue.items.length = 0
       this.running = false
     }

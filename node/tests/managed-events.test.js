@@ -106,3 +106,43 @@ test('a removed push scope rejects queued updates until a new snapshot regrants 
     assert.equal(sdk.applied.length, 2)
   } finally { sdk.close() }
 })
+
+test('failed account cleanup retries while idle without repeating application', async () => {
+  const sdk = client('managed-node-revoke-retry')
+  let attempts = 0
+  const update = { event: 'credential.updated', eventId: 'cleanup-event', key: 'database',
+    credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
+  sdk.onAccountRevoked = () => { if (++attempts === 1) throw new Error('temporary cleanup failure') }
+  sdk.watchCredentialEvents = async function* ({ signal }) {
+    yield { event: 'snapshot', credentials: [update] }
+    yield { event: 'snapshot', credentials: [] }
+    while (!signal.aborted) await wait(25)
+  }
+  const subscription = sdk.startEvents()
+  try {
+    await until(() => attempts === 2)
+    assert.equal(sdk.applied.length, 1)
+    await until(async () => (await sdk.getClientInfo()).applicationStatus?.accountIds?.length === 0)
+  } finally { await subscription.stop(); sdk.close() }
+})
+
+test('a regrant cancels pending account cleanup', async () => {
+  const sdk = client('managed-node-revoke-regrant')
+  let attempts = 0
+  const update = { event: 'credential.updated', eventId: 'regrant-event', key: 'database',
+    credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
+  sdk.onAccountRevoked = () => { attempts++; throw new Error('temporary cleanup failure') }
+  sdk.watchCredentialEvents = async function* ({ signal }) {
+    yield { event: 'snapshot', credentials: [update] }
+    yield { event: 'snapshot', credentials: [] }
+    yield { event: 'snapshot', credentials: [update] }
+    while (!signal.aborted) await wait(25)
+  }
+  const subscription = sdk.startEvents()
+  try {
+    await until(() => attempts === 1)
+    await wait(1200)
+    assert.equal(attempts, 1)
+    assert.deepEqual((await sdk.getClientInfo()).applicationStatus.accountIds, ['account'])
+  } finally { await subscription.stop(); sdk.close() }
+})

@@ -231,11 +231,11 @@ class Client:
 
     def _reconcile_latest_credentials(self, event):
         name = event.get("event")
-        if name not in {"snapshot", "credential.revoked", "application.scope.updated"}:
+        if name not in {"snapshot", "credential.revoked", "application.scope.updated", "configuration.updated"}:
             return
         with self._credentials_lock:
             self._credential_generation += 1
-            if name == "application.scope.updated":
+            if name in {"application.scope.updated", "configuration.updated"}:
                 # Push snapshots cannot prove the full pull authorization scope.
                 self._latest_credentials = {selector: value for selector, value in self._latest_credentials.items() if selector[0] != "account_id"}
                 return

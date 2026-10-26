@@ -129,10 +129,12 @@ Agent đồng bộ lúc khởi động, theo sự kiện liên quan và mỗi 30
 
 ## Tích hợp Python SDK
 
-Cần Python 3.9+. Cài jms-pam từ PyPI hoặc kho nội bộ bằng Python của ứng dụng, rồi tải cấu hình từ trình hướng dẫn kết nối.
+Cài mã nguồn máy khách đi kèm cùng Core; gói 1.0.2 chưa có callback được quản lý. Thay jumpserver.example.com bằng địa chỉ Core và giữ thư mục jms-pam-clients, kể cả đường dẫn thay thế mô-đun Go.
 
 ```bash
-python3 -m pip install jms-pam
+curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
+tar -xzf jms-pam-clients.tar.gz &&
+python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
 ```
 
 `jms_pam_config.py` là tệp cấu hình ứng dụng, không thuộc gói `jms-pam` trên PyPI. Tải từ trình hướng dẫn kết nối và lưu cạnh tập lệnh ứng dụng, hoặc tạo tệp theo nội dung bên dưới và thay các giá trị bằng thông tin ứng dụng thực tế. Không đưa `client_options` vào kho mã hay nhật ký. Dùng `instance_id` ổn định, duy nhất cho mỗi bản sao.

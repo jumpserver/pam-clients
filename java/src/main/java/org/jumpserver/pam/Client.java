@@ -509,10 +509,10 @@ public final class Client implements AutoCloseable {
     String name = event.getEvent();
     if (!name.equals("snapshot")
         && !name.equals("credential.revoked")
-        && !name.equals("application.scope.updated")) return;
+        && !name.equals("application.scope.updated") && !name.equals("configuration.updated")) return;
     synchronized (credentialsLock) {
       credentialGeneration++;
-      if (name.equals("application.scope.updated")) {
+      if (name.equals("application.scope.updated") || name.equals("configuration.updated")) {
         latestCredentials.keySet().removeIf(selector -> selector.startsWith("account_id:"));
         return;
       }
