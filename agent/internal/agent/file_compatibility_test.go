@@ -44,7 +44,7 @@ func TestV1ConfigurationFixturesKeepDefaultsAndOriginalFiles(t *testing.T) {
 			if filepath.Base(sample) == "config-yaml.json" {
 				interval = 60
 			}
-			if legacy.ReconcileSeconds != interval {
+			if legacy.PullIntervalSeconds != interval {
 				t.Fatal("v1 reconciliation default changed")
 			}
 			if data, err := os.ReadFile(path); err != nil || !bytes.Equal(raw, data) {
@@ -153,6 +153,7 @@ func TestPreparationVersionsNewFilesAndKeepsExistingConfiguration(t *testing.T) 
 	defer server.Close()
 	config, _, _ := fixture(t)
 	config.Endpoint = server.URL
+	config.PullIntervalSeconds = 60
 	root := filepath.Dir(config.StateFile)
 	bootstrap := filepath.Join(root, "bootstrap.json")
 	if err := writeJSON(bootstrap, config); err != nil {
@@ -173,6 +174,10 @@ func TestPreparationVersionsNewFilesAndKeepsExistingConfiguration(t *testing.T) 
 	}
 	if raw, err := os.ReadFile(local); err != nil || !bytes.Contains(raw, []byte(`"config_version": 1`)) {
 		t.Fatal("new foreground configuration did not record its format version")
+	}
+	localConfig, err := LoadConfig(local)
+	if err != nil || localConfig.PullIntervalSeconds != 60 {
+		t.Fatal("local preparation did not preserve the configured pull interval", err)
 	}
 	// An existing unversioned configuration stays byte-for-byte identical,
 	// including formatting and omitted defaults, during repeated preparation.
@@ -202,12 +207,12 @@ func TestUnsupportedFileVersionsAreRejectedWithoutOverwrite(t *testing.T) {
 	if err := json.Unmarshal(configRaw, &object); err != nil {
 		t.Fatal(err)
 	}
-	object["config_version"] = json.RawMessage("2")
+	object["config_version"] = json.RawMessage("3")
 	configRaw, _ = json.Marshal(object)
 	if err := atomicWrite(configPath, configRaw, 0600, -1, -1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "config_version 2") {
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "config_version 3") {
 		t.Fatal("unsupported configuration lacked a clear error")
 	}
 	if actual, _ := os.ReadFile(configPath); !bytes.Equal(configRaw, actual) {

@@ -11,24 +11,21 @@ Python 3.9+는 자격 증명 정책 SDK를 제공합니다. Go jms-pam-agent는 
 ## 1. 연동 사전 조건과 흐름
 
 1. 애플리케이션을 만들고 조회할 계정을 승인합니다(pull). 사용자 이름이나 정책 ID 대신 계정 ID를 사용합니다.
-2. 자동 전달이 필요하면 알림 또는 A/B 순환 정책을 연결합니다(push).
+2. store/services에 동기화할 계정을 선언하고, 알림 또는 A/B 전환이 필요하면 해당 정책을 연결합니다.
 3. 연동 마법사에서 인증 설정을 받고 복제본마다 고유하고 고정된 `instance_id`를 사용하며 AK/SK를 보호합니다.
 
 ## 2. 설치 및 시작
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/jms-pam-agent-linux-amd64) · [Linux ARM64](/download/pam/jms-pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+새 설정은 `config_version: 2`이며 해당 Core와 Agent 업데이트가 필요합니다. 버전 1 또는 버전 없는 `delivery` / `rules`는 기존 동작을 유지합니다. 두 형식을 혼합하지 말고 먼저 바이너리를 갱신합니다. Core는 로컬 실행 경로를 추가할 수 없습니다. 비공개 설정 변경 후 Agent를 재시작합니다.
+
+Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
 ```bash
-# Run in the directory containing the downloaded Agent and SHA256SUMS.
-case "$(uname -m)" in
-  x86_64) agent_arch=amd64 ;;
-  aarch64|arm64) agent_arch=arm64 ;;
-  *) echo "Unsupported CPU architecture"; exit 1 ;;
-esac
-sha256sum --ignore-missing --check SHA256SUMS && \
-sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
+cd /path/to/pam-clients/agent
+go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
 ```
 
 다운로드한 `jms_pam_agent.json` 디렉터리에서 실행합니다. Linux 서비스는 root와 systemd가 필요합니다. 복제본별 ID를 변경하세요. 전경 모드는 해당 OS 바이너리가 필요하며 macOS / Windows는 소스 빌드가 필요할 수 있습니다.
@@ -36,13 +33,13 @@ sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pa
 ```bash
 chmod 0600 ./jms_pam_agent.json
 sudo /usr/local/bin/jms-pam-agent install \
-  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
+  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
 sudo systemctl status jms-pam-agent --no-pager
 ```
 
 ### 전경 실행
 
-내장 설치에는 Linux와 root가 필요합니다. macOS, 비 root Linux 또는 Windows에서는 접속 마법사에서 JSON 또는 Socket을 선택하고 init-local 및 run --local --config 명령을 실행하세요. 한 번만 초기화하고 생성된 비공개 로컬 설정을 재사용하세요. 포그라운드 모드는 systemd 작업을 수행하지 않습니다.
+macOS, Windows 또는 비 root Linux는 `init-local`을 한 번 실행한 뒤 `run --local`로 비공개 설정을 재사용합니다. JSON 및 환경 변수 파일을 지원합니다. systemd 동작은 Linux 서비스 전용입니다.
 
 바이너리를 `jms-pam-agent`(Windows: `jms-pam-agent.exe`)로 저장하고 Linux/macOS에서 `chmod 0755 ./jms-pam-agent`를 실행합니다.
 
@@ -50,33 +47,104 @@ sudo systemctl status jms-pam-agent --no-pager
 chmod 0600 ./jms_pam_agent.json
 ./jms-pam-agent init-local \
   --bootstrap ./jms_pam_agent.json \
-  --directory "$HOME/.jms-pam-agent/orders" --instance-id orders-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
-$agentDir = Join-Path $HOME '.jms-pam-agent\orders'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id orders-node-1
+$agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
+.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
 .\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. 전달 방식 선택
+## 3. store / local_api
 
-JSON은 파일 전달, EnvironmentFile은 지정된 systemd 서비스, Unix Socket은 로컬 API를 제공합니다. Agent는 전달 성공 후 전달 리비전을 저장하고 애플리케이션은 검증 및 적용 후 적용 리비전을 저장합니다. Socket은 앱 사용자 소유이며 권한은 0600입니다. 해당 사용자로 요청하세요.
+`store`와 `services`는 독립적입니다. `store.accounts`는 문자열 배열이며 `["all"]`은 애플리케이션에 허가된 모든 계정, ID 배열은 지정한 계정을 저장합니다. 구독은 변경 알림만 제공하며 구독하지 않은 허가된 계정도 동기화됩니다. `store`를 생략하면 업무 처리만 수행하고 빈 배열은 저장하지 않습니다. `all`과 ID를 혼합할 수 없습니다.
 
-| 전달 방식 선택 | 설정 및 실행 |
+```json
+{
+  "config_version": 2,
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "<application-id>",
+  "app_secret": "<application-secret>",
+  "org_id": "<org-id>",
+  "instance_id": "app-node-1",
+  "pull_interval": 300,
+  "local_api": {
+    "owner": "appuser"
+  },
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  },
+  "services": []
+}
+```
+
+`pull_interval`은 전체 폴링 주기이며 단위는 초입니다. 양의 정수를 사용하고 생략하면 기본값은 300입니다. Agent는 시작 즉시 동기화한 뒤 이 주기로 계정과 자격 증명 버전을 확인하며, 버전이나 활성 계정이 변경된 경우에만 비밀 값을 가져옵니다. `update_on_notification: false`인 서비스는 다음 폴링 시 업데이트되며 알림은 이 주기를 늦추지 않습니다.
+
+| 설정 및 실행 | store |
 | --- | --- |
-| JSON | `delivery.delivery_mode: json` → `/opt/jumpserver-pam/credentials/<credential-key>.json` |
-| EnvironmentFile (Linux / systemd) | `delivery.delivery_mode: environment` → `/opt/jumpserver-pam/credentials/<credential-key>.env` |
-| Socket | `delivery.delivery_mode: socket` → `/run/jms-pam-agent/agent.sock` |
+| `store.accounts: ["all"]` | 구독 여부와 관계없이 애플리케이션에 허가된 모든 계정. |
+| `store.accounts: ["<account-id>"]` | 명시적으로 선언한 계정 ID만 저장. |
+| `store.format: json` | `<store.root>/<account-id>.json` |
+| `store.format: environment` | `<store.root>/<account-id>.env` |
+| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
-Linux 설정은 `/etc/jms-pam-agent/agent.json`(0600)입니다. `state_file`은 자격 증명과 진행 상태, `event_file`은 이벤트 메타데이터를 저장합니다. `delivery_root`와 `socket_path`는 전달 위치입니다. 전경 모드는 생성한 `agent.json` 경로를 사용합니다.
+실제 account_id별로 파일을 만들며 A/B도 별도로 저장합니다. 평문 자격 증명 파일의 권한은 0600입니다. 암호 변경 중인 비활성 계정은 일시적으로 사용할 수 없습니다. 권한 확인 후 취소된 파일을 삭제합니다. `local_api.owner`는 Socket과 업무 출력의 기본 소유자이며, 생략 시 `store.owner`, 다음으로 Agent 실행 사용자를 사용합니다. Socket과 파일 저장은 독립적입니다. 버전이 같으면 메타데이터만 확인하며, 실제 암호 조회는 감사 및 교체 접근 관찰에 기록합니다.
+
+### EnvironmentFile / systemd
+
+EnvironmentFile은 사용자 이름, 암호 및 메타데이터를 평문 `KEY=value`로 전용 `.env` 파일(0600)에 저장합니다. 업무 systemd 서비스에 `EnvironmentFile=`을 설정하면 시작 시 해당 프로세스 환경으로 읽습니다. 호스트 전역 환경을 바꾸지 않습니다. 갱신 후 서비스를 재시작해야 하며 reload만으로 실행 중인 프로세스 환경이 바뀌지 않습니다.
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app-env",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "account_id": "<primary-account-id>"
+      }
+    ],
+    "config_update": {
+      "files": [
+        {
+          "path": "/etc/sample-app/database.env",
+          "format": "environment",
+          "owner": "appuser"
+        }
+      ]
+    },
+    "service_action": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    }
+  }
+]
+```
+
+```ini
+JMS_PAM_ACCOUNT_ID="<account-id>"
+JMS_PAM_USERNAME="db_user"
+JMS_PAM_SECRET="<password>"
+```
+
+```ini
+[Service]
+EnvironmentFile=/etc/sample-app/database.env
+```
 
 ## 4. 애플리케이션 설정 변경 및 A/B 순환
 
-다운로드한 설정에는 Agent 인증 정보와 전달 설정이 포함됩니다. rules에 업무에서 사용하는 계정 ID, 설정 갱신, 적용 동작, 실행 중인 연결 확인을 지정합니다. allow_account_switch를 설정하면 동일한 규칙으로 A/B 양방향 교체를 처리합니다. 선택적 credential_check는 파일 변경 전에 새 로그인을 검증합니다. 상태, 이벤트, Socket 경로와 300초 조정 간격에는 기본값이 있습니다. rules가 비어 있으면 자격 증명별 기본 파일을 기록합니다.
-
-첫 JSON은 기본 설정입니다. 업무 파일을 변경하려면 빈 `rules`를 다음 배열로 바꿉니다. 경로, 서비스 및 스크립트는 예제이므로 미리 준비하세요. 일반 변경은 `allow_account_switch`를 생략할 수 있고 A/B는 이 설정과 실제 연결 검증이 필요합니다.
+아래 업무 객체를 `services`에 추가하고 고유하고 안정적인 `name`을 지정합니다. service의 `allow_account_switch`는 기본 false입니다. true이면 관련 A/B의 현재 계정을 따르고 관련 없는 계정은 고정합니다. A만 선언하면 됩니다. `update_on_notification`도 service에 두며 기본 true입니다. false이면 다음 정기 동기화(기본 300초)에 업무를 갱신합니다. 저장 및 권한 취소 처리는 계속됩니다. 업무별 버전을 기록하며 모든 관련 업무의 검증 성공과 `application_check.confirm_on_success: true`가 충족되어야 교체를 자동 확인합니다.
 
 | 설정 및 실행 | 애플리케이션 설정 변경 및 A/B 순환 |
 | --- | --- |
@@ -85,43 +153,31 @@ Linux 설정은 `/etc/jms-pam-agent/agent.json`(0600)입니다. `state_file`은 
 | `service_action` | 고정 서비스 reload/restart 또는 고정 스크립트를 실행합니다. |
 | `application_check` | 실행 중인 업무 연결을 검증한 후 적용을 확인합니다. |
 
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
+`services`:
 
 ```json
 [
   {
+    "name": "sample-app",
+    "allow_account_switch": true,
+    "update_on_notification": true,
     "accounts": [
       {
         "account_id": "<primary-account-id>",
-        "allow_account_switch": true
+        "alias": "database",
+        "username": "db_app_a"
       }
     ],
     "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
+      "file": "/etc/sample-app/config.yml",
+      "format": "yaml",
       "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
+        "DB_USER": "database.username",
+        "DB_PASSWORD": "database.secret"
       }
     },
     "service_action": {
-      "unit": "order-service.service",
+      "unit": "sample-app.service",
       "operation": "restart"
     },
     "application_check": {
@@ -132,11 +188,49 @@ Linux 설정은 `/etc/jms-pam-agent/agent.json`(0600)입니다. `state_file`은 
 ]
 ```
 
+단일 계정은 `username` / `secret`을 직접 사용할 수 있습니다. 여러 계정은 고유 alias와 `database.username`, `cache.secret` 같은 참조가 필요합니다. A/B 전환에도 alias는 유지됩니다. 선택 사항인 `username`은 표시용이며 실제 값은 Core에서 가져옵니다. 모든 계정이 준비된 후 파일을 갱신하고 업무 동작을 한 번 실행합니다. 누락되거나 모호한 매핑은 쓰기 전에 실패합니다.
+
+```json
+{
+  "name": "sample-app",
+  "allow_account_switch": true,
+  "update_on_notification": true,
+  "accounts": [
+    {
+      "account_id": "<primary-account-id>",
+      "alias": "database"
+    },
+    {
+      "account_id": "<cache-account-id>",
+      "alias": "cache"
+    }
+  ],
+  "config_update": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "database.username",
+      "DB_PASSWORD": "database.secret",
+      "CACHE_USER": "cache.username",
+      "CACHE_PASSWORD": "cache.secret"
+    }
+  },
+  "service_action": {
+    "unit": "sample-app.service",
+    "operation": "restart"
+  },
+  "application_check": {
+    "path": "/usr/local/libexec/jms-pam/check-running-db",
+    "confirm_on_success": true
+  }
+}
+```
+
 ### 설정 파일 형식
 
 `config_update.format`의 기본값은 `auto`이며 생략해도 동일합니다. 확장자 `.txt`, `.env`, `.properties`는 `env`(`KEY=value`), `.yml`, `.yaml`은 `yaml`(최상위 `KEY: value`, 새 값은 따옴표로 감싼 문자열)로 처리합니다. 다른 확장자는 `env` 또는 `yaml`을 명시하세요. 매핑 필드는 이미 존재하며 한 번만 나타나야 하고 다른 설정은 보존됩니다. INI 섹션이나 중첩 YAML은 `files` + `template_file`로 전체 파일을 생성하거나 `script`를 사용하세요. 환경 변수 파일을 갱신한 후에는 애플리케이션이 다시 읽거나 재시작해야 적용됩니다.
 
-로컬 rules에 파일, JSON/EnvironmentFile 또는 신뢰할 수 있는 템플릿과 systemd reload/restart 또는 고정 실행 파일을 설정합니다. 스크립트는 표준 입력으로 자격 증명 JSON을 받고 고정 인수와 제한 시간을 사용하며 적용을 검증한 후 성공합니다. Core는 실행 경로나 권한을 확장할 수 없습니다. 구성을 수정한 후 Agent를 재시작합니다.
+새 설정은 `config_version: 2`이며 해당 Core와 Agent 업데이트가 필요합니다. 버전 1 또는 버전 없는 `delivery` / `rules`는 기존 동작을 유지합니다. 두 형식을 혼합하지 말고 먼저 바이너리를 갱신합니다. Core는 로컬 실행 경로를 추가할 수 없습니다. 비공개 설정 변경 후 Agent를 재시작합니다.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -160,7 +254,7 @@ curl --fail --silent --show-error \
 
 curl --fail --silent --show-error \
   --unix-socket '/run/jms-pam-agent/agent.sock' \
-  'http://localhost/v1/credentials/<credential-key>'
+  'http://localhost/v1/credential?account_id=<account-id>'
 ```
 
 ### 애플리케이션 적용 확인
@@ -184,7 +278,7 @@ sudo systemctl status jms-pam-agent --no-pager
 sudo journalctl -u jms-pam-agent -n 100 --no-pager
 ```
 
-Agent는 시작 시, 관련 이벤트 수신 시, 300초마다 동기화합니다. 네트워크 오류는 이미 가져온 최신 승인 자격 증명을 유지합니다. 신원이나 권한 거부 시 Socket 조회를 차단하고 서명된 동기화가 성공하면 복구합니다. 전달된 파일은 유지됩니다. SIGINT/SIGTERM은 서비스, 연결, 읽기 스레드를 종료합니다.
+Agent는 시작, 관련 알림, 정기 주기(기본 300초)에 동기화합니다. 일시 장애 시 허가된 값을 보관합니다. 명시적 권한 취소 또는 앱 비활성화는 갱신 실패 시에도 로컬 읽기를 차단하고 표준 저장 파일을 삭제합니다. 업무 설정 파일은 관리자가 관리합니다. 연속 알림은 정기 업무 갱신을 연기하지 않습니다. SIGINT/SIGTERM은 서버와 이벤트 읽기를 종료합니다.
 
 
 <!-- agent-doc:end -->
@@ -232,7 +326,7 @@ client_options = {
     "app_secret": "<application-secret>",
     "org_id": "<org-id>",
 }
-instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "app-node-1"
 ```
 
 ## 3. 첫 계정 자격 증명 조회
@@ -301,7 +395,7 @@ watch_events는 중지까지 기다립니다. start_events는 초기 동기화 �
 
 ### 최신 자격 증명과 백엔드 장애
 
-먼저 API를 요청합니다. 성공하면 보유한 최신 값을 교체하며 오래된 버전으로 새 값을 덮어쓰지 않고 시간 만료도 없습니다. 시간 초과, 네트워크 오류 또는 HTTP 5xx일 때만 같은 선택자의 마지막 성공 값을 로컬 표시와 함께 반환합니다. 이전 값이 없으면 원래 오류입니다. SDK는 업데이트, 취소 또는 종료까지 클라이언트 메모리에 보유하며 clone과 재시작은 빈 상태로 시작합니다. Agent는 기존의 보호된 로컬 상태에 저장합니다. HTTP 401/403/404는 SDK 값을 삭제하고 실패하며 잘못된 성공 응답도 실패합니다. 취소는 해당 값을, snapshot은 권한 범위 밖 값을 삭제합니다. 구성 변경은 다음 snapshot으로 범위를 확인할 때까지 보유합니다.Agent는 HTTP 동기화 전에 명시적 취소와 snapshot 범위 축소를 적용하고 저장하며, 백엔드 장애 중이나 재시작 후에도 해당 로컬 조회를 차단합니다.credential_not_found(HTTP 400) 응답도 SDK 보관 값을 삭제합니다. HTTP 426은 보관 값을 삭제하지 않고 명시적으로 실패하며 이 요청에 캐시 값을 반환하지 않습니다. 선택적 메타데이터 API 부재(HTTP 404)는 자격 증명을 삭제하지 않습니다. Agent는 pull 전용 값을 오프라인용으로 영구 저장하지 않습니다. SDK는 기존 임시 장애 규칙에 따라 메모리 값을 사용할 수 있습니다.
+SDK는 API를 먼저 요청하며 성공 시 보관 값을 갱신하고 이전 버전으로 돌아가지 않습니다. 시간 초과, 네트워크 오류, HTTP 5xx에서만 같은 선택 조건의 기존 값을 로컬 출처로 반환할 수 있습니다. 보관 값에는 시간 만료가 없고 SDK clone 및 재시작 시 메모리는 비워집니다. HTTP 401/403/404 또는 credential_not_found(400)는 보관 값을 지우고 실패합니다. 426과 잘못된 성공 응답은 대체 값을 사용하지 않으며 선택적 메타데이터 API 부재는 값을 지우지 않습니다. Agent v2는 store/services에 선언된 계정을 보호된 상태에 보관하며, 선언되지 않은 즉시 조회를 자동 저장하지 않습니다. 명시적 취소는 오프라인에서도 HTTP 갱신 전에 적용됩니다. push 스냅샷은 전체 저장 권한을 나타내지 않으며 동기화 성공 시 현재 애플리케이션 권한을 확인합니다.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

@@ -11,24 +11,21 @@ Chạy Go Agent độc lập trên máy ứng dụng, không cần Python. Thự
 ## 1. Điều kiện và quy trình tích hợp
 
 1. Tạo ứng dụng và cấp quyền lấy tài khoản (pull), dùng ID tài khoản thay vì tên hoặc ID chính sách.
-2. Liên kết chính sách thông báo hoặc luân chuyển A/B để tự động phân phối (push).
+2. Khai báo tài khoản trong store/services; liên kết chính sách để nhận thông báo hoặc chuyển A/B.
 3. Tải cấu hình danh tính từ trình hướng dẫn, dùng `instance_id` ổn định, duy nhất cho mỗi bản sao và bảo vệ AK/SK.
 
 ## 2. Cài đặt và khởi động
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/jms-pam-agent-linux-amd64) · [Linux ARM64](/download/pam/jms-pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+Cấu hình mới dùng `config_version: 2`, cần cập nhật Core và Agent tương ứng. Phiên bản 1 hoặc cấu hình `delivery` / `rules` không ghi phiên bản giữ hành vi cũ. Không trộn hai cấu trúc; cập nhật chương trình trước. Core không thể thêm đường dẫn thực thi cục bộ. Khởi động lại Agent sau khi sửa cấu hình riêng.
+
+Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
 ```bash
-# Run in the directory containing the downloaded Agent and SHA256SUMS.
-case "$(uname -m)" in
-  x86_64) agent_arch=amd64 ;;
-  aarch64|arm64) agent_arch=arm64 ;;
-  *) echo "Unsupported CPU architecture"; exit 1 ;;
-esac
-sha256sum --ignore-missing --check SHA256SUMS && \
-sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
+cd /path/to/pam-clients/agent
+go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
 ```
 
 Chạy tại thư mục chứa `jms_pam_agent.json`. Dịch vụ Linux cần root và systemd. Đổi ID cho mỗi bản sao. Chế độ tiền cảnh cần bản nhị phân đúng hệ điều hành; macOS / Windows có thể cần biên dịch.
@@ -36,13 +33,13 @@ Chạy tại thư mục chứa `jms_pam_agent.json`. Dịch vụ Linux cần roo
 ```bash
 chmod 0600 ./jms_pam_agent.json
 sudo /usr/local/bin/jms-pam-agent install \
-  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
+  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
 sudo systemctl status jms-pam-agent --no-pager
 ```
 
 ### Chạy tiền cảnh
 
-Trình cài đặt tích hợp cần Linux và root. Trên macOS, Linux không có root hoặc Windows, chọn JSON hoặc Socket trong trình hướng dẫn và chạy init-local cùng run --local --config. Chỉ khởi tạo một lần rồi dùng lại cấu hình cục bộ riêng tư; chế độ chạy trực tiếp không thực hiện thao tác systemd.
+Trên macOS, Windows hoặc Linux không có root, chạy `init-local` một lần rồi dùng lại cấu hình riêng bằng `run --local`. Hỗ trợ JSON và tệp môi trường; systemd chỉ dùng với dịch vụ Linux.
 
 Đặt tên nhị phân `jms-pam-agent` (`jms-pam-agent.exe` trên Windows); Linux/macOS chạy `chmod 0755 ./jms-pam-agent`.
 
@@ -50,33 +47,104 @@ Trình cài đặt tích hợp cần Linux và root. Trên macOS, Linux không c
 chmod 0600 ./jms_pam_agent.json
 ./jms-pam-agent init-local \
   --bootstrap ./jms_pam_agent.json \
-  --directory "$HOME/.jms-pam-agent/orders" --instance-id orders-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
-$agentDir = Join-Path $HOME '.jms-pam-agent\orders'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id orders-node-1
+$agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
+.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
 .\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. Chọn cách phân phối
+## 3. store / local_api
 
-JSON giao tệp, EnvironmentFile dùng dịch vụ systemd cố định, Unix Socket cung cấp API cục bộ. Agent ghi phiên bản đã giao sau thành công; ứng dụng ghi phiên bản đã áp dụng sau kiểm tra và sử dụng. Socket thuộc người dùng ứng dụng với quyền 0600; gửi yêu cầu bằng người dùng đó.
+`store` và `services` hoạt động độc lập. `store.accounts` luôn là mảng chuỗi: `["all"]` lưu mọi tài khoản được ứng dụng cấp quyền, hoặc liệt kê ID cụ thể. Đăng ký chỉ cung cấp thông báo thay đổi; tài khoản được cấp quyền vẫn đồng bộ khi không đăng ký. Bỏ `store` để chỉ cập nhật dịch vụ; mảng rỗng không lưu tệp chuẩn. Không trộn `all` với ID.
 
-| Chọn cách phân phối | Cấu hình và chạy |
+```json
+{
+  "config_version": 2,
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "<application-id>",
+  "app_secret": "<application-secret>",
+  "org_id": "<org-id>",
+  "instance_id": "app-node-1",
+  "pull_interval": 300,
+  "local_api": {
+    "owner": "appuser"
+  },
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  },
+  "services": []
+}
+```
+
+`pull_interval` là chu kỳ truy vấn chung tính bằng giây, phải là số nguyên dương và mặc định là 300. Agent đồng bộ ngay khi khởi động, sau đó kiểm tra phiên bản tài khoản và thông tin xác thực theo chu kỳ này; chỉ lấy bí mật khi phiên bản hoặc tài khoản đang hoạt động thay đổi. Dịch vụ có `update_on_notification: false` cập nhật ở lần truy vấn kế tiếp; thông báo không trì hoãn chu kỳ này.
+
+| Cấu hình và chạy | store |
 | --- | --- |
-| JSON | `delivery.delivery_mode: json` → `/opt/jumpserver-pam/credentials/<credential-key>.json` |
-| EnvironmentFile (Linux / systemd) | `delivery.delivery_mode: environment` → `/opt/jumpserver-pam/credentials/<credential-key>.env` |
-| Socket | `delivery.delivery_mode: socket` → `/run/jms-pam-agent/agent.sock` |
+| `store.accounts: ["all"]` | Mọi tài khoản được ứng dụng cấp quyền, kể cả không đăng ký. |
+| `store.accounts: ["<account-id>"]` | Chỉ các ID tài khoản được khai báo rõ ràng. |
+| `store.format: json` | `<store.root>/<account-id>.json` |
+| `store.format: environment` | `<store.root>/<account-id>.env` |
+| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
-Cấu hình Linux: `/etc/jms-pam-agent/agent.json` (0600). `state_file` lưu mật khẩu và tiến độ; `event_file` lưu siêu dữ liệu sự kiện. `delivery_root` và `socket_path` chọn nơi phân phối. Chế độ tiền cảnh dùng đường dẫn từ `agent.json` được tạo.
+Mỗi tài khoản, kể cả A và B, có tệp riêng theo account_id. Tệp chứa thông tin xác thực dạng rõ với quyền 0600. Tài khoản không hoạt động đang đổi mật khẩu tạm thời không khả dụng. Đối soát quyền sẽ xóa tệp bị thu hồi. `local_api.owner` quản lý Socket và chủ sở hữu mặc định của tệp nghiệp vụ; mặc định lần lượt là `store.owner` rồi người dùng chạy Agent. Socket độc lập với lưu trữ. Phiên bản không đổi chỉ đọc siêu dữ liệu; lần lấy bí mật thực tế vẫn được kiểm toán và tính vào quan sát luân chuyển.
+
+### EnvironmentFile / systemd
+
+EnvironmentFile ghi tên người dùng, mật khẩu và siêu dữ liệu dạng văn bản thuần `KEY=value` vào tệp `.env` riêng (0600). Đặt `EnvironmentFile=` trong dịch vụ systemd của ứng dụng để nạp vào môi trường tiến trình khi khởi động. Không đổi biến toàn cục của máy. Cần khởi động lại dịch vụ sau cập nhật; reload không thay môi trường tiến trình chính đang chạy.
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app-env",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "account_id": "<primary-account-id>"
+      }
+    ],
+    "config_update": {
+      "files": [
+        {
+          "path": "/etc/sample-app/database.env",
+          "format": "environment",
+          "owner": "appuser"
+        }
+      ]
+    },
+    "service_action": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    }
+  }
+]
+```
+
+```ini
+JMS_PAM_ACCOUNT_ID="<account-id>"
+JMS_PAM_USERNAME="db_user"
+JMS_PAM_SECRET="<password>"
+```
+
+```ini
+[Service]
+EnvironmentFile=/etc/sample-app/database.env
+```
 
 ## 4. Cập nhật cấu hình và luân chuyển A/B
 
-Cấu hình tải về đã có danh tính và thiết lập phân phối của Agent. Trong rules, khai báo ID tài khoản ứng dụng sử dụng, cách cập nhật cấu hình, áp dụng thay đổi và kiểm tra kết nối đang chạy. allow_account_switch dùng cùng một quy tắc cho cả hai chiều luân phiên A/B. credential_check tùy chọn kiểm tra đăng nhập mới trước khi sửa tệp. Đường dẫn trạng thái, sự kiện, Socket và chu kỳ đối chiếu 300 giây có giá trị mặc định. rules rỗng ghi tệp mặc định cho từng thông tin xác thực.
-
-JSON đầu là cấu hình cơ bản. Để sửa tệp nghiệp vụ, thay `rules` rỗng bằng mảng tiếp theo. Chuẩn bị trước đường dẫn, dịch vụ và script mẫu. Cập nhật thường có thể bỏ `allow_account_switch`; A/B cần tùy chọn này và kiểm tra kết nối thực.
+Thêm các đối tượng dưới đây vào `services` với `name` duy nhất, ổn định. `allow_account_switch` ở cấp dịch vụ mặc định false: true theo tài khoản hiện hành của liên kết A/B rõ ràng; tài khoản khác giữ cố định. Chỉ cần khai báo A. `update_on_notification` cũng ở cấp dịch vụ, mặc định true. False đợi lần đối soát định kỳ tiếp theo, mặc định 300 giây; lưu trữ và thu hồi quyền vẫn hoạt động. Mỗi dịch vụ lưu phiên bản riêng. Chỉ tự xác nhận luân chuyển khi tất cả dịch vụ liên quan kiểm tra thành công với `application_check.confirm_on_success: true`.
 
 | Cấu hình và chạy | Cập nhật cấu hình và luân chuyển A/B |
 | --- | --- |
@@ -85,43 +153,31 @@ JSON đầu là cấu hình cơ bản. Để sửa tệp nghiệp vụ, thay `ru
 | `service_action` | Reload/restart dịch vụ cố định hoặc chạy script cố định. |
 | `application_check` | Kiểm tra kết nối ứng dụng đang chạy rồi mới xác nhận. |
 
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
+`services`:
 
 ```json
 [
   {
+    "name": "sample-app",
+    "allow_account_switch": true,
+    "update_on_notification": true,
     "accounts": [
       {
         "account_id": "<primary-account-id>",
-        "allow_account_switch": true
+        "alias": "database",
+        "username": "db_app_a"
       }
     ],
     "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
+      "file": "/etc/sample-app/config.yml",
+      "format": "yaml",
       "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
+        "DB_USER": "database.username",
+        "DB_PASSWORD": "database.secret"
       }
     },
     "service_action": {
-      "unit": "order-service.service",
+      "unit": "sample-app.service",
       "operation": "restart"
     },
     "application_check": {
@@ -132,11 +188,49 @@ JSON đầu là cấu hình cơ bản. Để sửa tệp nghiệp vụ, thay `ru
 ]
 ```
 
+Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều tài khoản cần alias duy nhất và tham chiếu như `database.username`, `cache.secret`. Alias không đổi khi chuyển A/B. `username` tùy chọn chỉ để đọc; giá trị thật lấy từ Core. Phải có đủ tài khoản trước khi ghi tệp, sau đó thực hiện hành động dịch vụ một lần. Ánh xạ thiếu hoặc mơ hồ phải báo lỗi trước khi sửa.
+
+```json
+{
+  "name": "sample-app",
+  "allow_account_switch": true,
+  "update_on_notification": true,
+  "accounts": [
+    {
+      "account_id": "<primary-account-id>",
+      "alias": "database"
+    },
+    {
+      "account_id": "<cache-account-id>",
+      "alias": "cache"
+    }
+  ],
+  "config_update": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "database.username",
+      "DB_PASSWORD": "database.secret",
+      "CACHE_USER": "cache.username",
+      "CACHE_PASSWORD": "cache.secret"
+    }
+  },
+  "service_action": {
+    "unit": "sample-app.service",
+    "operation": "restart"
+  },
+  "application_check": {
+    "path": "/usr/local/libexec/jms-pam/check-running-db",
+    "confirm_on_success": true
+  }
+}
+```
+
 ### Định dạng cấu hình
 
 `config_update.format` mặc định là `auto`, kể cả khi bỏ qua trường này. Các đuôi `.txt`, `.env`, `.properties` dùng `env` (`KEY=value`); `.yml`, `.yaml` dùng `yaml` (`KEY: value` cấp cao nhất, giá trị mới ghi dưới dạng chuỗi có dấu ngoặc kép). Với đuôi khác, chỉ định `env` hoặc `yaml`. Mỗi trường ánh xạ phải tồn tại đúng một lần; các thiết lập khác được giữ nguyên. Với section INI hoặc YAML lồng nhau, dùng `files` + `template_file` để tạo toàn bộ tệp, hoặc `script`. Sau khi cập nhật tệp biến môi trường, ứng dụng phải đọc lại tệp hoặc khởi động lại.
 
-rules cục bộ cấu hình tệp, JSON/EnvironmentFile hoặc mẫu tin cậy cùng systemd reload/restart hoặc chương trình cố định. Script nhận JSON qua stdin, dùng đối số cố định và giới hạn thời gian, rồi kiểm tra ứng dụng trước khi báo thành công. Core không được mở rộng quyền này. Khởi động lại Agent sau khi sửa cấu hình riêng tư.
+Cấu hình mới dùng `config_version: 2`, cần cập nhật Core và Agent tương ứng. Phiên bản 1 hoặc cấu hình `delivery` / `rules` không ghi phiên bản giữ hành vi cũ. Không trộn hai cấu trúc; cập nhật chương trình trước. Core không thể thêm đường dẫn thực thi cục bộ. Khởi động lại Agent sau khi sửa cấu hình riêng.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -160,7 +254,7 @@ curl --fail --silent --show-error \
 
 curl --fail --silent --show-error \
   --unix-socket '/run/jms-pam-agent/agent.sock' \
-  'http://localhost/v1/credentials/<credential-key>'
+  'http://localhost/v1/credential?account_id=<account-id>'
 ```
 
 ### Xác nhận ứng dụng đã áp dụng
@@ -184,7 +278,7 @@ sudo systemctl status jms-pam-agent --no-pager
 sudo journalctl -u jms-pam-agent -n 100 --no-pager
 ```
 
-Agent đồng bộ lúc khởi động, theo sự kiện liên quan và mỗi 300 giây. Lỗi mạng giữ thông tin xác thực mới nhất đã lấy và được cấp quyền. Khi danh tính/quyền bị từ chối, chặn lấy qua Socket; đồng bộ có chữ ký thành công sẽ khôi phục. Tệp đã giao vẫn được giữ. SIGINT/SIGTERM đóng dịch vụ, kết nối và luồng đọc.
+Agent đồng bộ khi khởi động, có thông báo liên quan và theo chu kỳ, mặc định 300 giây. Lỗi tạm thời giữ giá trị còn quyền. Thu hồi rõ ràng hoặc vô hiệu hóa ứng dụng chặn đọc cục bộ và xóa tệp chuẩn ngay cả khi làm mới thất bại. Tệp nghiệp vụ do quản trị viên quản lý. Thông báo liên tục không trì hoãn đối soát định kỳ. SIGINT/SIGTERM đóng máy chủ và luồng đọc sự kiện.
 
 
 <!-- agent-doc:end -->
@@ -232,7 +326,7 @@ client_options = {
     "app_secret": "<application-secret>",
     "org_id": "<org-id>",
 }
-instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "app-node-1"
 ```
 
 ## 3. Lấy thông tin xác thực đầu tiên
@@ -301,7 +395,7 @@ watch_events chờ dừng; start_events không đảm bảo đồng bộ ban đ�
 
 ### Thông tin xác thực mới nhất và lỗi máy chủ
 
-Luôn gọi API trước. Kết quả thành công thay thế giá trị đang giữ; phiên bản cũ không ghi đè bản mới và không có thời hạn hết hiệu lực theo thời gian. Chỉ hết thời gian chờ, lỗi mạng hoặc HTTP 5xx mới trả về giá trị thành công gần nhất của cùng bộ chọn với cờ nguồn cục bộ. Chưa có giá trị thì báo lỗi gốc. SDK giữ trong bộ nhớ client đến khi cập nhật, thu hồi hoặc đóng; clone và khởi động lại bắt đầu trống. Agent dùng trạng thái cục bộ được bảo vệ sẵn có. HTTP 401/403/404 xóa giá trị SDK rồi báo lỗi; phản hồi thành công không hợp lệ cũng báo lỗi. Thu hồi xóa mục liên quan, snapshot xóa mục ngoài quyền. Thay đổi cấu hình giữ giá trị đến khi kiểm tra snapshot tiếp theo. Agent áp dụng thu hồi rõ ràng và thu hẹp phạm vi snapshot trước khi đồng bộ HTTP, lưu phạm vi đó và chặn các lần lấy cục bộ liên quan ngay cả khi máy chủ lỗi hoặc sau khi khởi động lại. Phản hồi credential_not_found (HTTP 400) cũng xóa giá trị SDK được giữ lại. HTTP 426 báo lỗi rõ ràng nhưng không xóa giá trị đã giữ và không trả bộ nhớ đệm cho yêu cầu đó. API siêu dữ liệu tùy chọn không tồn tại (HTTP 404) không xóa thông tin xác thực. Agent không lưu bền vững giá trị chỉ pull để dùng ngoại tuyến; SDK có thể dùng bộ nhớ theo quy tắc lỗi tạm thời hiện có.
+SDK gọi API trước và cập nhật giá trị giữ lại, không quay về phiên bản cũ. Chỉ timeout, lỗi mạng hoặc HTTP 5xx mới cho phép dùng giá trị đã lấy cho cùng bộ chọn, đánh dấu nguồn cục bộ và không hết hạn theo thời gian. Clone và khởi động lại SDK bắt đầu với bộ nhớ rỗng. HTTP 401/403/404 hoặc credential_not_found (400) xóa giá trị; 426 và phản hồi thành công sai định dạng không dùng dự phòng. API siêu dữ liệu tùy chọn bị thiếu không xóa bộ nhớ. Agent v2 lưu tài khoản khai báo trong store/services; truy vấn tức thời chưa khai báo không tự lưu bền. Thu hồi rõ ràng có hiệu lực trước khi làm mới HTTP, cả khi ngoại tuyến. Snapshot push không xác định toàn bộ quyền lưu trữ; đối soát thành công kiểm tra quyền ứng dụng hiện tại.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

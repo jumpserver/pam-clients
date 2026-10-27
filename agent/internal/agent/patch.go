@@ -83,7 +83,7 @@ func patchFlatConfig(original []byte, format string, values map[string]string) (
 	return []byte(strings.Join(lines, "")), nil
 }
 
-func renderMappedConfig(update ConfigUpdate, account AccountSelector, payload Payload) ([]byte, os.FileMode, int, int, error) {
+func renderMappedConfig(update ConfigUpdate, accounts []AccountSelector, payload Payload) ([]byte, os.FileMode, int, int, error) {
 	if err := secureTarget(update.File); err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -98,13 +98,14 @@ func renderMappedConfig(update ConfigUpdate, account AccountSelector, payload Pa
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
-	credential, ok := payload.Credentials[account.AccountID]
-	if !ok {
-		return nil, 0, 0, 0, errors.New("mapped account is unavailable")
-	}
 	values := map[string]string{}
 	for name, source := range update.FieldsMap {
-		values[name] = credentialField(credential, source)
+		account, field, valid := sourceAccount(accounts, source)
+		credential, ok := payload.Credentials[account.AccountID]
+		if !valid || !ok {
+			return nil, 0, 0, 0, errors.New("mapped account or field is unavailable")
+		}
+		values[name] = credentialField(credential, field)
 	}
 	updated, err := patchFlatConfig(raw, update.patchFormat(), values)
 	if err != nil {

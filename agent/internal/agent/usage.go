@@ -20,6 +20,9 @@ type AccountUsage struct {
 }
 
 func (a *Agent) restoreAccountUsage() error {
+	if a.Config.modern() {
+		return a.restoreServiceUsage()
+	}
 	seen := make(map[string]bool)
 	if len(a.state.ReportedAccounts) > 200 {
 		return errors.New("invalid reported account usage")

@@ -1,118 +1,218 @@
-# Go jms-pam-agent
+# Go Agent integration
 
-The standalone Agent is implemented in Go and requires no Python runtime. The built-in systemd installer requires Linux and root; foreground runs use the current user on Linux, macOS and Windows. The Linux service stores private configuration in `/etc/jms-pam-agent/agent.json` and retained state in `/var/lib/jms-pam-agent/state.json` (0600). A subscription credential uses `account:<account-id>` as its key, independent of the policy that selected the account. Multiple matching push policies deliver one account credential. Rotation keeps its policy key. Local `rules.files.path` can give business files stable, readable names.
+Run the standalone Go Agent on the application host; Python is not required. Follow the sections below to install it, select delivery, configure business actions and verify the result.
 
-## Install
+## 1. Prerequisites and workflow
 
-Download bootstrap configuration and matching Agent/SDK source from the same Core. Replace jumpserver.example.com below with your Core address. Build with Go 1.23+ on a host matching the target OS and CPU architecture, then copy the binary to the application host. Go is not needed at runtime. v1.0.2 binaries do not support explicit `format: "auto"` or the new APIs.
+1. Create an application and authorize the accounts it may retrieve (pull). Use account IDs, not usernames or policy IDs.
+2. Declare store/services to synchronize authorized accounts. Bind notifications or A/B policies when updates must be pushed.
+3. Download identity/configuration from the application access wizard. Use a stable, unique `instance_id` for each replica and keep AK/SK private.
 
-```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/agent/ -o jms-pam-clients.tar.gz &&
-tar -xzf jms-pam-clients.tar.gz &&
-go -C ./jms-pam-clients/agent build -trimpath -o ../../jms-pam-agent ./cmd/jms-pam-agent &&
-sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent &&
-chmod 0600 jms_pam_agent.json &&
-sudo jms-pam-agent install --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
-```
+## 2. Install and start
 
-The fixed service is `jms-pam-agent.service`. Application AK/SK and a stable `instance_id` identify the Agent. Application account authorization defines on-demand pull access; bound credential policies define proactive sync and push. For cross-compilation and other platforms, see [development](../docs/agent-development.md).
+### Linux / systemd
 
-New applications and account-scope updates may select specific accounts, all accounts, or accounts by attribute. The matched scope must stay within the system-wide application account limit (default 10), configured with `APPLICATION_ACCOUNT_SCOPE_LIMIT` in Core's `config.yml`. Restart Core after changing it. Existing scopes retain their current retrieval access until their account authorization is changed. If a newly limited dynamic scope later grows past the limit, account listing and credential retrieval fail until the scope is narrowed or the limit is raised; the server never silently selects the first 10 accounts. After a new scope is saved, the Agent revokes push account keys outside that scope on its next synchronization.
+Use `config_version: 2` with the corresponding updated Core and Agent. Existing version 1 / unversioned `delivery` + `rules` configurations retain their old behavior; do not mix the two schemas. Update binaries before using new fields. Core cannot supply new local executable paths. Edit the private configuration and restart the Agent.
 
-Update notifications and initial/reconnect snapshots trigger signed reconciliation and live credential retrieval. The Agent retains the latest successful credential without expiry, renders and atomically replaces files, executes configured actions, then records delivered revisions. Failed retrieval or delivery retries with 1–30 second backoff; periodic reconciliation defaults to 300 seconds. Retained credentials survive outages and process restarts. Explicit revocation reduces persisted authorization before HTTP synchronization.
-
-Default delivery writes one JSON file per credential. For a business application, edit only the local `rules`: select the account IDs it uses, update its configuration, activate the change, and verify the running connection. Paths, scripts and service actions are fixed locally; Core cannot add them through events. Generated state, event and socket paths and the reconciliation interval have defaults.
-
-A rule can select `"accounts":[{"account_id":"<account-A-id>","allow_account_switch":true}]` and map fields with `"config_update":{"file":"/path/config.txt","fields_map":{"DB_USER":"username","DB_PASSWORD":"secret"}}`. For an A/B rotation, the same rule applies in either direction, including a first sync that starts on B. The declared fields receive the active account's username and secret. Use a second rule with its own account and field mapping when one business file uses two accounts. Rules sharing a file must map distinct fields with the same format and owner.
-
-The execution order is optional `credential_check`, backup of existing business configuration targets, `config_update`, `service_action`, then `application_check`. Backups are stored privately under `backups/` next to `state_file`, grouped by target path and named with a UTC timestamp. The Agent keeps at most 10 per target, skips identical consecutive contents, and stops delivery if backup fails. Targets larger than 32 MiB need their own backup handling. Restoring a backup and reloading the application are explicit operator actions. `config_update.file` edits declared top-level fields in an existing flat `.txt`, `.env`, `.yml` or `.yaml` file, preserving unrelated settings, permissions and ownership. Every mapped field must already exist exactly once. Use `files` with `template_file` to render a complete file, or `script` for complex formats. A fixed script receives `{"event":"credentials.updated","credentials":{...}}` on stdin. It has no implicit arguments; `args` supplies fixed ones. Script updates declare their destination with `target` or `targets`; neither is passed automatically. Actions infer script from `path` and systemd from `unit`, so `type` can be omitted.
-
-The `application_check` must prove the running business uses the new database account, rather than just checking process liveness. Set `confirm_on_success` to report the event application result after this check. A failed step leaves delivery pending for retry; the Agent does not automatically roll business files back after an activation or check failure. JumpServer installer `config.txt` needs recreation of the readers, including Core and Celery containers. Direct `config.yml` deployment needs restart of its actual readers. The installer format cannot represent passwords containing quotes; such credentials require a custom updater. Old-account password changes must wait until JumpServer credential retrieval records show no old-account traffic after switching.
-
-Scripts must be idempotent, use protected paths, and keep secrets out of arguments, environment variables and logs. The default action timeout is 120 seconds, with a maximum of 300 seconds. To apply changed local rules, run `sudo jms-pam-agent check-config` and restart the fixed service. An active systemd service alone does not prove the business database connection changed.
-
-See the [complete configuration and script contract](README.zh-hans.md). Local tests cover updates, retained-state recovery, revocation, templates, scripts, failure paths, confirmation and socket lifecycle. Linux systemd installation and real service actions need target-host validation.
-
-## Configuration compatibility and upgrades
-
-The Agent uses independent local file versions: `config_version` for `agent.json` and `state_version` for retained state. Both currently use version `1`, independently of the Agent release and HTTP/WebSocket protocol version. Existing files without these fields are read as v1; no configuration edits are required. New installations and foreground initialization write `config_version: 1`.
-
-Loading or starting the Agent does not rewrite existing configuration or state. Normal atomic state persistence adds `state_version: 1` while retaining credentials, authorization, delivered revisions and pending results. Adding a configuration version does not change instance identity or trigger application actions by itself. Existing `files`/`action` rules remain supported alongside staged rules.
-
-Before replacing the binary, keep the existing configuration and state paths and run the new binary's `check-config --config PATH`. Unknown format versions stop startup with a clear error and leave the files intact. Invalid version values and unknown configuration fields are rejected; diagnostics identify field names or JSON byte offsets without printing credential values. Future format changes require a compatible reader or an explicit migration. Roll back only to an Agent that supports the current file formats; restoring an old state backup can discard subsequent revocations and rotation progress.
-
-Older binaries that do not recognize `config_version` cannot read a newly versioned configuration. Keep the original unversioned configuration when upgrading an existing installation; generated versioned configurations require an Agent with this support.
-
-A backend HTTP 426 is a compatibility failure, not identity revocation. The Agent keeps already authorized local values and records `sync_error: client_upgrade_required`; live query APIs still return 426. Health and usage reports expose the error, and a successful sync clears it. A compatibility error never restores a previously denied identity or confirms credential application. See [protocol compatibility](../docs/protocol-compatibility.md).
-
-## CLI and foreground operation
+Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
 ```bash
-jms-pam-agent get_accounts --config /path/to/agent.json
-jms-pam-agent get_secret ACCOUNT_ID --config /path/to/agent.json
-# Alternatively use --socket PATH; get-secret is supported, and get_credential / get-credential remain aliases.
+cd /path/to/pam-clients/agent
+go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
 ```
 
-Queries use the running Agent's protected socket. Account listing returns metadata for the application's pull scope without fetching passwords; pull-only accounts have an empty `credentials` list. Policy entries identify the proactive push scope, with rotation marking only its current account. Credential queries use the account ID to check live application authorization and fetch on demand, without requiring a push policy. Pull-only passwords are not persisted and cannot be used offline; only still-authorized pushed credentials can be used for network failures, timeouts or HTTP 5xx. The account list API supports `limit`, `offset` and `search`. JSON output reports `source: api` or `source: local`. Credential queries intentionally print the password to stdout and never confirm business application.
-
-`--config` accepts paths relative to the current working directory; private permissions and symlink checks still apply. Paths inside the configuration remain absolute. CLI diagnostics explain local validation failures or report HTTP status without logging backend response bodies.
-
-For Linux foreground use, save the Release binary as `jms-pam-agent`, protect the bootstrap JSON with mode 0600, then run:
+Run in the directory containing the downloaded `jms_pam_agent.json`. The Linux service commands below require root and systemd. Change the instance ID for each replica. For foreground mode use the corresponding host binary; macOS/Windows binaries may require a source build.
 
 ```bash
-./jms-pam-agent init-local --bootstrap /private/path/jms_pam_agent.json \
-  --directory "$HOME/.jms-pam-agent/orders" --instance-id local-orders-agent
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+chmod 0600 ./jms_pam_agent.json
+sudo /usr/local/bin/jms-pam-agent install \
+  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
+sudo systemctl status jms-pam-agent --no-pager
 ```
 
-Initialize once and reuse `agent.json` for later starts. The bootstrap and all Windows credential paths must stay under the current user's home with a private ACL; the Agent rejects links and reparse points. Use a short directory so the local Unix socket path stays below 108 bytes. Windows default credential filenames use a SHA-256 hash of the key because `account:<id>` is not a valid Windows filename; the JSON content still includes the key. Foreground mode uses current-user paths and JSON or Socket delivery; it cannot execute systemd actions or EnvironmentFile delivery. Signed scope and execution capability checks remain enforced. The directory contains private `agent.json`, append-only metadata `events.jsonl`, retained `state.json`, a protected `run/agent.sock`, and default JSON credentials. Records distinguish received, saved and delivered phases, contain no secrets and provide no exactly-once/history replay guarantee. The Linux service remains `systemctl start jms-pam-agent`.
+### Foreground mode
 
-## Configuration replacement formats
+For macOS, Windows or non-root Linux, initialize once with `init-local`, then reuse the generated private configuration with `run --local`. Standard JSON and environment files are supported; systemd actions require the Linux service.
 
-`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
-
-`format` applies only to `config_update.file`; omit it when using templates or scripts.
-
-## Accounts in use
-
-Accounts declared in `rules[].accounts` count as in use, independently of password-fetch history. A normal selector uses its configured `account_id`. With `allow_account_switch: true`, successful completion of local delivery updates the retained current account to A or B. A failed workflow preserves the previous account and reports a degraded state.
-
-The existing private `state_file` retains this mapping in `account_usage`, containing account IDs, credential keys and revisions without another copy of passwords. Restart restores the current account. Update local configuration and restart the Agent to remove usage records for deleted declarations. Older state files recover usage from successfully delivered credentials. Undeclared accounts never become in use merely because they were queried, fetched or written to default credential files.
-
-After synchronization, the Agent reports state and account IDs to Core with a two-second timeout. Reporting failures do not block delivery, deny local credential access or repeat application actions; the next synchronization retries reporting. The application's access and connections page displays the accounts and last report time. Usage reporting remains independent of `application_check` and rotation confirmation.
-
-Query the local snapshot through the Socket, replacing the path when configured differently:
+Save the foreground binary as `jms-pam-agent` (`jms-pam-agent.exe` on Windows); on Linux/macOS give it execute permission with `chmod 0755 ./jms-pam-agent`.
 
 ```bash
-curl --unix-socket /run/jms-pam-agent/agent.sock http://localhost/v1/usage
+chmod 0600 ./jms_pam_agent.json
+./jms-pam-agent init-local \
+  --bootstrap ./jms_pam_agent.json \
+  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
-
-Applications can explicitly declare their complete account usage without fetching secrets or confirming events:
-
-```bash
-jms-pam-agent report_accounts '<account-id>' --socket /run/jms-pam-agent/agent.sock
-# An empty declaration clears application-reported usage, preserving local rules.
-jms-pam-agent report_accounts --socket /run/jms-pam-agent/agent.sock
-curl --unix-socket /run/jms-pam-agent/agent.sock -H 'Content-Type: application/json' \
-  -d '{"account_ids":["<account-id>"]}' http://localhost/v1/usage
+```powershell
+$agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
+.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
+.\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-Each call replaces the explicit usage list after checking online application authorization. The existing private state file retains it across restarts. Reports combine these accounts with local rule declarations; they do not expand authorization or delivery scope, and never confirm rotation.
+## 3. store / local_api
 
-## Local configuration and update flow
-
-The downloaded bootstrap is already a complete configuration. Keep its identity and delivery fields, then add a rule such as:
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every account authorized for this application, or specify account IDs. Subscriptions only provide change notifications; authorized accounts can be synchronized without a subscription. Omit `store` for services-only use; an explicit empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
-  "accounts": [{"account_id": "<primary-account-id>", "allow_account_switch": true}],
-  "config_update": {
-    "file": "/opt/jumpserver/config/config.txt",
-    "format": "auto",
-    "fields_map": {"DB_USER": "username", "DB_PASSWORD": "secret"}
+  "config_version": 2,
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "<application-id>",
+  "app_secret": "<application-secret>",
+  "org_id": "<org-id>",
+  "instance_id": "app-node-1",
+  "pull_interval": 300,
+  "local_api": {
+    "owner": "appuser"
   },
-  "service_action": {"path": "/usr/local/libexec/jms-pam/recreate-jumpserver"},
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  },
+  "services": []
+}
+```
+
+`pull_interval` is the global polling interval in seconds, a positive integer with a default of 300. The Agent synchronizes immediately at startup, then checks account and credential versions at this interval, fetching secrets only when versions or the active account change. Services with `update_on_notification: false` update on the next poll; notifications do not postpone it.
+
+| Configure and run | store |
+| --- | --- |
+| `store.accounts: ["all"]` | All application-authorized accounts, including accounts without subscriptions. |
+| `store.accounts: ["<account-id>"]` | Only the explicitly declared account IDs. |
+| `store.format: json` | `<store.root>/<account-id>.json` |
+| `store.format: environment` | `<store.root>/<account-id>.env` |
+| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
+
+Each stored account has its own file named by its actual account ID, including separate A/B accounts. Files contain plaintext credentials with mode 0600. A/B standby accounts being changed are temporarily unavailable. Successful authorization reconciliation removes revoked files. `local_api.owner` controls socket access and the default owner of business output files; it defaults to `store.owner`, then the Agent user. Socket access is independent of file storage. Private state and events retain their default paths. An unchanged reconciliation reads metadata without fetching passwords again; actual fetches remain audited and participate in rotation access observation.
+
+### EnvironmentFile / systemd
+
+EnvironmentFile writes the username, password and account metadata as plaintext `KEY=value` entries in a private `.env` file (0600). The business systemd service must explicitly reference this file with `EnvironmentFile=`. systemd loads it into that service process environment when starting the process; it does not set global host variables. Restart the service after an update to refresh its main process environment. Reload alone does not replace an already running process environment.
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app-env",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "account_id": "<primary-account-id>"
+      }
+    ],
+    "config_update": {
+      "files": [
+        {
+          "path": "/etc/sample-app/database.env",
+          "format": "environment",
+          "owner": "appuser"
+        }
+      ]
+    },
+    "service_action": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    }
+  }
+]
+```
+
+```ini
+JMS_PAM_ACCOUNT_ID="<account-id>"
+JMS_PAM_USERNAME="db_user"
+JMS_PAM_SECRET="<password>"
+```
+
+```ini
+[Service]
+EnvironmentFile=/etc/sample-app/database.env
+```
+
+## 4. Update business configuration and A/B rotation
+
+Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.
+
+| Configure and run | Update business configuration and A/B rotation |
+| --- | --- |
+| `credential_check` | Optional: validate the new login before changing files. |
+| `config_update` | Update the existing business file using field mappings, a template or a script. |
+| `service_action` | Reload/restart the configured service or run a fixed script. |
+| `application_check` | Verify the running business connection; only then confirm application success. |
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "account_id": "<primary-account-id>",
+        "alias": "database",
+        "username": "db_app_a"
+      }
+    ],
+    "config_update": {
+      "file": "/etc/sample-app/config.yml",
+      "format": "yaml",
+      "fields_map": {
+        "DB_USER": "database.username",
+        "DB_PASSWORD": "database.secret"
+      }
+    },
+    "service_action": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    },
+    "application_check": {
+      "path": "/usr/local/libexec/jms-pam/check-running-db",
+      "confirm_on_success": true
+    }
+  }
+]
+```
+
+One account may use `username` / `secret` directly. Multiple accounts require unique aliases and qualified references such as `database.username` and `cache.secret`. Alias references stay stable across A/B switches. Optional selector `username` is a display hint only; actual values come from Core. Resolve every required account before writing the file, then run the service action once. Missing or ambiguous mappings fail before mutation.
+
+```json
+{
+  "name": "sample-app",
+  "allow_account_switch": true,
+  "update_on_notification": true,
+  "accounts": [
+    {
+      "account_id": "<primary-account-id>",
+      "alias": "database"
+    },
+    {
+      "account_id": "<cache-account-id>",
+      "alias": "cache"
+    }
+  ],
+  "config_update": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "database.username",
+      "DB_PASSWORD": "database.secret",
+      "CACHE_USER": "cache.username",
+      "CACHE_PASSWORD": "cache.secret"
+    }
+  },
+  "service_action": {
+    "unit": "sample-app.service",
+    "operation": "restart"
+  },
   "application_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
@@ -120,20 +220,56 @@ The downloaded bootstrap is already a complete configuration. Keep its identity 
 }
 ```
 
-Put this object inside `rules`. The Agent edits only `DB_USER` and `DB_PASSWORD` and preserves other settings. The activation script makes the actual processes reread them. The final check must perform a real database operation through the running application. To precheck the new credential, add `"credential_check":{"path":"/usr/local/libexec/jms-pam/check-db-login"}`. For a systemd service use `"service_action":{"unit":"order-service.service"}`, which defaults to restart; set `operation` to `reload` only when the service rereads its configuration. A complete generated file can use `"config_update":{"files":[{"path":"/etc/order-service/database.json","template_file":"/etc/jms-pam-agent/orders-db.tmpl"}]}`.
+### Configuration format
 
-For a test file that already contains `VERSION`, add `"VERSION":"revision"` to `fields_map` to keep the delivered policy revision visible. This is the credential delivery revision, not an account password history version.
+`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
 
-To update two accounts in one file, write two rules, each with one account and its own flat `config_update.fields_map`. Their mapped fields must not overlap. The Agent applies all file updates before service actions and application checks. For a custom update script, stdin `credentials` is keyed by the configured account ID even when the active account changes. Check the [Chinese Agent guide](README.zh-hans.md) for full `config.txt` and `config.yml` behavior and the script input example.
-
-## Event application results
-
-Core events and Agent delivery data include `event_id`, `account_id` and `account_revision`. Credentials are fetched by account ID; internal keys retain stable local file and rule names. Fetching or writing files never proves application success. With `application_check.confirm_on_success`, all application checks must succeed before the Agent reports the event as successful. Otherwise, the application explicitly confirms after applying the change:
+Use `config_version: 2` with the corresponding updated Core and Agent. Existing version 1 / unversioned `delivery` + `rules` configurations retain their old behavior; do not mix the two schemas. Update binaries before using new fields. Core cannot supply new local executable paths. Edit the private configuration and restart the Agent.
 
 ```bash
-jms-pam-agent confirm '<event-id>' --socket /run/jms-pam-agent/agent.sock
+sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
+sudo systemctl restart jms-pam-agent
 ```
 
-Results are persisted locally and retried when Core is unavailable. Unknown events, undelivered events and superseded account versions cannot be confirmed. KEY/--revision is retained for compatibility only.
 
-Account password notifications and A/B rotation may be enabled together. A local rule with `allow_account_switch` follows the current rotation account; an ordinary notification for its A/B pair does not switch that business destination to the standby account. Other account rules still update independently. Add explicit non-switching account rules when separate files for the pair are also required.
+## 5. Local API and confirmation
+
+### Query accounts and credentials
+
+Run CLI and Socket requests as the configured application user. `get_accounts` lists authorized account metadata; `get_secret` retrieves a secret on demand, including pull-only accounts. It writes the secret to stdout, so use it only in a private terminal. Replace the Socket path in foreground mode.
+
+```bash
+jms-pam-agent get_accounts
+jms-pam-agent get_secret '<account-id>'
+
+curl --fail --silent --show-error \
+  --unix-socket '/run/jms-pam-agent/agent.sock' \
+  http://localhost/v1/health
+
+curl --fail --silent --show-error \
+  --unix-socket '/run/jms-pam-agent/agent.sock' \
+  'http://localhost/v1/credential?account_id=<account-id>'
+```
+
+### Confirm application success
+
+Validate the running connection and switch the application before confirming an event. Use either a successful `application_check` with `confirm_on_success: true`, or explicit confirmation after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.
+
+```bash
+jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
+```
+
+## 6. Verify the integration
+
+1. Verify that the instance is online and the expected accounts are authorized.
+2. For push, send an update from the bound policy and verify the delivered file or Socket value and version.
+3. For A/B rotation, verify that the running application uses the new account and has released old connections; then check the event result. Online, fetched and delivered states alone do not prove application success.
+
+### Troubleshooting
+
+```bash
+sudo systemctl status jms-pam-agent --no-pager
+sudo journalctl -u jms-pam-agent -n 100 --no-pager
+```
+
+The Agent reconciles at startup, on relevant notifications and at the configured interval (300 seconds by default). Temporary outages retain still-authorized credentials. Explicit revocation or application disable blocks local reads and removes managed store files, even if the next refresh fails. Business configuration files remain under the application administrator’s control. Notification traffic does not postpone periodic service updates. SIGINT/SIGTERM closes the server and event reader.

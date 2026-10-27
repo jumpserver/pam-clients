@@ -56,6 +56,9 @@ func TestLocalFormatVersionValidation(t *testing.T) {
 
 func TestConfigCompatibilityDiagnostics(t *testing.T) {
 	for _, test := range []struct{ raw, location string }{
+		{`{"reconcile_interval":60}`, "reconcile_interval"},
+		{`{"pull_interval":1.5}`, "pull_interval"},
+		{`{"pull_interval":"60"}`, "pull_interval"},
 		{`{"rules":[{"config_update":{"fiels_map":{}}}]}`, "fiels_map"},
 		{`{"rules":[{"config_update":{"file":123}}]}`, "rules.config_update.file"},
 		{`{"app_secret":"DO_NOT_LOG_SECRET" "rules":[]}`, "byte"},
@@ -66,19 +69,19 @@ func TestConfigCompatibilityDiagnostics(t *testing.T) {
 		}
 	}
 	config, err := decodeConfig([]byte(`{"instance_id":"stable-instance"}`))
-	if err != nil || config.ConfigVersion != CurrentConfigVersion {
+	if err != nil || config.ConfigVersion != 1 {
 		t.Fatalf("missing config_version was not normalized in memory: %v", err)
 	}
 	// Programmatic legacy configurations are still valid as version zero, but
 	// an explicit JSON zero is covered by the version validation above.
-	if config.compactDefaults().ConfigVersion != CurrentConfigVersion {
+	if config.compactDefaults().ConfigVersion != 1 {
 		t.Fatal("new configuration did not retain its version")
 	}
 	config.ConfigVersion = 0
-	if config.compactDefaults().ConfigVersion != CurrentConfigVersion {
+	if config.compactDefaults().ConfigVersion != 1 {
 		t.Fatal("newly written legacy configuration has no format version")
 	}
-	config.ConfigVersion = 2
+	config.ConfigVersion = 3
 	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "config_version") {
 		t.Fatal("programmatic unsupported configuration version was accepted")
 	}

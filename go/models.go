@@ -250,19 +250,24 @@ type CredentialRevision struct {
 	AccountSwitch   *AccountSwitch `json:"account_switch,omitempty"`
 }
 type DeliveryScope struct {
-	Keys       []string `json:"keys"`
-	AccountIDs []string `json:"account_ids"`
+	Keys              []string `json:"keys"`
+	AccountIDs        []string `json:"account_ids"`
+	IncludeAuthorized bool     `json:"include_authorized,omitempty"`
+	AllAuthorized     bool     `json:"all_authorized,omitempty"`
+	SwitchAccountIDs  []string `json:"switch_account_ids,omitempty"`
 }
 type AgentScope struct {
 	Keys             []string `json:"credential_keys"`
 	ConfirmationKeys []string `json:"confirmation_keys"`
 }
 type AgentSync struct {
-	ConfigDigest   string               `json:"config_digest"`
-	Credentials    []CredentialRevision `json:"credentials"`
-	RemovedKeys    []string             `json:"removed_keys"`
-	DateLastSynced string               `json:"date_last_synced"`
-	Scope          AgentScope           `json:"scope"`
+	ConfigSchemaVersion         int                  `json:"config_schema_version,omitempty"`
+	UnavailableSwitchAccountIDs []string             `json:"unavailable_switch_account_ids,omitempty"`
+	ConfigDigest                string               `json:"config_digest"`
+	Credentials                 []CredentialRevision `json:"credentials"`
+	RemovedKeys                 []string             `json:"removed_keys"`
+	DateLastSynced              string               `json:"date_last_synced"`
+	Scope                       AgentScope           `json:"scope"`
 }
 type AgentSyncOptions struct {
 	Credentials          []KnownRevision

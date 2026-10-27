@@ -82,7 +82,7 @@ func verifyAccess(ctx context.Context, config Config) error {
 		return err
 	}
 	defer remote.Close()
-	response, err := remote.SyncAgent(ctx, pam.AgentSyncOptions{RestartSupported: config.Delivery.Mode == "environment" && config.Delivery.Operation == "restart"})
+	response, err := remote.SyncAgent(ctx, pam.AgentSyncOptions{DeliveryScope: config.DeliveryScope(), RestartSupported: config.Delivery.Mode == "environment" && config.Delivery.Operation == "restart"})
 	if err != nil {
 		return err
 	}

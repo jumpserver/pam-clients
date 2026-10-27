@@ -71,7 +71,7 @@ func TestWindowsForegroundRunKeepsCredentialsPrivate(t *testing.T) {
 	config := Config{
 		Local: true, Endpoint: "https://example.com", AppID: "app", AppSecret: "secret",
 		InstanceID: "windows-test", StateFile: filepath.Join(directory, "state.json"),
-		EventFile: filepath.Join(directory, "events.jsonl"), ReconcileSeconds: 300,
+		EventFile: filepath.Join(directory, "events.jsonl"), PullIntervalSeconds: 300,
 		Delivery: DeliveryConfiguration{
 			Mode: "json", Root: filepath.Join(directory, "credentials"),
 			Socket: filepath.Join(directory, "agent.sock"), User: account.Username,

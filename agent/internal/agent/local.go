@@ -31,10 +31,17 @@ func PrepareLocal(ctx context.Context, bootstrapFile, directory, instanceID stri
 	config.Local, config.InstanceID = true, instanceID
 	config.StateFile = filepath.Join(directory, "state.json")
 	config.EventFile = filepath.Join(directory, "events.jsonl")
-	config.ReconcileSeconds = 30
 	config.Delivery.Root = filepath.Join(directory, "credentials")
 	config.Delivery.Socket = filepath.Join(directory, "run", "agent.sock")
 	config.Delivery.User = account.Username
+	if config.modern() {
+		config.LocalAPI = &LocalAPIConfiguration{Socket: config.Delivery.Socket, Owner: account.Username}
+		if config.Store != nil {
+			config.Store.Root = config.Delivery.Root
+			config.Store.Owner = account.Username
+		}
+		config = config.normalized()
+	}
 	if err = config.Validate(); err != nil {
 		return "", err
 	}

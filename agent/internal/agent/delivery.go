@@ -265,7 +265,7 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 		mode     os.FileMode
 		uid, gid int
 		mapping  *ConfigUpdate
-		account  AccountSelector
+		accounts []AccountSelector
 	}
 	type job struct {
 		writes           []write
@@ -300,14 +300,14 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 			item.updateScript = rule.ConfigUpdate.Script
 			item.backupTargets = append(item.backupTargets, rule.ConfigUpdate.targetPaths()...)
 			if rule.ConfigUpdate.File != "" {
-				data, mode, uid, gid, err := renderMappedConfig(*rule.ConfigUpdate, rule.Accounts[0], payload)
+				data, mode, uid, gid, err := renderMappedConfig(*rule.ConfigUpdate, rule.Accounts, payload)
 				if err != nil {
 					return err
 				}
 				item.writes = append(item.writes, write{
 					file: File{Path: rule.ConfigUpdate.File}, data: data,
 					preserve: true, mode: mode, uid: uid, gid: gid,
-					mapping: rule.ConfigUpdate, account: rule.Accounts[0],
+					mapping: rule.ConfigUpdate, accounts: rule.Accounts,
 				})
 			}
 			for _, path := range rule.ConfigUpdate.targetPaths() {
@@ -374,7 +374,7 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 		for _, item := range job.writes {
 			if item.mapping != nil {
 				var err error
-				item.data, item.mode, item.uid, item.gid, err = renderMappedConfig(*item.mapping, item.account, job.payload)
+				item.data, item.mode, item.uid, item.gid, err = renderMappedConfig(*item.mapping, item.accounts, job.payload)
 				if err != nil {
 					return err
 				}

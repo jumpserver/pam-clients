@@ -99,7 +99,7 @@ def provision(root, endpoint):
                                            "agent_socket": socket_path, **targets})
     agent_pam = {key: value for key, value in pam.items() if key != "timeout"}
     private_json(root / "agent.json", {"config_version": 1, **agent_pam,
-                                       "instance_id": f"pam-demo-agent-{tag}", "reconcile_interval": 2,
+                                       "instance_id": f"pam-demo-agent-{tag}", "pull_interval": 2,
                                        "state_file": str(agent_root / "state.json"),
                                        "event_file": str(agent_root / "events.jsonl"),
                                        "delivery": {"delivery_mode": "json", "delivery_root": str(agent_root / "credentials"),

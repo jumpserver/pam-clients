@@ -11,24 +11,21 @@ Python 3.9+ 提供憑據策略 SDK。Go jms-pam-agent 無需 Python，可透過�
 ## 1. 接入前提與流程
 
 1. 建立應用，授權允許按需取得的帳號（pull）。帳號 ID 是 JumpServer 帳號 ID，不是使用者名稱或策略 ID。
-2. 需要主動交付更新時，再綁定改密通知或 A/B 輪換策略（push）；僅授權帳號不會主動推送憑據。
+2. 在 store/services 宣告要同步的授權帳號；需要推送通知或 A/B 切換時，再綁定對應策略。
 3. 在應用接入精靈下載身分配置。每個副本使用穩定、唯一的 `instance_id`，並妥善保管 AK/SK。
 
 ## 2. 安裝與啟動
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/jms-pam-agent-linux-amd64) · [Linux ARM64](/download/pam/jms-pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+新設定使用 `config_version: 2`，須配套更新 Core 與 Agent。版本 1 或未標版本的 `delivery` / `rules` 保留舊行為，不可混用。先更新二進位檔再使用新欄位。Core 不能新增本機指令路徑；修改私有設定後重新啟動 Agent。
+
+Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
 ```bash
-# 在下載的 Agent 和 SHA256SUMS 所在目錄執行。
-case "$(uname -m)" in
-  x86_64) agent_arch=amd64 ;;
-  aarch64|arm64) agent_arch=arm64 ;;
-  *) echo "Unsupported CPU architecture"; exit 1 ;;
-esac
-sha256sum --ignore-missing --check SHA256SUMS && \
-sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
+cd /path/to/pam-clients/agent
+go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
 ```
 
 在下載的 `jms_pam_agent.json` 所在目錄執行。Linux 服務命令需要 root 和 systemd；每個副本替換自己的實例 ID。前台模式須使用對應系統的二進位檔，macOS / Windows 可能需要從原始碼建置。
@@ -36,13 +33,13 @@ sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pa
 ```bash
 chmod 0600 ./jms_pam_agent.json
 sudo /usr/local/bin/jms-pam-agent install \
-  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
+  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
 sudo systemctl status jms-pam-agent --no-pager
 ```
 
 ### 前台執行（Linux / macOS / Windows）
 
-內建安裝需要 Linux/root。macOS、非 root Linux 或 Windows 請在接入精靈中選擇 JSON 或 Socket 交付，依照 init-local 與 run --local --config 命令執行。只初始化一次，後續重複使用產生的私有本機設定；前景模式不執行 systemd 動作。
+macOS、Windows 或非 root Linux 先執行一次 `init-local`，再以 `run --local` 重用私有設定。支援 JSON 和環境變數檔案；systemd 動作只適用 Linux 服務模式。
 
 前台二進位檔命名為 `jms-pam-agent`（Windows 為 `jms-pam-agent.exe`）；Linux/macOS 先執行 `chmod 0755 ./jms-pam-agent`。
 
@@ -50,33 +47,104 @@ sudo systemctl status jms-pam-agent --no-pager
 chmod 0600 ./jms_pam_agent.json
 ./jms-pam-agent init-local \
   --bootstrap ./jms_pam_agent.json \
-  --directory "$HOME/.jms-pam-agent/orders" --instance-id orders-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
-$agentDir = Join-Path $HOME '.jms-pam-agent\orders'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id orders-node-1
+$agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
+.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
 .\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. 選擇交付方式
+## 3. store / local_api
 
-JSON 交付檔案，EnvironmentFile 對接固定 systemd 服務，Unix Socket 提供本地 API。Agent 在交付成功後儲存交付版本，應用程式驗證並使用後才儲存生效版本。Socket 屬於設定的應用程式使用者，權限為 0600，本地請求應以該使用者執行。
+`store` 與 `services` 獨立生效。`store.accounts` 固定為字串陣列：`["all"]` 儲存本應用授權的全部帳號，也可填寫指定帳號 ID。訂閱只提供變更通知，未訂閱的授權帳號也能同步。省略 `store` 可只執行業務更新，空陣列不產生標準憑據檔案。`all` 不可與 ID 混用。
 
-| 選擇交付方式 | 設定與執行 |
+```json
+{
+  "config_version": 2,
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "<application-id>",
+  "app_secret": "<application-secret>",
+  "org_id": "<org-id>",
+  "instance_id": "app-node-1",
+  "pull_interval": 300,
+  "local_api": {
+    "owner": "appuser"
+  },
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  },
+  "services": []
+}
+```
+
+`pull_interval` 是全域拉取週期，單位為秒，必須為正整數，省略時預設 300。Agent 啟動時立即同步，之後按週期核對帳號與憑據版本，僅在版本或目前帳號變更時取密。`update_on_notification: false` 的業務在下次定時拉取時更新；通知不會延後該週期。
+
+| 設定與執行 | store |
 | --- | --- |
-| JSON | `delivery.delivery_mode: json` → `/opt/jumpserver-pam/credentials/<credential-key>.json` |
-| EnvironmentFile (Linux / systemd) | `delivery.delivery_mode: environment` → `/opt/jumpserver-pam/credentials/<credential-key>.env` |
-| Socket | `delivery.delivery_mode: socket` → `/run/jms-pam-agent/agent.sock` |
+| `store.accounts: ["all"]` | 應用授權的全部帳號，包括未訂閱者。 |
+| `store.accounts: ["<account-id>"]` | 只儲存明確宣告的帳號 ID。 |
+| `store.format: json` | `<store.root>/<account-id>.json` |
+| `store.format: environment` | `<store.root>/<account-id>.env` |
+| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
-Linux systemd 私有配置為 `/etc/jms-pam-agent/agent.json`（0600）。`state_file` 儲存最新憑據與進度，`event_file` 記錄事件中繼資料，`delivery_root` 與 `socket_path` 指定交付位置。前台模式以產生的 `agent.json` 路徑為準。
+每個帳號按實際 account_id 個別產生檔案，A/B 也分開儲存；檔案含明文憑據，權限為 0600。正在改密的 A/B 非目前帳號暫不可用。成功核對授權後清理撤銷帳號的檔案。`local_api.owner` 控制 Socket 存取及業務輸出檔案的預設擁有者，依序採用 `store.owner`、Agent 執行使用者。Socket 與檔案儲存獨立；私有狀態和事件路徑沿用預設值。版本未變時只核對中繼資料，不重複取密；實際取密仍記錄稽核及輪換存取觀察。
+
+### EnvironmentFile / systemd
+
+EnvironmentFile 將使用者名稱、密碼和帳號中繼資料以明文 `KEY=value` 寫入私有 `.env` 檔，權限為 `0600`。業務 systemd 服務須明確配置 `EnvironmentFile=檔案路徑`，啟動時載入該服務的進程環境，不會設定主機全域環境。檔案更新後須重新啟動服務；僅 reload 不會取代已執行進程的環境變數。
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app-env",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "account_id": "<primary-account-id>"
+      }
+    ],
+    "config_update": {
+      "files": [
+        {
+          "path": "/etc/sample-app/database.env",
+          "format": "environment",
+          "owner": "appuser"
+        }
+      ]
+    },
+    "service_action": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    }
+  }
+]
+```
+
+```ini
+JMS_PAM_ACCOUNT_ID="<account-id>"
+JMS_PAM_USERNAME="db_user"
+JMS_PAM_SECRET="<password>"
+```
+
+```ini
+[Service]
+EnvironmentFile=/etc/sample-app/database.env
+```
 
 ## 4. 更新業務配置與 A/B 輪換
 
-下載的引導設定已包含 Agent 身分與交付設定。只需在 rules 中宣告業務使用的帳號 ID，再設定更新業務檔案、生效動作及執行中連線驗證。帳號設定 allow_account_switch 後可沿用同一規則處理 A/B 雙向輪換；可選 credential_check 於修改檔案前驗證新帳號。狀態、事件、Socket 路徑及 300 秒對帳週期皆有預設值。rules 為空時依憑據寫入預設檔案。
-
-第一個 JSON 是完整基礎配置；更新業務檔案時，用第二個陣列取代空的 `rules`。路徑、服務名稱與腳本均為範例，啟用前須在應用主機準備好。普通更新可省略 `allow_account_switch`；A/B 輪換需啟用它並驗證真實業務連線。
+將下方業務物件加入 `services`，各業務使用唯一且穩定的 `name`。service 層的 `allow_account_switch` 預設 false；開啟後，有明確 A/B 關聯者跟隨目前帳號，其他帳號保持固定，只需宣告 A。`update_on_notification` 也在 service 層，預設 true；false 會等定時同步再執行業務動作，預設 300 秒，儲存及授權撤銷不受影響。各業務獨立記錄版本；所有相關業務檢查成功且設定 `application_check.confirm_on_success: true` 後才自動確認輪換。
 
 | 設定與執行 | 更新業務配置與 A/B 輪換 |
 | --- | --- |
@@ -85,43 +153,31 @@ Linux systemd 私有配置為 `/etc/jms-pam-agent/agent.json`（0600）。`state
 | `service_action` | 重新載入或重新啟動固定服務，或執行固定腳本。 |
 | `application_check` | 驗證運行中業務已使用新連線，再確認生效。 |
 
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
+`services`:
 
 ```json
 [
   {
+    "name": "sample-app",
+    "allow_account_switch": true,
+    "update_on_notification": true,
     "accounts": [
       {
         "account_id": "<primary-account-id>",
-        "allow_account_switch": true
+        "alias": "database",
+        "username": "db_app_a"
       }
     ],
     "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
+      "file": "/etc/sample-app/config.yml",
+      "format": "yaml",
       "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
+        "DB_USER": "database.username",
+        "DB_PASSWORD": "database.secret"
       }
     },
     "service_action": {
-      "unit": "order-service.service",
+      "unit": "sample-app.service",
       "operation": "restart"
     },
     "application_check": {
@@ -132,11 +188,49 @@ Linux systemd 私有配置為 `/etc/jms-pam-agent/agent.json`（0600）。`state
 ]
 ```
 
+單帳號可直接使用 `username` / `secret`。多帳號必須使用唯一 alias，以 `database.username`、`cache.secret` 指定來源，A/B 切換不改 alias。宣告中的可選 `username` 只供閱讀，實際值取自 Core。全部帳號就緒才更新檔案並執行一次業務動作；缺少帳號或對應不明時，在寫入前報錯。
+
+```json
+{
+  "name": "sample-app",
+  "allow_account_switch": true,
+  "update_on_notification": true,
+  "accounts": [
+    {
+      "account_id": "<primary-account-id>",
+      "alias": "database"
+    },
+    {
+      "account_id": "<cache-account-id>",
+      "alias": "cache"
+    }
+  ],
+  "config_update": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "database.username",
+      "DB_PASSWORD": "database.secret",
+      "CACHE_USER": "cache.username",
+      "CACHE_PASSWORD": "cache.secret"
+    }
+  },
+  "service_action": {
+    "unit": "sample-app.service",
+    "operation": "restart"
+  },
+  "application_check": {
+    "path": "/usr/local/libexec/jms-pam/check-running-db",
+    "confirm_on_success": true
+  }
+}
+```
+
 ### 配置檔案格式
 
 `config_update.format` 預設為 `auto`，省略與明確填寫的效果相同。依副檔名辨識：`.txt`、`.env`、`.properties` 使用 `env`，替換 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替換頂層 `KEY: value`，新值寫為帶引號的字串。其他副檔名需明確指定 `env` 或 `yaml`。映射欄位必須已存在且只出現一次，其他設定保留。INI section、巢狀 YAML 等複雜格式使用 `files` + `template_file` 完整產生，或用 `script` 自訂替換。環境變數檔案更新後，應用仍需重新讀取檔案或重新啟動才會生效。
 
-本機 rules 設定目標檔案、JSON/EnvironmentFile 或可信範本，以及可選的 systemd reload/restart 或固定可執行腳本。腳本透過標準輸入接收憑據 JSON，參數固定、有逾時，並應在驗證業務生效後回報成功。Core 不能新增腳本路徑或擴大本機能力。修改私有設定後重新啟動 Agent。
+新設定使用 `config_version: 2`，須配套更新 Core 與 Agent。版本 1 或未標版本的 `delivery` / `rules` 保留舊行為，不可混用。先更新二進位檔再使用新欄位。Core 不能新增本機指令路徑；修改私有設定後重新啟動 Agent。
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -160,7 +254,7 @@ curl --fail --silent --show-error \
 
 curl --fail --silent --show-error \
   --unix-socket '/run/jms-pam-agent/agent.sock' \
-  'http://localhost/v1/credentials/<credential-key>'
+  'http://localhost/v1/credential?account_id=<account-id>'
 ```
 
 ### 確認業務生效
@@ -184,7 +278,7 @@ sudo systemctl status jms-pam-agent --no-pager
 sudo journalctl -u jms-pam-agent -n 100 --no-pager
 ```
 
-Agent 在啟動、相關事件及每 300 秒同步。網路故障保留已取得的最新授權憑據；身分或授權被拒絕時阻止 Socket 取密，成功簽章同步後恢復。已交付檔案保留。SIGINT/SIGTERM 會關閉服務、連線及事件讀取執行緒。
+Agent 在啟動、相關通知及定時週期同步，預設 300 秒。暫時網路故障保留仍獲授權的憑據。明確撤銷或停用應用會封鎖本機取密並刪除對應標準檔案，即使後續刷新失敗。業務設定檔由應用管理員管理。連續通知不會推遲定時業務更新。SIGINT/SIGTERM 會關閉服務及事件讀取執行緒。
 
 
 <!-- agent-doc:end -->
@@ -232,7 +326,7 @@ client_options = {
     "app_secret": "<application-secret>",
     "org_id": "<org-id>",
 }
-instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "app-node-1"
 ```
 
 ## 3. 首次取得帳號憑據
@@ -301,7 +395,7 @@ watch_events 等待停止；start_events 不代表初始同步完成，服務須
 
 ### 最新憑據與後端不可用
 
-取密先請求 API。成功取得新憑據後替換本地保留值，舊版本不覆蓋新版本，且不按時間過期。僅在逾時、網路故障或 HTTP 5xx 時，返回相同查詢條件下已取得的最新憑據並標記本地來源；沒有保留值則拋出原始錯誤。SDK 在目前客戶端記憶體內保留，直到更新、撤銷或關閉；clone 與重新啟動不繼承。Agent 使用既有受保護的本地狀態保存。HTTP 401/403/404 清空 SDK 保留值並報錯，成功回應格式錯誤也報錯。明確撤銷移除對應憑據；快照移除授權範圍外項目；設定變更先保留，由後續快照核對範圍。Agent 在 HTTP 同步前先執行明確撤銷或快照授權範圍縮小並保存範圍，後端故障期間或重新啟動後也會阻止相應本地取密。credential_not_found（HTTP 400）同樣清除 SDK 保留值。 HTTP 426 明確報錯並保留憑據，不用快取代替本次請求成功。可選中繼資料介面缺失（HTTP 404）不清理憑據。Agent 純 pull 值不做持久離線保留；SDK 可按原有暫時故障規則使用記憶體保留值。
+SDK 取密先請求 API，成功後替換保留值，不讓舊版本覆蓋新版本。只有逾時、網路錯誤或 HTTP 5xx 可回退到相同條件下已取得的值並標記本機來源；保留值不按時間過期。SDK 使用用戶端私有記憶體，clone 和重新啟動從空狀態開始。HTTP 401/403/404 或 credential_not_found（HTTP 400）會清空憑據並報錯。HTTP 426、成功回應格式錯誤不使用回退；可選中繼資料介面缺失不清空憑據。Agent v2 在受保護狀態保留 store/services 宣告的帳號，未宣告的按需查詢不自動持久化。明確撤銷在 HTTP 刷新前生效，離線也相同；push 快照不代表儲存帳號的完整授權，成功對帳會核對目前應用授權。
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

@@ -70,6 +70,9 @@ func (a *Agent) accounts(ctx context.Context) (AccountsResult, error) {
 	// Metadata alone never restores access to a previously revoked password.
 	allowed := map[string]string{}
 	for _, account := range accounts {
+		if a.Config.modern() {
+			allowed["account:"+account.ID] = account.ID
+		}
 		for _, policy := range account.Credentials {
 			allowed[policy.Key] = account.ID
 		}
@@ -78,6 +81,11 @@ func (a *Agent) accounts(ctx context.Context) (AccountsResult, error) {
 	for key := range a.state.Authorized {
 		if allowed[key] != a.state.Latest[key].AccountID {
 			delete(a.state.Authorized, key)
+			if a.Config.modern() {
+				delete(a.state.Latest, key)
+				delete(a.state.Delivered, key)
+				delete(a.state.Applied, key)
+			}
 			if allowed[key] == "" {
 				delete(a.state.Wanted, key)
 			}
@@ -85,6 +93,9 @@ func (a *Agent) accounts(ctx context.Context) (AccountsResult, error) {
 	}
 	err = a.persist()
 	a.mu.Unlock()
+	if a.Config.modern() {
+		err = errors.Join(err, a.removeRevokedStoreFiles())
+	}
 	return AccountsResult{Accounts: accounts, Source: "api"}, err
 }
 
@@ -123,10 +134,18 @@ func (a *Agent) AccountCredential(ctx context.Context, accountID string) (Creden
 				if retained.AccountID == accountID {
 					delete(a.state.Authorized, key)
 					delete(a.state.Wanted, key)
+					if a.Config.modern() {
+						delete(a.state.Latest, key)
+						delete(a.state.Delivered, key)
+						delete(a.state.Applied, key)
+					}
 				}
 			}
 			persistence := a.persist()
 			a.mu.Unlock()
+			if a.Config.modern() {
+				persistence = errors.Join(persistence, a.removeRevokedStoreFiles())
+			}
 			return CredentialResult{}, errors.Join(a.failure(err, false), persistence)
 		}
 		return CredentialResult{}, a.failure(err, true)

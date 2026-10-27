@@ -122,17 +122,22 @@ type ApplicationCheck struct {
 
 type AccountSelector struct {
 	AccountID          string `json:"account_id"`
+	Alias              string `json:"alias,omitempty"`
+	Username           string `json:"username,omitempty"`
 	AllowAccountSwitch bool   `json:"allow_account_switch,omitempty"`
 }
 
 // Rules and their file/script paths are trusted local configuration. Core cannot supply them.
 type Rule struct {
-	Keys             []string          `json:"keys,omitempty"`
-	Accounts         []AccountSelector `json:"accounts,omitempty"`
-	ConfigUpdate     *ConfigUpdate     `json:"config_update,omitempty"`
-	CredentialCheck  *Action           `json:"credential_check,omitempty"`
-	ServiceAction    *Action           `json:"service_action,omitempty"`
-	ApplicationCheck *ApplicationCheck `json:"application_check,omitempty"`
+	Name                 string            `json:"name,omitempty"`
+	AllowAccountSwitch   bool              `json:"allow_account_switch,omitempty"`
+	UpdateOnNotification *bool             `json:"update_on_notification,omitempty"`
+	Keys                 []string          `json:"keys,omitempty"`
+	Accounts             []AccountSelector `json:"accounts,omitempty"`
+	ConfigUpdate         *ConfigUpdate     `json:"config_update,omitempty"`
+	CredentialCheck      *Action           `json:"credential_check,omitempty"`
+	ServiceAction        *Action           `json:"service_action,omitempty"`
+	ApplicationCheck     *ApplicationCheck `json:"application_check,omitempty"`
 	// Files and Action are retained for existing local configurations.
 	Files  []File  `json:"files,omitempty"`
 	Action *Action `json:"action,omitempty"`
@@ -140,18 +145,21 @@ type Rule struct {
 
 type Config struct {
 	// Local is chosen by the CLI for current-user foreground runs, never by Core.
-	Local            bool                  `json:"-"`
-	ConfigVersion    int                   `json:"config_version,omitempty"`
-	Endpoint         string                `json:"endpoint"`
-	AppID            string                `json:"app_id"`
-	AppSecret        string                `json:"app_secret"`
-	OrgID            string                `json:"org_id"`
-	InstanceID       string                `json:"instance_id"`
-	StateFile        string                `json:"state_file,omitempty"`
-	EventFile        string                `json:"event_file,omitempty"`
-	ReconcileSeconds int                   `json:"reconcile_interval,omitempty"`
-	Delivery         DeliveryConfiguration `json:"delivery"`
-	Rules            []Rule                `json:"rules,omitempty"`
+	Local               bool                   `json:"-"`
+	ConfigVersion       int                    `json:"config_version,omitempty"`
+	Endpoint            string                 `json:"endpoint"`
+	AppID               string                 `json:"app_id"`
+	AppSecret           string                 `json:"app_secret"`
+	OrgID               string                 `json:"org_id"`
+	InstanceID          string                 `json:"instance_id"`
+	StateFile           string                 `json:"state_file,omitempty"`
+	EventFile           string                 `json:"event_file,omitempty"`
+	PullIntervalSeconds int                    `json:"pull_interval,omitempty"`
+	Delivery            DeliveryConfiguration  `json:"delivery"`
+	Rules               []Rule                 `json:"rules,omitempty"`
+	Store               *StoreConfiguration    `json:"store,omitempty"`
+	Services            []Rule                 `json:"services,omitempty"`
+	LocalAPI            *LocalAPIConfiguration `json:"local_api,omitempty"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -188,18 +196,22 @@ func loadBootstrapConfig(path string) (Config, error) {
 	if config.EventFile == "" {
 		config.EventFile = DefaultEvent
 	}
-	if config.ReconcileSeconds == 0 {
-		config.ReconcileSeconds = 300
+	if config.PullIntervalSeconds == 0 {
+		config.PullIntervalSeconds = 300
 	}
 	if config.Delivery.Socket == "" {
 		config.Delivery.Socket = DefaultSocket
 	}
+	config = config.normalized()
 	return config, nil
 }
 
 func (c Config) compactDefaults() Config {
 	if c.ConfigVersion == 0 {
-		c.ConfigVersion = CurrentConfigVersion
+		c.ConfigVersion = 1
+		if c.modern() {
+			c.ConfigVersion = CurrentConfigVersion
+		}
 	}
 	if c.StateFile == DefaultState {
 		c.StateFile = ""
@@ -207,8 +219,8 @@ func (c Config) compactDefaults() Config {
 	if c.EventFile == DefaultEvent {
 		c.EventFile = ""
 	}
-	if c.ReconcileSeconds == 300 {
-		c.ReconcileSeconds = 0
+	if c.PullIntervalSeconds == 300 {
+		c.PullIntervalSeconds = 0
 	}
 	if c.Delivery.Socket == DefaultSocket {
 		c.Delivery.Socket = ""
@@ -224,13 +236,20 @@ func validKey(key string) bool {
 }
 
 func (c Config) Validate() error {
+	if c.modern() {
+		if err := c.validateServices(); err != nil {
+			return err
+		}
+		c = c.normalized()
+		c.Rules = c.Services
+	}
 	// Zero is the legacy value for configurations constructed in Go. An explicit
 	// zero in JSON is rejected by decodeConfig, rather than treated as omitted.
-	if c.ConfigVersion != 0 && c.ConfigVersion != CurrentConfigVersion {
+	if c.ConfigVersion != 0 && c.ConfigVersion != 1 && c.ConfigVersion != CurrentConfigVersion {
 		return unsupportedVersion("configuration", "config_version", c.ConfigVersion, CurrentConfigVersion)
 	}
-	if c.Endpoint == "" || c.AppID == "" || c.AppSecret == "" || c.InstanceID == "" || !absolute(c.StateFile) || c.ReconcileSeconds < 1 {
-		return errors.New("identity, stable instance ID, state path and positive reconcile interval are required")
+	if c.Endpoint == "" || c.AppID == "" || c.AppSecret == "" || c.InstanceID == "" || !absolute(c.StateFile) || c.PullIntervalSeconds < 1 {
+		return errors.New("identity, stable instance ID, state path and positive pull interval are required")
 	}
 	if err := validateDelivery(c.Delivery); err != nil {
 		return err
@@ -299,8 +318,8 @@ func (c Config) Validate() error {
 			}
 			files = update.Files
 			if update.File != "" {
-				if !absolute(update.File) || (update.patchFormat() != "env" && update.patchFormat() != "yaml") || len(rule.Keys) > 0 || len(rule.Accounts) != 1 {
-					return errors.New("file mapping requires an absolute file path, format auto (known extension), env or yaml, and exactly one account selector")
+				if !absolute(update.File) || (update.patchFormat() != "env" && update.patchFormat() != "yaml") || len(rule.Keys) > 0 || len(rule.Accounts) == 0 {
+					return errors.New("file mapping requires an absolute path, env or yaml format and account selectors")
 				}
 				if c.Local && update.Owner != "" && update.Owner != c.Delivery.User {
 					return errors.New("local files must belong to the current user")
@@ -326,7 +345,7 @@ func (c Config) Validate() error {
 					return errors.New("file mapping requires fields_map")
 				}
 				for name, source := range update.FieldsMap {
-					if !configFieldPattern.MatchString(name) || (source != "username" && source != "secret" && source != "account_id" && source != "revision") {
+					if !configFieldPattern.MatchString(name) || !validMappedSource(rule.Accounts, source) {
 						return errors.New("invalid mapped configuration field")
 					}
 				}
@@ -413,6 +432,9 @@ func (c Config) Validate() error {
 // Local rules advertise which authorized credentials this instance can use.
 // An empty rules list uses default delivery for every application binding.
 func (c Config) DeliveryScope() *pam.DeliveryScope {
+	if c.modern() {
+		return c.serviceScope()
+	}
 	if len(c.Rules) == 0 {
 		return nil
 	}
@@ -496,6 +518,19 @@ func decodeConfig(raw []byte) (Config, error) {
 		return config, formatJSONError("configuration", err)
 	}
 	config.ConfigVersion = version
+	if config.modern() {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return config, formatJSONError("configuration", err)
+		}
+		if _, exists := fields["delivery"]; exists {
+			return config, errors.New("store/services configuration cannot contain legacy delivery")
+		}
+		if _, exists := fields["rules"]; exists {
+			return config, errors.New("store/services configuration cannot contain legacy rules")
+		}
+		config.ConfigVersion = 2
+	}
 	return config, nil
 }
 func validateScope(scope pam.AgentScope) error {

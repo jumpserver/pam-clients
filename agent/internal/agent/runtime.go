@@ -39,23 +39,28 @@ type Applied struct {
 }
 
 type State struct {
-	StateVersion      int                     `json:"state_version"`
-	Events            map[string]pam.Event    `json:"pending_events"`
-	Identity          string                  `json:"identity"`
-	LocalDeliveryHash string                  `json:"local_delivery_hash"`
-	Latest            map[string]Credential   `json:"credentials"`
-	Delivered         map[string]int64        `json:"delivered"`
-	Applied           map[string]Applied      `json:"applied"`
-	AccountUsage      map[string]AccountUsage `json:"account_usage"`
-	ReportedAccounts  []string                `json:"reported_accounts,omitempty"`
-	Authorized        map[string]bool         `json:"authorized"`
-	Wanted            map[string]int64        `json:"wanted_revisions"`
-	Commands          map[string]pam.Event    `json:"pending_commands"`
-	Scope             pam.AgentScope          `json:"scope"`
-	Digest            string                  `json:"config_digest"`
-	Denied            bool                    `json:"access_denied"`
-	Status            string                  `json:"sync_status"`
-	SyncError         string                  `json:"sync_error,omitempty"`
+	StateVersion        int                          `json:"state_version"`
+	Events              map[string]pam.Event         `json:"pending_events"`
+	Identity            string                       `json:"identity"`
+	LocalDeliveryHash   string                       `json:"local_delivery_hash"`
+	Latest              map[string]Credential        `json:"credentials"`
+	Delivered           map[string]int64             `json:"delivered"`
+	Applied             map[string]Applied           `json:"applied"`
+	AccountUsage        map[string]AccountUsage      `json:"account_usage"`
+	ReportedAccounts    []string                     `json:"reported_accounts,omitempty"`
+	Authorized          map[string]bool              `json:"authorized"`
+	Wanted              map[string]int64             `json:"wanted_revisions"`
+	Commands            map[string]pam.Event         `json:"pending_commands"`
+	Scope               pam.AgentScope               `json:"scope"`
+	Digest              string                       `json:"config_digest"`
+	Denied              bool                         `json:"access_denied"`
+	Status              string                       `json:"sync_status"`
+	SyncError           string                       `json:"sync_error,omitempty"`
+	ServiceVersions     map[string]map[string]string `json:"service_versions,omitempty"`
+	StoreVersions       map[string]string            `json:"store_versions,omitempty"`
+	StoreFiles          map[string]string            `json:"store_files,omitempty"`
+	ServiceConfigHashes map[string]string            `json:"service_config_hashes,omitempty"`
+	StoreConfigHash     string                       `json:"store_config_hash,omitempty"`
 }
 
 type Agent struct {
@@ -68,6 +73,7 @@ type Agent struct {
 }
 
 func New(config Config, remote Remote) (*Agent, error) {
+	config = config.normalized()
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -82,7 +88,15 @@ func New(config Config, remote Remote) (*Agent, error) {
 	localDelivery, _ := json.Marshal(struct {
 		Delivery DeliveryConfiguration
 		Rules    []Rule
-	}{config.Delivery, config.Rules})
+		Store    *StoreConfiguration
+		Services []Rule
+	}{config.Delivery, config.Rules, config.Store, config.Services})
+	if !config.modern() {
+		localDelivery, _ = json.Marshal(struct {
+			Delivery DeliveryConfiguration
+			Rules    []Rule
+		}{config.Delivery, config.Rules})
+	}
 	localDigest := sha256.Sum256(localDelivery)
 	expectedLocalHash := hex.EncodeToString(localDigest[:])
 	state.LocalDeliveryHash = expectedLocalHash
@@ -125,13 +139,32 @@ func New(config Config, remote Remote) (*Agent, error) {
 		state.Commands = map[string]pam.Event{}
 	}
 	if state.LocalDeliveryHash != expectedLocalHash {
-		state.Delivered = map[string]int64{}
+		if !config.modern() {
+			state.Delivered = map[string]int64{}
+		}
 		state.LocalDeliveryHash = expectedLocalHash
+	}
+	if state.ServiceVersions == nil {
+		state.ServiceVersions = map[string]map[string]string{}
+	}
+	if state.StoreVersions == nil {
+		state.StoreVersions = map[string]string{}
+	}
+	if state.StoreFiles == nil {
+		state.StoreFiles = map[string]string{}
+	}
+	if config.modern() {
+		prepareServiceVersions(config, &state)
 	}
 	if err := validateScope(state.Scope); err != nil {
 		return nil, err
 	}
 	service := &Agent{Config: config, remote: remote, state: state, deliver: Deliver}
+	if config.modern() {
+		if err := service.pruneServiceState(); err != nil {
+			return nil, err
+		}
+	}
 	if err := service.restoreAccountUsage(); err != nil {
 		return nil, err
 	}
@@ -152,7 +185,6 @@ func incompatible(err error) bool {
 
 func (a *Agent) failure(err error, identity bool) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.state.Status = "error"
 	a.state.SyncError = "agent_sync_failed"
 	if incompatible(err) {
@@ -161,9 +193,21 @@ func (a *Agent) failure(err error, identity bool) error {
 	if identity && denied(err) {
 		a.state.Denied = true
 		a.state.SyncError = "agent_access_denied"
+		if a.Config.modern() {
+			clear(a.state.Latest)
+			clear(a.state.Authorized)
+			clear(a.state.Wanted)
+			clear(a.state.Delivered)
+			clear(a.state.Applied)
+		}
 	}
-	if persistence := a.persist(); persistence != nil {
+	persistence := a.persist()
+	a.mu.Unlock()
+	if persistence != nil {
 		return persistence
+	}
+	if a.Config.modern() && identity && denied(err) {
+		return errors.Join(err, a.removeRevokedStoreFiles())
 	}
 	return err
 }
@@ -223,7 +267,7 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 			}
 		}
 		for key := range a.state.Authorized {
-			if !scope[key] {
+			if !scope[key] && !a.Config.modern() {
 				delete(a.state.Authorized, key)
 				delete(a.state.Wanted, key)
 			}
@@ -235,6 +279,11 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 				(event.AccountID != "" && (key == "" || strings.HasPrefix(key, "account:")) && a.state.Latest[candidate].AccountID == event.AccountID) {
 				delete(a.state.Authorized, candidate)
 				delete(a.state.Wanted, candidate)
+				if a.Config.modern() {
+					delete(a.state.Latest, candidate)
+					delete(a.state.Delivered, candidate)
+					delete(a.state.Applied, candidate)
+				}
 			}
 		}
 	case "credential.updated":
@@ -247,6 +296,14 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 	a.mu.Unlock()
 	if err != nil {
 		return err
+	}
+	if a.Config.modern() {
+		if event.Event == "credential.revoked" {
+			if err := a.removeRevokedStoreFiles(); err != nil {
+				return err
+			}
+		}
+		return errors.Join(a.recordEvent("received", event), a.synchronizeServices(ctx, true))
 	}
 	return errors.Join(a.recordEvent("received", event), a.synchronize(ctx))
 }
@@ -268,6 +325,9 @@ func (a *Agent) Sync(ctx context.Context) error {
 }
 
 func (a *Agent) synchronize(ctx context.Context) (result error) {
+	if a.Config.modern() {
+		return a.synchronizeServices(ctx, false)
+	}
 	// Usage reporting is optional telemetry and must never fail credential delivery.
 	defer func() {
 		if result != nil && ctx.Err() == nil {
@@ -783,7 +843,11 @@ func (a *Agent) command(ctx context.Context, event pam.Event) error {
 		a.mu.Lock()
 		a.state.Wanted[key] = event.Revision
 		a.mu.Unlock()
-		err = a.synchronize(ctx)
+		if a.Config.modern() {
+			err = a.synchronizeServices(ctx, true)
+		} else {
+			err = a.synchronize(ctx)
+		}
 		if err != nil {
 			break
 		}
@@ -855,7 +919,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		})
 	}()
 	defer func() { cancel(); <-readerDone }()
-	interval := time.Duration(a.Config.ReconcileSeconds) * time.Second
+	interval := time.Duration(a.Config.PullIntervalSeconds) * time.Second
+	periodicDeadline := time.Now()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	delay := time.Second
@@ -870,6 +935,15 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		} else {
 			delay = time.Second
+		}
+		if a.Config.modern() {
+			remaining := time.Until(periodicDeadline)
+			if remaining < 0 {
+				remaining = 0
+			}
+			if remaining < next {
+				next = remaining
+			}
 		}
 		if !timer.Stop() {
 			select {
@@ -886,7 +960,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		case event := <-events:
 			schedule(a.HandleEvent(ctx, event))
 		case <-timer.C:
-			err := a.Sync(ctx)
+			periodic := !a.Config.modern() || !time.Now().Before(periodicDeadline)
+			var err error
+			if periodic {
+				periodicDeadline = time.Now().Add(interval)
+				err = a.Sync(ctx)
+			} else {
+				a.syncMu.Lock()
+				err = a.synchronizeServices(ctx, true)
+				a.syncMu.Unlock()
+			}
 			if err == nil {
 				err = a.pollCommands(ctx)
 			}

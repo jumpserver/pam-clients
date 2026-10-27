@@ -307,7 +307,7 @@ client_options = {
     "app_secret": "<application-secret>",
     "org_id": "<org-id>",
 }
-instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "app-node-1"
 """
 
 HEADERS = """(request-target) accept date digest x-jms-request-id x-jms-org
@@ -483,27 +483,45 @@ def native_guide(language, texts):
 """
 
 
-AGENT_SAMPLE = {'endpoint': 'https://jumpserver.example.com', 'app_id': '<application-id>', 'app_secret': '<application-secret>', 'org_id': '<org-id>', 'instance_id': 'orders-node-1', 'delivery': {'delivery_mode': 'json', 'delivery_root': '/opt/jumpserver-pam/credentials', 'app_user': 'orders'}, 'rules': []}
+AGENT_SAMPLE = {
+    'config_version': 2, 'endpoint': 'https://jumpserver.example.com',
+    'app_id': '<application-id>', 'app_secret': '<application-secret>',
+    'org_id': '<org-id>', 'instance_id': 'app-node-1', 'pull_interval': 300,
+    'local_api': {'owner': 'appuser'},
+    'store': {'accounts': ['all'], 'root': '/opt/jumpserver-pam/credentials', 'format': 'json', 'owner': 'appuser'},
+    'services': [],
+}
 AGENT_RULE = {
-    'accounts': [{
-        'account_id': '<primary-account-id>', 'allow_account_switch': True,
-    }],
+    'name': 'sample-app', 'allow_account_switch': True, 'update_on_notification': True,
+    'accounts': [{'account_id': '<primary-account-id>', 'alias': 'database', 'username': 'db_app_a'}],
     'config_update': {
-        'file': '/etc/order-service/config.yml',
-        'format': 'auto',
-        'fields_map': {'DB_USER': 'username', 'DB_PASSWORD': 'secret'},
+        'file': '/etc/sample-app/config.yml', 'format': 'yaml',
+        'fields_map': {'DB_USER': 'database.username', 'DB_PASSWORD': 'database.secret'},
     },
-    'service_action': {'unit': 'order-service.service', 'operation': 'restart'},
-    'application_check': {
-        'path': '/usr/local/libexec/jms-pam/check-running-db', 'confirm_on_success': True,
+    'service_action': {'unit': 'sample-app.service', 'operation': 'restart'},
+    'application_check': {'path': '/usr/local/libexec/jms-pam/check-running-db', 'confirm_on_success': True},
+}
+AGENT_MULTI_SERVICE = {
+    **AGENT_RULE,
+    'accounts': [
+        {'account_id': '<primary-account-id>', 'alias': 'database'},
+        {'account_id': '<cache-account-id>', 'alias': 'cache'},
+    ],
+    'config_update': {
+        'file': '/etc/sample-app/config.yml', 'format': 'yaml',
+        'fields_map': {'DB_USER': 'database.username', 'DB_PASSWORD': 'database.secret', 'CACHE_USER': 'cache.username', 'CACHE_PASSWORD': 'cache.secret'},
     },
+}
+AGENT_ENVIRONMENT_RULE = {
+    'name': 'sample-app-env', 'allow_account_switch': True, 'update_on_notification': True,
+    'accounts': [{'account_id': '<primary-account-id>'}],
+    'config_update': {'files': [{'path': '/etc/sample-app/database.env', 'format': 'environment', 'owner': 'appuser'}]},
+    'service_action': {'unit': 'sample-app.service', 'operation': 'restart'},
 }
 
 
 def agent_configuration_section(texts):
-    return f"""{texts['agent_config']}
-
-{texts['agent_rules_example']}
+    return f"""{texts['services_model']}
 
 | {texts['configure']} | {texts['agent_rules_title']} |
 | --- | --- |
@@ -512,21 +530,23 @@ def agent_configuration_section(texts):
 | `service_action` | {texts['service_action_step']} |
 | `application_check` | {texts['application_check_step']} |
 
-```json
-{json.dumps(AGENT_SAMPLE, indent=2)}
-```
-
-`rules`:
+`services`:
 
 ```json
 {json.dumps([AGENT_RULE], indent=2)}
+```
+
+{texts['aliases_model']}
+
+```json
+{json.dumps(AGENT_MULTI_SERVICE, indent=2)}
 ```
 
 ### {texts['agent_format_title']}
 
 {texts['agent_config_format']}
 
-{texts['agent_rules']}
+{texts['services_upgrade']}
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -542,26 +562,34 @@ def agent_guide(texts):
 
 ## 1. {texts['onboarding_title']}
 
-{texts['onboarding']}
+{texts['agent_onboarding']}
 
 ## 2. {texts['agent_install_title']}
 
 ### Linux / systemd
 
-{texts['agent_setup']}
+{texts['services_upgrade']}
+
+Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
+
+```bash
+cd /path/to/pam-clients/agent
+go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
+```
 
 {texts['agent_bootstrap']}
 
 ```bash
 chmod 0600 ./jms_pam_agent.json
 sudo /usr/local/bin/jms-pam-agent install \\
-  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
+  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
 sudo systemctl status jms-pam-agent --no-pager
 ```
 
 ### {texts['foreground_title']}
 
-{texts['agent_portable']}
+{texts['services_portable']}
 
 {texts['foreground_binary']}
 
@@ -569,27 +597,56 @@ sudo systemctl status jms-pam-agent --no-pager
 chmod 0600 ./jms_pam_agent.json
 ./jms-pam-agent init-local \\
   --bootstrap ./jms_pam_agent.json \\
-  --directory "$HOME/.jms-pam-agent/orders" --instance-id orders-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
-$agentDir = Join-Path $HOME '.jms-pam-agent\\orders'
-.\\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id orders-node-1
+$agentDir = Join-Path $HOME '.jms-pam-agent\\sample-app'
+.\\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
 .\\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. {texts['agent_delivery_title']}
+## 3. store / local_api
 
-{texts['agent_delivery']}
+{texts['store_model']}
 
-| {texts['agent_delivery_title']} | {texts['configure']} |
+```json
+{json.dumps(AGENT_SAMPLE, indent=2)}
+```
+
+{texts['pull_interval']}
+
+| {texts['configure']} | {texts['agent_default_output_title']} |
 | --- | --- |
-| JSON | `delivery.delivery_mode: json` → `/opt/jumpserver-pam/credentials/<credential-key>.json` |
-| EnvironmentFile (Linux / systemd) | `delivery.delivery_mode: environment` → `/opt/jumpserver-pam/credentials/<credential-key>.env` |
-| Socket | `delivery.delivery_mode: socket` → `/run/jms-pam-agent/agent.sock` |
+| `store.accounts: ["all"]` | {texts['store_all_label']} |
+| `store.accounts: ["<account-id>"]` | {texts['store_selected_label']} |
+| `store.format: json` | `<store.root>/<account-id>.json` |
+| `store.format: environment` | `<store.root>/<account-id>.env` |
+| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
-{texts['agent_paths']}
+{texts['store_layout']}
+
+### EnvironmentFile / systemd
+
+{texts['agent_environment_file']}
+
+`services`:
+
+```json
+{json.dumps([AGENT_ENVIRONMENT_RULE], indent=2)}
+```
+
+```ini
+JMS_PAM_ACCOUNT_ID="<account-id>"
+JMS_PAM_USERNAME="db_user"
+JMS_PAM_SECRET="<password>"
+```
+
+```ini
+[Service]
+EnvironmentFile=/etc/sample-app/database.env
+```
 
 ## 4. {texts['agent_rules_title']}
 
@@ -611,7 +668,7 @@ curl --fail --silent --show-error \\
 
 curl --fail --silent --show-error \\
   --unix-socket '/run/jms-pam-agent/agent.sock' \\
-  'http://localhost/v1/credentials/<credential-key>'
+  'http://localhost/v1/credential?account_id=<account-id>'
 ```
 
 ### {texts['confirmation_title']}
@@ -757,6 +814,8 @@ def main():
             )
             for language in EXAMPLES
         }
+        if locale in ("en", "zh-hans"):
+            documents[CLIENTS / "agent" / f"README.{locale}.md"] = agent_guide(texts)
         # The complete English and Simplified Chinese Python references are maintained directly.
         if locale not in ("en", "zh-hans"):
             documents[CLIENTS / "python" / f"README.{locale}.md"] = python_guide(texts)

@@ -116,7 +116,7 @@ func fixture(t *testing.T) (Config, *fakeRemote, *Agent) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := Config{Endpoint: "https://example.com", AppID: "app", AppSecret: "secret", InstanceID: "instance", StateFile: filepath.Join(root, "state.json"), ReconcileSeconds: 300, Delivery: DeliveryConfiguration{Mode: "socket", Root: filepath.Join(root, "output"), Socket: filepath.Join(root, "run", "agent.sock"), User: account.Username}}
+	config := Config{Endpoint: "https://example.com", AppID: "app", AppSecret: "secret", InstanceID: "instance", StateFile: filepath.Join(root, "state.json"), PullIntervalSeconds: 300, Delivery: DeliveryConfiguration{Mode: "socket", Root: filepath.Join(root, "output"), Socket: filepath.Join(root, "run", "agent.sock"), User: account.Username}}
 	remote := &fakeRemote{metadata: 2, value: pam.Credential{Key: "db", Revision: 2, Account: pam.Account{ID: "account", Secret: "latest-2"}}}
 	service, err := New(config, remote)
 	if err != nil {
@@ -707,7 +707,7 @@ func TestConciseAccountRuleAndGeneratedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.StateFile != DefaultState || config.EventFile != DefaultEvent || config.Delivery.Socket != DefaultSocket || config.ReconcileSeconds != 300 {
+	if config.StateFile != DefaultState || config.EventFile != DefaultEvent || config.Delivery.Socket != DefaultSocket || config.PullIntervalSeconds != 300 {
 		t.Fatal("generated paths and interval were not supplied")
 	}
 	stored, err := json.Marshal(config.compactDefaults())
@@ -718,7 +718,7 @@ func TestConciseAccountRuleAndGeneratedDefaults(t *testing.T) {
 	if err := json.Unmarshal(stored, &saved); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"state_file", "event_file", "reconcile_interval"} {
+	for _, key := range []string{"state_file", "event_file", "pull_interval"} {
 		if _, exists := saved[key]; exists {
 			t.Fatalf("generated default %s leaked into installed configuration", key)
 		}

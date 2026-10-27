@@ -11,24 +11,21 @@ Ejecute el Agent Go independiente en el host de la aplicación, sin Python. Siga
 ## 1. Requisitos y flujo de integración
 
 1. Cree la aplicación y autorice las cuentas para consulta (pull). Use IDs de cuenta, no nombres ni IDs de política.
-2. Vincule una política de notificación o rotación A/B para entrega automática (push).
+2. Declare las cuentas en store/services; vincule políticas para recibir notificaciones o cambios A/B.
 3. Descargue la identidad desde el asistente, use un `instance_id` estable y único por réplica y proteja AK/SK.
 
 ## 2. Instalación e inicio
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/jms-pam-agent-linux-amd64) · [Linux ARM64](/download/pam/jms-pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+El nuevo formato usa `config_version: 2` y requiere actualizar Core y Agent. La versión 1 y las configuraciones `delivery` / `rules` sin versión mantienen su comportamiento. No mezcle formatos y actualice primero los binarios. Core no puede añadir rutas ejecutables locales. Reinicie Agent tras editar su configuración privada.
+
+Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
 ```bash
-# Run in the directory containing the downloaded Agent and SHA256SUMS.
-case "$(uname -m)" in
-  x86_64) agent_arch=amd64 ;;
-  aarch64|arm64) agent_arch=arm64 ;;
-  *) echo "Unsupported CPU architecture"; exit 1 ;;
-esac
-sha256sum --ignore-missing --check SHA256SUMS && \
-sudo install -m 0755 "./jms-pam-agent-linux-${agent_arch}" /usr/local/bin/jms-pam-agent
+cd /path/to/pam-clients/agent
+go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
+sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
 ```
 
 Ejecute desde el directorio de `jms_pam_agent.json`. El servicio Linux requiere root y systemd. Cambie el ID por réplica. Use el binario del sistema en primer plano; macOS / Windows pueden requerir compilación.
@@ -36,13 +33,13 @@ Ejecute desde el directorio de `jms_pam_agent.json`. El servicio Linux requiere 
 ```bash
 chmod 0600 ./jms_pam_agent.json
 sudo /usr/local/bin/jms-pam-agent install \
-  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
+  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
 sudo systemctl status jms-pam-agent --no-pager
 ```
 
 ### Ejecución en primer plano
 
-El instalador integrado requiere Linux y root. En macOS, Linux sin root o Windows, elija JSON o Socket en el asistente y siga init-local y run --local --config. Inicialice una vez y reutilice la configuración local privada; el modo en primer plano no realiza acciones systemd.
+En macOS, Windows o Linux sin root, ejecute `init-local` una vez y reutilice la configuración privada con `run --local`. Admite JSON y archivos de entorno; systemd requiere el servicio Linux.
 
 Guarde el binario como `jms-pam-agent` (`jms-pam-agent.exe` en Windows); en Linux/macOS ejecute `chmod 0755 ./jms-pam-agent`.
 
@@ -50,33 +47,104 @@ Guarde el binario como `jms-pam-agent` (`jms-pam-agent.exe` en Windows); en Linu
 chmod 0600 ./jms_pam_agent.json
 ./jms-pam-agent init-local \
   --bootstrap ./jms_pam_agent.json \
-  --directory "$HOME/.jms-pam-agent/orders" --instance-id orders-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
-$agentDir = Join-Path $HOME '.jms-pam-agent\orders'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id orders-node-1
+$agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
+.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
 .\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. Métodos de entrega
+## 3. store / local_api
 
-Elija JSON para archivos, EnvironmentFile para un servicio systemd fijado en la instalación o Unix Socket para la API local. El Agent registra revisiones entregadas cuando finaliza la entrega; la aplicación valida y aplica antes de registrar la revisión aplicada. El socket pertenece al usuario configurado y tiene permisos 0600; haga las solicitudes con ese usuario.
+`store` y `services` son independientes. `store.accounts` es una matriz de cadenas: `["all"]` guarda todas las cuentas autorizadas para la aplicación; una lista de ID limita el almacenamiento. Las suscripciones solo aportan notificaciones y no son requisito para sincronizar cuentas autorizadas. Omita `store` para usar solo servicios; una matriz vacía no guarda nada. No mezcle `all` con ID.
 
-| Métodos de entrega | Configuración y ejecución |
+```json
+{
+  "config_version": 2,
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "<application-id>",
+  "app_secret": "<application-secret>",
+  "org_id": "<org-id>",
+  "instance_id": "app-node-1",
+  "pull_interval": 300,
+  "local_api": {
+    "owner": "appuser"
+  },
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  },
+  "services": []
+}
+```
+
+`pull_interval` es el intervalo global de consulta en segundos: un entero positivo, 300 por defecto. El Agent sincroniza al iniciar y después comprueba las versiones de cuentas y credenciales en cada intervalo; solo obtiene secretos si cambia la versión o la cuenta activa. Los servicios con `update_on_notification: false` se actualizan en la siguiente consulta; las notificaciones no la aplazan.
+
+| Configuración y ejecución | store |
 | --- | --- |
-| JSON | `delivery.delivery_mode: json` → `/opt/jumpserver-pam/credentials/<credential-key>.json` |
-| EnvironmentFile (Linux / systemd) | `delivery.delivery_mode: environment` → `/opt/jumpserver-pam/credentials/<credential-key>.env` |
-| Socket | `delivery.delivery_mode: socket` → `/run/jms-pam-agent/agent.sock` |
+| `store.accounts: ["all"]` | Todas las cuentas autorizadas para la aplicación, incluso sin suscripción. |
+| `store.accounts: ["<account-id>"]` | Solo los ID de cuentas declarados explícitamente. |
+| `store.format: json` | `<store.root>/<account-id>.json` |
+| `store.format: environment` | `<store.root>/<account-id>.env` |
+| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
-Configuración Linux: `/etc/jms-pam-agent/agent.json` (0600). `state_file` guarda credenciales y progreso; `event_file`, metadatos. `delivery_root` y `socket_path` definen la entrega. En primer plano use las rutas del `agent.json` generado.
+Cada cuenta, incluidas A y B, tiene su archivo por account_id. Las credenciales están en texto claro con permisos 0600. Una cuenta inactiva cuya contraseña está cambiando no está disponible temporalmente. La comprobación de autorización elimina archivos revocados. `local_api.owner` controla el Socket y el propietario predeterminado de archivos de negocio; usa `store.owner` y después el usuario Agent si se omite. El Socket es independiente del almacenamiento. Sin cambios de versión solo se leen metadatos; las consultas reales siguen auditadas y cuentan para la observación de rotación.
+
+### EnvironmentFile / systemd
+
+EnvironmentFile guarda usuario, contraseña y metadatos como texto plano `KEY=value` en un `.env` privado (0600). Configure `EnvironmentFile=` en el servicio systemd de la aplicación para cargarlo al entorno del proceso al iniciar. No cambia variables globales del host. Reinicie tras actualizar; reload no sustituye el entorno del proceso principal en ejecución.
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app-env",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "account_id": "<primary-account-id>"
+      }
+    ],
+    "config_update": {
+      "files": [
+        {
+          "path": "/etc/sample-app/database.env",
+          "format": "environment",
+          "owner": "appuser"
+        }
+      ]
+    },
+    "service_action": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    }
+  }
+]
+```
+
+```ini
+JMS_PAM_ACCOUNT_ID="<account-id>"
+JMS_PAM_USERNAME="db_user"
+JMS_PAM_SECRET="<password>"
+```
+
+```ini
+[Service]
+EnvironmentFile=/etc/sample-app/database.env
+```
 
 ## 4. Actualizar la configuración y rotación A/B
 
-La configuración descargada ya incluye la identidad y la entrega del Agent. En rules, declare los IDs de las cuentas usadas por la aplicación, la actualización de configuración, la activación y la verificación de la conexión en ejecución. allow_account_switch permite usar la misma regla para la rotación A/B en ambos sentidos. credential_check es opcional para probar el nuevo acceso antes de cambiar archivos. Estado, eventos, Socket y conciliación de 300 segundos tienen valores predeterminados. rules vacío crea un archivo por credencial.
-
-El primer JSON es la configuración básica. Para actualizar archivos, sustituya `rules` por el segundo array. Prepare rutas, servicios y scripts de ejemplo en el host. Omita `allow_account_switch` para actualizaciones normales; A/B requiere esta opción y una prueba de conexión real.
+Añada los objetos siguientes a `services`, con un `name` único y estable. `allow_account_switch` pertenece al servicio y vale false por defecto: true sigue la cuenta activa de una asociación A/B inequívoca; otras cuentas permanecen fijas. Basta declarar A. `update_on_notification` también pertenece al servicio y vale true por defecto. False aplaza las acciones hasta la siguiente reconciliación, cada 300 segundos por defecto; el almacenamiento y las revocaciones siguen activos. Cada servicio registra sus versiones. Solo se confirma la rotación tras validar todos los servicios implicados con `application_check.confirm_on_success: true`.
 
 | Configuración y ejecución | Actualizar la configuración y rotación A/B |
 | --- | --- |
@@ -85,43 +153,31 @@ El primer JSON es la configuración básica. Para actualizar archivos, sustituya
 | `service_action` | Ejecute reload/restart del servicio fijo o un script fijo. |
 | `application_check` | Valide la conexión de la aplicación en ejecución y confirme. |
 
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
+`services`:
 
 ```json
 [
   {
+    "name": "sample-app",
+    "allow_account_switch": true,
+    "update_on_notification": true,
     "accounts": [
       {
         "account_id": "<primary-account-id>",
-        "allow_account_switch": true
+        "alias": "database",
+        "username": "db_app_a"
       }
     ],
     "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
+      "file": "/etc/sample-app/config.yml",
+      "format": "yaml",
       "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
+        "DB_USER": "database.username",
+        "DB_PASSWORD": "database.secret"
       }
     },
     "service_action": {
-      "unit": "order-service.service",
+      "unit": "sample-app.service",
       "operation": "restart"
     },
     "application_check": {
@@ -132,11 +188,49 @@ El primer JSON es la configuración básica. Para actualizar archivos, sustituya
 ]
 ```
 
+Una cuenta admite `username` / `secret` directamente. Varias cuentas requieren alias únicos y referencias como `database.username` o `cache.secret`. El alias permanece estable al cambiar A/B. El `username` opcional solo es informativo; los valores reales proceden de Core. Todas las cuentas deben estar listas antes de escribir y la acción del servicio se ejecuta una vez. Los errores de asignación se detectan antes de modificar.
+
+```json
+{
+  "name": "sample-app",
+  "allow_account_switch": true,
+  "update_on_notification": true,
+  "accounts": [
+    {
+      "account_id": "<primary-account-id>",
+      "alias": "database"
+    },
+    {
+      "account_id": "<cache-account-id>",
+      "alias": "cache"
+    }
+  ],
+  "config_update": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "database.username",
+      "DB_PASSWORD": "database.secret",
+      "CACHE_USER": "cache.username",
+      "CACHE_PASSWORD": "cache.secret"
+    }
+  },
+  "service_action": {
+    "unit": "sample-app.service",
+    "operation": "restart"
+  },
+  "application_check": {
+    "path": "/usr/local/libexec/jms-pam/check-running-db",
+    "confirm_on_success": true
+  }
+}
+```
+
 ### Formato de configuración
 
 `config_update.format` usa `auto` por defecto, también cuando se omite. Las extensiones `.txt`, `.env` y `.properties` usan `env` (`KEY=value`); `.yml` y `.yaml` usan `yaml` (`KEY: value` de nivel superior, valores escritos como cadenas entre comillas). Para otras extensiones, indique `env` o `yaml`. Cada campo debe existir una sola vez; se conservan los demás ajustes. Para secciones INI o YAML anidado, use `files` + `template_file` para generar todo el archivo, o un `script`. Tras actualizar el archivo de variables, la aplicación debe releerlo o reiniciarse.
 
-Las rules locales configuran archivos, JSON/EnvironmentFile o plantillas fiables y una acción systemd reload/restart o un ejecutable fijo. Los scripts reciben JSON por stdin, usan argumentos fijos y un tiempo límite, y verifican la aplicación antes de devolver éxito. Core no puede ampliar estas capacidades. Reinicie el Agent tras editar la configuración privada.
+El nuevo formato usa `config_version: 2` y requiere actualizar Core y Agent. La versión 1 y las configuraciones `delivery` / `rules` sin versión mantienen su comportamiento. No mezcle formatos y actualice primero los binarios. Core no puede añadir rutas ejecutables locales. Reinicie Agent tras editar su configuración privada.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -160,7 +254,7 @@ curl --fail --silent --show-error \
 
 curl --fail --silent --show-error \
   --unix-socket '/run/jms-pam-agent/agent.sock' \
-  'http://localhost/v1/credentials/<credential-key>'
+  'http://localhost/v1/credential?account_id=<account-id>'
 ```
 
 ### Confirmar la aplicación
@@ -184,7 +278,7 @@ sudo systemctl status jms-pam-agent --no-pager
 sudo journalctl -u jms-pam-agent -n 100 --no-pager
 ```
 
-El Agent sincroniza al arrancar, ante eventos pertinentes y cada 300 segundos. Los fallos de red conservan las últimas credenciales autorizadas. Un rechazo de identidad o autorización bloquea la lectura por socket; una sincronización firmada correcta la restablece. Los archivos ya escritos se conservan. SIGINT/SIGTERM cierran servidor, conexiones e hilo lector.
+Agent sincroniza al iniciar, con notificaciones relevantes y periódicamente, cada 300 segundos por defecto. Una interrupción temporal conserva los valores autorizados. Una revocación explícita o desactivación bloquea la lectura local y elimina archivos estándar aunque falle la actualización. Los archivos de negocio quedan bajo control del administrador. Las notificaciones no aplazan la reconciliación periódica. SIGINT/SIGTERM cierra el servidor y el lector de eventos.
 
 
 <!-- agent-doc:end -->
@@ -232,7 +326,7 @@ client_options = {
     "app_secret": "<application-secret>",
     "org_id": "<org-id>",
 }
-instance_id = os.environ.get("JMS_INSTANCE_ID") or "orders-node-1"
+instance_id = os.environ.get("JMS_INSTANCE_ID") or "app-node-1"
 ```
 
 ## 3. Obtener la primera credencial
@@ -301,7 +395,7 @@ watch_events espera al cierre; start_events no garantiza la sincronización inic
 
 ### Credenciales más recientes y fallos del servidor
 
-La consulta solicita primero la API. Una respuesta exitosa reemplaza la credencial retenida; versiones antiguas no sobrescriben una nueva y no hay caducidad por tiempo. Solo un tiempo de espera, fallo de red o HTTP 5xx permite devolver el último valor del mismo selector con la marca de origen local. Sin valor previo se propaga el error. El SDK lo conserva en memoria hasta actualización, revocación o cierre; clone y reinicio comienzan vacíos. El Agent conserva sus credenciales en su estado local protegido. HTTP 401/403/404 borran los valores del SDK y fallan; una respuesta exitosa inválida también falla. La revocación elimina las credenciales afectadas; snapshot elimina entradas fuera de autorización. Un cambio de configuración conserva los valores hasta comprobar el snapshot siguiente. El Agent aplica las revocaciones explícitas y las reducciones del ámbito del snapshot antes de sincronizar por HTTP, guarda ese ámbito y bloquea las lecturas locales afectadas incluso durante una caída o tras reiniciar. Una respuesta credential_not_found (HTTP 400) también elimina los valores conservados del SDK. HTTP 426 falla explícitamente sin borrar credenciales ni devolver caché para esa solicitud. Un endpoint opcional de metadatos ausente (HTTP 404) no borra credenciales. El Agent no persiste valores solo pull para uso sin conexión; los SDK pueden usar valores en memoria conforme a las reglas existentes de fallos temporales.
+El SDK consulta primero la API y actualiza el valor retenido sin volver a una versión anterior. Solo timeout, error de red o HTTP 5xx permiten usar un valor previo del mismo selector, marcado como local y sin caducidad temporal. Clones y reinicios del SDK empiezan sin caché. HTTP 401/403/404 o credential_not_found (400) borran valores; 426 y respuestas incorrectas fallan sin respaldo. Una API opcional de metadatos ausente no borra la caché. Agent v2 conserva las cuentas declaradas en store/services; una consulta puntual no declarada no se guarda automáticamente. Las revocaciones explícitas se aplican antes de la actualización HTTP, incluso sin conexión. Los snapshots push no definen todos los permisos de almacenamiento; una reconciliación correcta verifica la autorización actual.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

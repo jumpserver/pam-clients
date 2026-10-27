@@ -1,0 +1,75 @@
+{
+  "endpoint": "https://jumpserver.example.com",
+  "app_id": "<application-id>",
+  "app_secret": "<application-secret>",
+  "org_id": "<org-id>",
+  "instance_id": "app-node-1",
+  "pull_interval": 300,
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  },
+  "services": [
+    {
+      "name": "sample-app",
+      "accounts": [
+        {
+          "account_id": "<primary-account-id>",
+          "username": "db_app_a",
+          "alias": "database"
+        },
+        {
+          "account_id": "<cache-account-id>",
+          "alias": "cache"
+        }
+      ],
+      "config_update": {
+        "file": "/etc/sample-app/config.yml",
+        "format": "yaml",
+        "fields_map": {
+          "DB_USER": "database.username",
+          "DB_PASSWORD": "database.secret",
+          "CACHE_USER": "cache.username",
+          "CACHE_PASSWORD": "cache.secret"
+        }
+      },
+      "service_action": {
+        "unit": "sample-app.service",
+        "operation": "restart"
+      },
+      "application_check": {
+        "path": "/usr/local/libexec/check-sample-app",
+        "confirm_on_success": true
+      },
+      "allow_account_switch": true,
+      "update_on_notification": true
+    },
+    {
+      "name": "report-worker",
+      "accounts": [
+        {
+          "account_id": "<report-account-id>",
+          "username": "report_reader"
+        }
+      ],
+      "config_update": {
+        "files": [
+          {
+            "path": "/etc/report-worker/database.env",
+            "format": "environment",
+            "owner": "appuser"
+          }
+        ]
+      },
+      "update_on_notification": false
+    }
+  ],
+  "config_version": 2,
+  "local_api": {
+    "owner": "appuser"
+  }
+}
