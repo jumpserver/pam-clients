@@ -1,24 +1,20 @@
 # JumpServer PAM Node.js SDK
 
-Реализуйте обработчик смены аккаунта и запустите управляемое прослушивание. SDK обрабатывает снимки, получение актуальных данных, проверку аккаунта и версии, повторы, получение права выполнения команды и результаты. Возвращайтесь только после проверки реального подключения, переключения пула и закрытия старых соединений. Python и Node.js используют подклассы, Go — OnAccountChanged, Java — AccountEventListener. Без реализации переключения пример завершается ошибкой.
+<!-- sdk-doc:start -->
 
-## Требования
+## 1. Условия и порядок подключения
+
+1. Создайте приложение и разрешите получение аккаунтов (pull). Используйте ID аккаунта, а не имя или ID политики.
+2. Для автоматической доставки привяжите политику уведомлений или ротации A/B (push).
+3. Загрузите настройки в мастере, задайте стабильный уникальный `instance_id` каждой реплике и защитите AK/SK.
+
+Для pull достаточно первого запроса. Для push и A/B реализуйте бизнес-обработчики и слушатель. SDK ведёт протокол и результаты, приложение переключает реальные соединения. Примеры для текущих исходников: нужны совместимые сборки Core и SDK. Опубликованные пакеты 1.0.2 содержат не все новые API.
 
 - Node.js 20.3+ / ws
 
-## Настройка и запуск
+## 2. Установка SDK и настройка идентификации
 
 Установите SDK и задайте параметры ниже. Разрешите аккаунты для pull в управлении приложениями; привязывайте политики только при необходимости push или ротации. Получите AK/SK и ID организации из материалов подключения. Замените шаблонные значения и защитите секреты развёртывания. Каждой реплике нужен стабильный уникальный ID. Получайте по ID учётной записи.
-
-```bash
-export JMS_ENDPOINT='https://jumpserver.example.com'
-export JMS_APP_ID='<app-id>'
-export JMS_APP_SECRET='<app-secret>'
-export JMS_ORG_ID='<org-id>'
-export JMS_INSTANCE_ID='app-node-1'
-export JMS_ACCOUNT_ID='<account-id>'
-
-```
 
 Установите исходный код клиента из той же версии Core; пакеты 1.0.2 не содержат управляемых обработчиков. Замените jumpserver.example.com адресом Core и сохраните каталог jms-pam-clients, включая локальный путь замены модуля Go.
 
@@ -33,7 +29,27 @@ const { Client } = require('@jumpserver/pam')
 // ESM: import { Client } from '@jumpserver/pam'
 ```
 
-## Запрос и ответ
+### Альтернатива: локальные исходники
+
+Если Core не предоставляет API загрузки исходников или установка автономная, подготовьте совместимые исходники в `/path/to/pam-clients` и выполните команды из каталога приложения. Замените путь.
+
+```bash
+npm install /path/to/pam-clients/node
+```
+
+
+```bash
+export JMS_ENDPOINT='https://jumpserver.example.com'
+export JMS_APP_ID='<app-id>'
+export JMS_APP_SECRET='<app-secret>'
+export JMS_ORG_ID='<org-id>'
+export JMS_INSTANCE_ID='app-node-1'
+export JMS_ACCOUNT_ID='<account-id>'
+```
+
+## 3. Первое получение учётных данных
+
+`demo.js`
 
 ```javascript
 'use strict'
@@ -65,6 +81,73 @@ if (require.main === module)
     process.exitCode = 1
   })
 ```
+
+```bash
+node demo.js
+```
+
+## 4. Обработчики событий
+
+Реализуйте обработчик смены аккаунта и запустите управляемое прослушивание. SDK обрабатывает снимки, получение актуальных данных, проверку аккаунта и версии, повторы, получение права выполнения команды и результаты. Возвращайтесь только после проверки реального подключения, переключения пула и закрытия старых соединений. Python и Node.js используют подклассы, Go — OnAccountChanged, Java — AccountEventListener. Без реализации переключения пример завершается ошибкой.
+
+`hooks.js`
+
+```javascript
+'use strict'
+const { Client } = require('@jumpserver/pam')
+
+if (typeof Client.prototype.onAccountChanged !== 'function')
+  throw new Error('Upgrade @jumpserver/pam to a version with managed account events')
+
+class ApplicationClient extends Client {
+  async onAccountChanged(account, { signal }) {
+    // Validate, switch the connection pool and release old connections.
+    // Return only after the application uses this account. Never log secrets.
+    throw new Error('Implement application account switching')
+  }
+  async onAccountRevoked(accountId, { signal }) {
+    throw new Error('Implement revoked account cleanup')
+  }
+}
+async function main() {
+  const client = new ApplicationClient({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
+    appSecret: process.env.JMS_APP_SECRET, instanceId: process.env.JMS_INSTANCE_ID, orgId: process.env.JMS_ORG_ID })
+  const stop = () => client.close()
+  process.once('SIGINT', stop); process.once('SIGTERM', stop)
+  // SDK handles snapshots, fresh fetches, versions, retries and event results.
+  // Pull-only code can call client.reportAccounts([accountId]); [] clears usage.
+  try { await client.watchEvents() }
+  finally { await client.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop) }
+}
+if (require.main === module) main().catch((error) => { console.error(error.code || error.name); process.exitCode = 1 })
+```
+
+```bash
+node hooks.js
+```
+
+Обработчики выполняются последовательно через ограниченную очередь; обычные обновления повторяются с задержкой 1–30 секунд. Успех сообщается только после завершения обработчика. При сбое отправки результата завершённое действие в том же слушателе не повторяется. Команды требуют подтверждённого права выполнения; неудачные действия команд автоматически не повторяются. Применённые аккаунты сообщаются автоматически, при A/B-переключении текущий аккаунт заменяется. Реализуйте закрытие отозванных соединений. Отчёт об использовании, получение пароля и доставка файла сами не подтверждают успех приложения. Старые API сохраняют явное подтверждение. Обеспечьте идемпотентность после перезапуска.
+
+### Жизненный цикл и завершение
+
+`watchEvents({signal})` / `startEvents({signal})`; `stopEvents()` / `await subscription.stop()` / `await subscription.done`
+
+watchEvents не блокирует цикл событий; startEvents не гарантирует синхронизацию. Один слушатель на клиент. async-методы ожидаются последовательно и получают AbortSignal. close отменяет работу; ожидайте stop() или done извне. Не ждите собственного done. clone возвращает Client.
+
+### Последние учётные данные и недоступность сервера
+
+Сначала выполняется запрос API. Успешный ответ заменяет сохранённые последние данные; старая версия не заменяет новую, срок истечения по времени отсутствует. Только тайм-аут, сетевой сбой или HTTP 5xx позволяют вернуть последний успешный результат того же селектора с признаком локального источника. Без прежнего значения возвращается исходная ошибка. SDK хранит данные в памяти клиента до обновления, отзыва или закрытия; clone и перезапуск начинают с пустого состояния. Agent использует защищённое локальное состояние. HTTP 401/403/404 очищают данные SDK и вызывают ошибку; некорректный успешный ответ также ошибочен. Отзыв удаляет соответствующие данные, snapshot — данные вне разрешений. Изменение конфигурации сохраняет значения до проверки следующего snapshot. Agent применяет явный отзыв и сокращение области snapshot до HTTP-синхронизации, сохраняет эту область и блокирует соответствующую локальную выдачу даже при сбое сервера или после перезапуска. Ответ credential_not_found (HTTP 400) также удаляет сохранённые значения SDK. HTTP 426 возвращает явную ошибку без удаления сохранённых данных и без подмены ответа кешем. Отсутствие необязательного API метаданных (HTTP 404) не удаляет данные. Agent не сохраняет значения только pull для автономного доступа; SDK используют память по прежним правилам временного сбоя.
+
+- `account.fromLocal`
+- `getAccount({accountId, allowLocalFallback: false})`
+
+При управляемой подписке snapshot и credential.updated автоматически получают данные, заменяют локальное значение и вызывают обработчик. Ошибка обновления сохраняет прежнее значение и запускает повтор. Agent также получает данные по уведомлениям и сохраняет их при сбоях сервера. Для обновления и ручного переключения используйте вызовы с обязательным запросом API ниже. Сохранённое значение не считается новой полученной версией и не подтверждает ротацию автоматически.
+
+При простое ping отправляется каждые 10 секунд. Около 30 секунд без сообщений вызывают переподключение с задержкой 1–30 секунд и новой подписью. snapshot восстанавливает текущее состояние без воспроизведения истории.
+
+
+
+## 5. Основные методы
 
 ### Список разрешённых аккаунтов
 
@@ -147,64 +230,23 @@ if (require.main === module)
 ```
 
 
-## События и применение учётных данных
+### Отчёт о состоянии приложения
 
-Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
+Передавайте полный снимок состояния и ID используемых аккаунтов. Состояния: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Пустой список очищает прежние сведения. Вызывайте при изменении состояния или из heartbeat приложения. Python, Java и Node.js возвращают false при ошибках сети/API; Go предоставляет `TryReportStatus`. Строгие варианты возвращают подробности ошибок. Неверные аргументы отклоняются. Используется настроенный HTTP timeout. Отчёт не получает секреты, не подтверждает ротацию и не очищает кеш. Не передавайте секреты и тексты исключений в `error_code`. ClientInfo возвращает последний отчёт и его время.
 
 ```javascript
-'use strict'
-const { Client } = require('@jumpserver/pam')
-
-async function applyAccount(account) {
-  // Validate a new connection, switch the pool, then release old connections.
-  throw new Error('Implement application account switching')
-}
-async function applyEvent(client, event) {
-  if (event.event === 'application.restart.requested')
-    throw new Error('Implement application restart and health check')
-  const account = await client.getAccount({ accountId: event.accountId, allowLocalFallback: false })
-  if (account.revision !== event.accountRevision) throw new Error('Event account version is superseded')
-  await applyAccount(account)
-}
-async function handleEvent(client, event) {
-  if (event.commandId) {
-    const claim = await client.reportApplicationCommandResult({ commandId: event.commandId, status: 'running' })
-    if (!claim.accepted) return
-  }
-  try { await applyEvent(client, event) }
-  catch (error) {
-    await client.confirmEvent({ eventId: event.eventId, status: 'failed', errorCode: 'application_failed' })
-    throw error
-  }
-  await client.confirmEvent({ eventId: event.eventId })
-}
-async function main() {
-  const client = new Client({ endpoint: process.env.JMS_ENDPOINT, appId: process.env.JMS_APP_ID,
-    appSecret: process.env.JMS_APP_SECRET, instanceId: process.env.JMS_INSTANCE_ID, orgId: process.env.JMS_ORG_ID })
-  const stop = () => client.close()
-  process.once('SIGINT', stop); process.once('SIGTERM', stop)
-  try {
-    for await (const event of client.watchCredentialEvents()) {
-      const updates = event.commandId || event.event === 'credential.updated' ? [event]
-        : event.event === 'snapshot' ? event.credentials || [] : []
-      // Reconcile removed connections on snapshots; release revoked accounts.
-      for (const update of updates) {
-        try { await handleEvent(client, update) }
-        catch (error) { console.error(error.code || error.name) }
-      }
-    }
-  } finally { await client.close(); process.off('SIGINT', stop); process.off('SIGTERM', stop) }
-}
-if (require.main === module) main().catch((error) => { console.error(error.code || error.name); process.exitCode = 1 })
+const accepted = await client.reportAccounts([account.id])
+await client.reportAccounts([])
 ```
+
+
+### Низкоуровневые события и команды
+
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 Старые API key сохранены для совместимости. Новые интеграции используют `get_account` и `confirm_event` и требуют обновления Core.
 
-## Команды приложения
-
-Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
-
-## Основные методы
+### API
 
 - `getApplication({signal}) / getClientInfo({signal})`
 - `reportAccounts(accountIds) / reportStatus({status, accountId, accountIds, errorCode, raiseOnError, signal})`
@@ -223,17 +265,13 @@ if (require.main === module) main().catch((error) => { console.error(error.code 
 - `syncAgent({credentials, deliveredCredentials, ...})`
 - `clone() / close()`
 
-### Отчёт о состоянии приложения
+## 6. Проверка интеграции
 
-Передавайте полный снимок состояния и ID используемых аккаунтов. Состояния: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Пустой список очищает прежние сведения. Вызывайте при изменении состояния или из heartbeat приложения. Python, Java и Node.js возвращают false при ошибках сети/API; Go предоставляет `TryReportStatus`. Строгие варианты возвращают подробности ошибок. Неверные аргументы отклоняются. Используется настроенный HTTP timeout. Отчёт не получает секреты, не подтверждает ротацию и не очищает кеш. Не передавайте секреты и тексты исключений в `error_code`. ClientInfo возвращает последний отчёт и его время.
+1. Получите разрешённый аккаунт и проверьте реальное соединение.
+2. Проверьте начальную синхронизацию и обновление; успех — после завершения обработчика.
+3. Отдельно проверьте статус/использование и результат события. Получение и отчёт не подтверждают применение.
 
-```javascript
-const accepted = await client.reportAccounts([account.id])
-await client.reportAccounts([])
-```
-
-
-## Устранение неполадок
+### Устранение неполадок
 
 Ошибки HTTP, сети, аутентификации и декодирования представлены типом ошибки SDK с кодом и HTTP-статусом. Закрывайте потоки и клиенты после использования; жизненные циклы копий независимы. Повторяйте временные сбои на уровне приложения и не записывайте секреты или заголовки авторизации.
 
@@ -241,66 +279,4 @@ await client.reportAccounts([])
 
 Все SDK используют протокол версии 1; конфигурация Agent — схему версии 1. Ответ client_upgrade_required (HTTP 426) требует проверки совместимости и обновления. Неизвестные необязательные поля и уведомления допустимы; неподдерживаемые политики нельзя применять или подтверждать. Квитанции отправляются автоматически и не доказывают применение учётных данных. Метаданные клиента могут содержать server_capabilities. Отсутствие или null означает неизвестность; новые имена допустимы. Список описывает возможности сервера, а не разрешения.
 
-## Подключение Go Agent
-
-Идентификация использует app_id, app_secret, org_id и стабильный instance_id; доступ определяется политиками приложения. Пути и действия задаются локально: state_file хранит последние пароли, event_file добавляет события без секретов, delivery задаёт вывод, rules — файлы, шаблоны и reload/restart либо фиксированные скрипты. После уведомления Agent получает и сохраняет актуальный пароль, атомарно заменяет файлы, затем выполняет действие. При сбое доставка повторяется. В rules используйте credentials[].key из get_accounts; ключ подписки включает ID аккаунта. Пустой rules записывает файл для каждого ключа.
-
-Локальные rules задают файлы, JSON/EnvironmentFile или доверенные шаблоны и действие systemd reload/restart либо фиксированный исполняемый файл. Скрипты получают JSON через stdin, используют фиксированные аргументы и таймаут и проверяют применение перед успешным завершением. Core не расширяет эти возможности. После изменения приватной конфигурации перезапустите Agent.
-
-Загруженная конфигурация уже содержит идентификацию Agent и параметры доставки. В rules укажите ID учётных записей приложения, обновление конфигурации, применение изменений и проверку рабочего соединения. allow_account_switch использует одно правило для ротации A/B в обоих направлениях. Необязательный credential_check проверяет новый вход до изменения файлов. Для путей состояния, событий, Socket и интервала сверки 300 секунд есть значения по умолчанию. Пустой rules создаёт файл для каждой учётной записи.
-
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
-
-```json
-[
-  {
-    "accounts": [
-      {
-        "account_id": "<primary-account-id>",
-        "allow_account_switch": true
-      }
-    ],
-    "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
-      "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
-      }
-    },
-    "service_action": {
-      "unit": "order-service.service",
-      "operation": "restart"
-    },
-    "application_check": {
-      "path": "/usr/local/libexec/jms-pam/check-running-db",
-      "confirm_on_success": true
-    }
-  }
-]
-```
-
-`config_update.format` по умолчанию равен `auto`, в том числе при отсутствии поля. Расширения `.txt`, `.env`, `.properties` используют `env` (`KEY=value`), а `.yml`, `.yaml` — `yaml` (`KEY: value` верхнего уровня, новые значения записываются как строки в кавычках). Для других расширений задайте `env` или `yaml`. Каждое поле должно уже существовать ровно один раз; остальные настройки сохраняются. Для секций INI и вложенного YAML используйте `files` + `template_file` для генерации всего файла либо `script`. После обновления файла переменных приложение должно перечитать его или перезапуститься.
-
-```bash
-jms-pam-agent get_accounts
-jms-pam-agent get_secret '<account-id>'
-sudo jms-pam-agent check-config
-sudo systemctl restart jms-pam-agent
-```
+<!-- sdk-doc:end -->

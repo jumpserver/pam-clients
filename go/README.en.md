@@ -1,24 +1,20 @@
 # JumpServer PAM Go SDK
 
-Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.
+<!-- sdk-doc:start -->
 
-## Requirements
+## 1. Prerequisites and workflow
+
+1. Create an application and authorize the accounts it may retrieve (pull). Use account IDs, not usernames or policy IDs.
+2. Bind a credential notification or A/B rotation policy only when updates must be pushed. Authorization alone does not enable proactive delivery.
+3. Download identity/configuration from the application access wizard. Use a stable, unique `instance_id` for each replica and keep AK/SK private.
+
+Use only the retrieval section for pull-only access. For pushed updates or A/B rotation, implement the managed business callbacks and start listening. The SDK handles protocol and event results; the application validates and switches real connections. These examples reflect the current source: install a matching Core and SDK build before using new APIs; released 1.0.2 packages do not include all of them.
 
 - Go 1.23+ / coder/websocket
 
-## Configure and run
+## 2. Installation and identity
 
 Install the SDK and use the configuration below. Authorize accounts for pull in Application Management; bind policies only when push or rotation is needed. Obtain the application AK/SK and organization ID from its access materials. Replace placeholders and keep identity material in deployment secrets. Use a stable, unique instance ID for each replica. Fetch by account ID.
-
-```bash
-export JMS_ENDPOINT='https://jumpserver.example.com'
-export JMS_APP_ID='<app-id>'
-export JMS_APP_SECRET='<app-secret>'
-export JMS_ORG_ID='<org-id>'
-export JMS_INSTANCE_ID='app-node-1'
-export JMS_ACCOUNT_ID='<account-id>'
-
-```
 
 Install the client source shipped by the same Core using the commands below; released v1.0.2 packages do not include managed callbacks. Replace jumpserver.example.com with your Core address. Keep the extracted jms-pam-clients directory with your application, including the Go module replacement path.
 
@@ -33,7 +29,28 @@ go get github.com/jumpserver/pam-clients/go@v1.0.2
 import pam "github.com/jumpserver/pam-clients/go"
 ```
 
-## Request and response
+### Local source installation (alternative)
+
+If this Core does not provide the source download endpoint, or for offline deployment, obtain its matching client source at `/path/to/pam-clients` and run the following from the application directory. Replace the path with your actual checkout.
+
+```bash
+go mod edit -replace=github.com/jumpserver/pam-clients/go=/path/to/pam-clients/go
+go mod tidy
+```
+
+
+```bash
+export JMS_ENDPOINT='https://jumpserver.example.com'
+export JMS_APP_ID='<app-id>'
+export JMS_APP_SECRET='<app-secret>'
+export JMS_ORG_ID='<org-id>'
+export JMS_INSTANCE_ID='app-node-1'
+export JMS_ACCOUNT_ID='<account-id>'
+```
+
+## 3. Fetch the first account
+
+`demo.go`
 
 ```go
 package main
@@ -67,6 +84,88 @@ func main() {
 	fmt.Printf("Fetched revision %d; implement application credential switching.\n", account.Revision)
 }
 ```
+
+```bash
+go run ./demo.go
+```
+
+## 4. Listen for updates and switch connections
+
+Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.
+
+`events.go`
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// SDK handles snapshots, fresh fetches, versions, retries and event results.
+	// Applied accounts are reported automatically. Pull-only code can call
+	// client.ReportAccounts(ctx, []string{accountID}); an empty list clears usage.
+	err = client.WatchEvents(ctx, pam.EventHandlers{
+		OnAccountChanged: func(ctx context.Context, account pam.Account) error {
+			// Validate, switch the connection pool and release old connections.
+			// Return nil only after the application uses this account.
+			return fmt.Errorf("implement application account switching")
+		},
+		OnAccountRevoked: func(ctx context.Context, accountID string) error {
+			return fmt.Errorf("implement revoked account cleanup")
+		},
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("Event stream failed: %T", err)
+	}
+}
+```
+
+```bash
+go run ./events.go
+```
+
+The account callback runs serially behind a bounded event queue. Failed account updates retry with 1–30 second backoff. Success is reported only after the business callback returns; a failed result upload retries the upload without repeating a completed action in the same listener. Commands execute only after an accepted claim; failed command actions are not automatically repeated. Applied accounts are reported as a complete usage snapshot; A/B switches replace the current account. Implement revoked-account cleanup for scope removals. Usage reporting, fetches and file delivery never themselves confirm application success. Low-level streams and legacy credential hooks retain explicit confirmation. Business handlers must remain idempotent across restarts.
+
+### Lifecycle and shutdown
+
+`WatchEvents(ctx, handlers)` / `StartEvents(ctx, handlers)`; `Stop()` / `Wait()`; `context.CancelFunc`
+
+WatchEvents waits in the calling goroutine. StartEvents returns before initial synchronization is complete. One managed listener is allowed per client. Stop and Client.Close request cancellation; call Wait externally to join handlers. Do not call Wait from a handler, and make long operations honor the context.
+
+### Latest credentials and backend outages
+
+Credential getters always request the API first. A successful fetch replaces the retained latest credential; older revisions never overwrite a newer one. The retained value has no time expiry. Only a timeout, network failure or HTTP 5xx may return this value for the same selector, marked as coming from local state. Without a previously fetched value, the original error is raised. SDK values stay in the current client’s memory until replacement, revocation or close; clones and process restarts start empty. The Agent retains its latest credentials in its existing protected local state. HTTP 401/403/404 clear SDK retained values and raise; malformed successful responses also raise. Explicit revocations remove affected credentials, and snapshots remove push entries outside the subscribed scope. A configuration notification retains existing values until the following snapshot reconciles scope. The Agent applies explicit revocation and reduced snapshot scope before HTTP synchronization, persists the reduced scope, and blocks affected local reads even during a backend outage or after restart. A credential_not_found response (HTTP 400) also clears retained SDK values. HTTP 426 fails explicitly without clearing retained values or returning cache for that request. A missing optional metadata endpoint (HTTP 404) does not clear credentials. Agent pull-only values are not persisted for offline use; SDK getters may use retained memory values only under the existing temporary-failure rules.
+
+- `account.FromLocal`
+- `GetAccountFresh(ctx, accountID)`
+
+With managed event listening enabled, snapshot and credential.updated automatically fetch the current credential, replace the retained value and then invoke the business hook. A failed refresh leaves the previous value in place and retries. The Agent also refetches on update notifications and retains its previous credentials during backend outages. Refresh and manual switching use the live-only calls below; a retained password must not be treated as a newly fetched revision or automatically confirmed.
+
+Event connections send application ping messages at 10-second intervals while idle and reconnect after approximately 30 seconds without messages. Reconnect uses 1–30 second exponential backoff and fresh signatures. Reconnect snapshots restore current state; past events are not replayed.
+
+
+
+## 5. Common methods
 
 ### List authorized accounts
 
@@ -166,93 +265,24 @@ func main() {
 ```
 
 
-## Events and credential application
+### Application status reporting
 
-Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
+Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
 
 ```go
-package main
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	pam "github.com/jumpserver/pam-clients/go"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-)
-
-func applyAccount(account pam.Account) error {
-	return fmt.Errorf("implement connection validation, pool switching and old connection cleanup")
-}
-func applyEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.Event == "application.restart.requested" {
-		return fmt.Errorf("implement restart and health check")
-	}
-	account, err := client.GetAccountFresh(ctx, event.AccountID)
-	if err != nil {
-		return err
-	}
-	if account.Revision != event.AccountRevision {
-		return fmt.Errorf("event account version is superseded")
-	}
-	return applyAccount(account)
-}
-func handleEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.CommandID != "" {
-		claim, err := client.ReportApplicationCommandResult(ctx, event.CommandID, "running", "")
-		if err != nil {
-			return err
-		}
-		if !claim.Accepted {
-			return nil
-		}
-	}
-	if err := applyEvent(ctx, client, event); err != nil {
-		_, _ = client.ConfirmEvent(ctx, event.EventID, "failed", "application_failed")
-		return err
-	}
-	_, err := client.ConfirmEvent(ctx, event.EventID, "success", "")
-	return err
-}
-func main() {
-	client, err := pam.NewClient(pam.Options{Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"), AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"), OrgID: os.Getenv("JMS_ORG_ID")})
-	if err != nil {
-		log.Fatal("Invalid SDK configuration")
-	}
-	defer client.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	err = client.WatchCredentialEvents(ctx, func(event pam.Event) error {
-		var updates []pam.Event
-		if event.CommandID != "" || event.Event == "credential.updated" {
-			updates = []pam.Event{event}
-		} else if event.Event == "snapshot" {
-			updates = event.Credentials /* Reconcile removed connections. */
-		}
-		// Release affected connections on credential.revoked.
-		for _, update := range updates {
-			if err := handleEvent(ctx, client, update); err != nil {
-				log.Printf("Event processing failed: %T", err)
-			}
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("Event stream failed: %T", err)
-	}
-}
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
+
+
+### Low-level events and commands
+
+Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
 
 `get_credential` and key-based confirmation remain available for older integrations. New integrations use `get_account` and `confirm_event`. The event-result workflow requires the corresponding Core update; SDK 1.0.2 alone cannot add this server capability.
 
-## Application commands
-
-Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
-
-## Common methods
+### API
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
 - `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
@@ -271,18 +301,13 @@ Fetch the target account with `account_id`. Apply and verify the application cha
 - `SyncAgent(ctx, AgentSyncOptions{...})`
 - `Clone() / Close()`
 
-### Application status reporting
+## 6. Verify the integration
 
-Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
+1. Replace the account placeholder with an authorized account ID and verify a real connection without logging the password.
+2. If listening for updates, verify initial synchronization and a policy update; complete the business callback before expecting a successful event result.
+3. Check the instance usage/status and event result separately. A fetch or usage report does not confirm credential application.
 
-```go
-err := client.ReportAccounts(ctx, []string{account.ID})
-// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
-// ReportStatus(ctx, report) also reports application health.
-```
-
-
-## Troubleshooting
+### Troubleshooting
 
 HTTP, network, authentication and response decoding failures use the SDK exception/error type with code and HTTP status. Close streams and clients when finished. Clones have independent lifecycles. Retry transient failures at the application boundary and never log secrets or authentication headers.
 
@@ -290,66 +315,4 @@ HTTP, network, authentication and response decoding failures use the SDK excepti
 
 All SDKs use protocol version 1; Agent configuration uses schema version 1. A client_upgrade_required response (HTTP 426) requires checking compatibility and upgrading. Unknown optional fields and notification events are tolerated; unsupported policy modes must not be applied or confirmed. Received event receipts are sent automatically and do not prove credential application. Client metadata may include server_capabilities. Missing or null means unknown; unknown names are tolerated. Capabilities describe server features, not authorization.
 
-## Go Agent integration
-
-Agent identity uses app_id, app_secret, org_id and a stable instance_id. Application authorization controls pull; policy bindings control push. All file paths and service actions are local: state_file retains the latest passwords, event_file appends metadata without secrets, delivery selects default output, and rules configure files, templates and reload/restart or fixed scripts. On an update notification the Agent fetches the current password, persists it, atomically replaces output files, then runs the configured action. Failed delivery is retried. Use credentials[].key from get_accounts in rules; subscription push keys are account:<account-id>, independent of the selecting policy. Empty rules write one file per key by default.
-
-Local rules configure target files, JSON/EnvironmentFile rendering or trusted templates, and an optional systemd reload/restart or fixed executable. Scripts receive credential JSON on stdin, use fixed arguments, have a bounded timeout and must validate their application before returning success. Core cannot add script paths or expand local capabilities. Restart the Agent after editing its private configuration.
-
-The downloaded bootstrap contains Agent identity and delivery settings. Edit rules to declare the account IDs used by the business, update its configuration, activate the change and verify the running connection. An account selector with allow_account_switch also follows A/B rotation in either direction. Optional credential_check validates the new login before file changes. The Agent supplies default state, event and socket paths and a 300-second reconciliation interval. Empty rules write one default file per delivered credential.
-
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
-
-```json
-[
-  {
-    "accounts": [
-      {
-        "account_id": "<primary-account-id>",
-        "allow_account_switch": true
-      }
-    ],
-    "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
-      "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
-      }
-    },
-    "service_action": {
-      "unit": "order-service.service",
-      "operation": "restart"
-    },
-    "application_check": {
-      "path": "/usr/local/libexec/jms-pam/check-running-db",
-      "confirm_on_success": true
-    }
-  }
-]
-```
-
-`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
-
-```bash
-jms-pam-agent get_accounts
-jms-pam-agent get_secret '<account-id>'
-sudo jms-pam-agent check-config
-sudo systemctl restart jms-pam-agent
-```
+<!-- sdk-doc:end -->

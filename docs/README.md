@@ -4,9 +4,9 @@ SDK 编程语言为 Python、Go、Java 和 Node.js；cURL 保留为协议调试�
 
 文档覆盖 `en`、`zh-hans`、`zh-hant`、`ja`、`ko`、`pt-br`、`ru`、`vi`、`es`、`fr`。服务端将界面语言别名规范化为文件名，未知语言回退到英文。
 
-- Python 的英文与简体中文 README 是完整参考文档，直接维护。
+- Python 的英文与简体中文 README 保留手写的完整参考说明；其中 `agent-doc`、`sdk-doc` 标记内的文档中心内容统一由 `build.py` 和翻译文件生成。
 - 其他语言的 Python 接入指南、Go/Java/Node.js SDK 指南和 cURL 调试指南从 `translations/*.json` 生成。
-- SDK 功能以 Python 为准。Go、Java、Node.js 采用相同章节和流程，按各语言习惯命名方法与响应字段。
+- SDK 功能以 Python 为准。四种 SDK 统一按接入前提、安装配置、首次取密、托管事件、接口参考、验收排障分组；Agent 单独按安装、交付方式、业务规则、本地查询与确认分组。SDK 文档不要混入 Agent 安装配置。
 - 方法映射、运行命令、配置字段在 `build.py` 中统一维护；原生 SDK 的取密与事件示例直接读取各语言的可编译示例源码，翻译仅修改正文。
 - 事件处理、最新凭据保留及重连说明也由 `build.py` 和翻译文件生成；新增钩子示例同时维护 `HOOK_EXAMPLES`，强制实时取密与本地来源标记维护在 `LATEST_CREDENTIAL_APIS`。
 - 文档中心读取各目录的 `README.<locale>.md`，不在请求过程中生成或翻译文档。

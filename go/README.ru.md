@@ -1,24 +1,20 @@
 # JumpServer PAM Go SDK
 
-Реализуйте обработчик смены аккаунта и запустите управляемое прослушивание. SDK обрабатывает снимки, получение актуальных данных, проверку аккаунта и версии, повторы, получение права выполнения команды и результаты. Возвращайтесь только после проверки реального подключения, переключения пула и закрытия старых соединений. Python и Node.js используют подклассы, Go — OnAccountChanged, Java — AccountEventListener. Без реализации переключения пример завершается ошибкой.
+<!-- sdk-doc:start -->
 
-## Требования
+## 1. Условия и порядок подключения
+
+1. Создайте приложение и разрешите получение аккаунтов (pull). Используйте ID аккаунта, а не имя или ID политики.
+2. Для автоматической доставки привяжите политику уведомлений или ротации A/B (push).
+3. Загрузите настройки в мастере, задайте стабильный уникальный `instance_id` каждой реплике и защитите AK/SK.
+
+Для pull достаточно первого запроса. Для push и A/B реализуйте бизнес-обработчики и слушатель. SDK ведёт протокол и результаты, приложение переключает реальные соединения. Примеры для текущих исходников: нужны совместимые сборки Core и SDK. Опубликованные пакеты 1.0.2 содержат не все новые API.
 
 - Go 1.23+ / coder/websocket
 
-## Настройка и запуск
+## 2. Установка SDK и настройка идентификации
 
 Установите SDK и задайте параметры ниже. Разрешите аккаунты для pull в управлении приложениями; привязывайте политики только при необходимости push или ротации. Получите AK/SK и ID организации из материалов подключения. Замените шаблонные значения и защитите секреты развёртывания. Каждой реплике нужен стабильный уникальный ID. Получайте по ID учётной записи.
-
-```bash
-export JMS_ENDPOINT='https://jumpserver.example.com'
-export JMS_APP_ID='<app-id>'
-export JMS_APP_SECRET='<app-secret>'
-export JMS_ORG_ID='<org-id>'
-export JMS_INSTANCE_ID='app-node-1'
-export JMS_ACCOUNT_ID='<account-id>'
-
-```
 
 Установите исходный код клиента из той же версии Core; пакеты 1.0.2 не содержат управляемых обработчиков. Замените jumpserver.example.com адресом Core и сохраните каталог jms-pam-clients, включая локальный путь замены модуля Go.
 
@@ -33,7 +29,28 @@ go get github.com/jumpserver/pam-clients/go@v1.0.2
 import pam "github.com/jumpserver/pam-clients/go"
 ```
 
-## Запрос и ответ
+### Альтернатива: локальные исходники
+
+Если Core не предоставляет API загрузки исходников или установка автономная, подготовьте совместимые исходники в `/path/to/pam-clients` и выполните команды из каталога приложения. Замените путь.
+
+```bash
+go mod edit -replace=github.com/jumpserver/pam-clients/go=/path/to/pam-clients/go
+go mod tidy
+```
+
+
+```bash
+export JMS_ENDPOINT='https://jumpserver.example.com'
+export JMS_APP_ID='<app-id>'
+export JMS_APP_SECRET='<app-secret>'
+export JMS_ORG_ID='<org-id>'
+export JMS_INSTANCE_ID='app-node-1'
+export JMS_ACCOUNT_ID='<account-id>'
+```
+
+## 3. Первое получение учётных данных
+
+`demo.go`
 
 ```go
 package main
@@ -67,6 +84,88 @@ func main() {
 	fmt.Printf("Fetched revision %d; implement application credential switching.\n", account.Revision)
 }
 ```
+
+```bash
+go run ./demo.go
+```
+
+## 4. Обработчики событий
+
+Реализуйте обработчик смены аккаунта и запустите управляемое прослушивание. SDK обрабатывает снимки, получение актуальных данных, проверку аккаунта и версии, повторы, получение права выполнения команды и результаты. Возвращайтесь только после проверки реального подключения, переключения пула и закрытия старых соединений. Python и Node.js используют подклассы, Go — OnAccountChanged, Java — AccountEventListener. Без реализации переключения пример завершается ошибкой.
+
+`events.go`
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// SDK handles snapshots, fresh fetches, versions, retries and event results.
+	// Applied accounts are reported automatically. Pull-only code can call
+	// client.ReportAccounts(ctx, []string{accountID}); an empty list clears usage.
+	err = client.WatchEvents(ctx, pam.EventHandlers{
+		OnAccountChanged: func(ctx context.Context, account pam.Account) error {
+			// Validate, switch the connection pool and release old connections.
+			// Return nil only after the application uses this account.
+			return fmt.Errorf("implement application account switching")
+		},
+		OnAccountRevoked: func(ctx context.Context, accountID string) error {
+			return fmt.Errorf("implement revoked account cleanup")
+		},
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("Event stream failed: %T", err)
+	}
+}
+```
+
+```bash
+go run ./events.go
+```
+
+Обработчики выполняются последовательно через ограниченную очередь; обычные обновления повторяются с задержкой 1–30 секунд. Успех сообщается только после завершения обработчика. При сбое отправки результата завершённое действие в том же слушателе не повторяется. Команды требуют подтверждённого права выполнения; неудачные действия команд автоматически не повторяются. Применённые аккаунты сообщаются автоматически, при A/B-переключении текущий аккаунт заменяется. Реализуйте закрытие отозванных соединений. Отчёт об использовании, получение пароля и доставка файла сами не подтверждают успех приложения. Старые API сохраняют явное подтверждение. Обеспечьте идемпотентность после перезапуска.
+
+### Жизненный цикл и завершение
+
+`WatchEvents(ctx, handlers)` / `StartEvents(ctx, handlers)`; `Stop()` / `Wait()`; `context.CancelFunc`
+
+WatchEvents ждёт в вызывающей goroutine; StartEvents не гарантирует синхронизацию. Один слушатель на клиент. Stop и Close отменяют работу; вызывайте Wait вне обработчика. Учитывайте отмену context.
+
+### Последние учётные данные и недоступность сервера
+
+Сначала выполняется запрос API. Успешный ответ заменяет сохранённые последние данные; старая версия не заменяет новую, срок истечения по времени отсутствует. Только тайм-аут, сетевой сбой или HTTP 5xx позволяют вернуть последний успешный результат того же селектора с признаком локального источника. Без прежнего значения возвращается исходная ошибка. SDK хранит данные в памяти клиента до обновления, отзыва или закрытия; clone и перезапуск начинают с пустого состояния. Agent использует защищённое локальное состояние. HTTP 401/403/404 очищают данные SDK и вызывают ошибку; некорректный успешный ответ также ошибочен. Отзыв удаляет соответствующие данные, snapshot — данные вне разрешений. Изменение конфигурации сохраняет значения до проверки следующего snapshot. Agent применяет явный отзыв и сокращение области snapshot до HTTP-синхронизации, сохраняет эту область и блокирует соответствующую локальную выдачу даже при сбое сервера или после перезапуска. Ответ credential_not_found (HTTP 400) также удаляет сохранённые значения SDK. HTTP 426 возвращает явную ошибку без удаления сохранённых данных и без подмены ответа кешем. Отсутствие необязательного API метаданных (HTTP 404) не удаляет данные. Agent не сохраняет значения только pull для автономного доступа; SDK используют память по прежним правилам временного сбоя.
+
+- `account.FromLocal`
+- `GetAccountFresh(ctx, accountID)`
+
+При управляемой подписке snapshot и credential.updated автоматически получают данные, заменяют локальное значение и вызывают обработчик. Ошибка обновления сохраняет прежнее значение и запускает повтор. Agent также получает данные по уведомлениям и сохраняет их при сбоях сервера. Для обновления и ручного переключения используйте вызовы с обязательным запросом API ниже. Сохранённое значение не считается новой полученной версией и не подтверждает ротацию автоматически.
+
+При простое ping отправляется каждые 10 секунд. Около 30 секунд без сообщений вызывают переподключение с задержкой 1–30 секунд и новой подписью. snapshot восстанавливает текущее состояние без воспроизведения истории.
+
+
+
+## 5. Основные методы
 
 ### Список разрешённых аккаунтов
 
@@ -166,93 +265,24 @@ func main() {
 ```
 
 
-## События и применение учётных данных
+### Отчёт о состоянии приложения
 
-Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
+Передавайте полный снимок состояния и ID используемых аккаунтов. Состояния: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Пустой список очищает прежние сведения. Вызывайте при изменении состояния или из heartbeat приложения. Python, Java и Node.js возвращают false при ошибках сети/API; Go предоставляет `TryReportStatus`. Строгие варианты возвращают подробности ошибок. Неверные аргументы отклоняются. Используется настроенный HTTP timeout. Отчёт не получает секреты, не подтверждает ротацию и не очищает кеш. Не передавайте секреты и тексты исключений в `error_code`. ClientInfo возвращает последний отчёт и его время.
 
 ```go
-package main
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	pam "github.com/jumpserver/pam-clients/go"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-)
-
-func applyAccount(account pam.Account) error {
-	return fmt.Errorf("implement connection validation, pool switching and old connection cleanup")
-}
-func applyEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.Event == "application.restart.requested" {
-		return fmt.Errorf("implement restart and health check")
-	}
-	account, err := client.GetAccountFresh(ctx, event.AccountID)
-	if err != nil {
-		return err
-	}
-	if account.Revision != event.AccountRevision {
-		return fmt.Errorf("event account version is superseded")
-	}
-	return applyAccount(account)
-}
-func handleEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.CommandID != "" {
-		claim, err := client.ReportApplicationCommandResult(ctx, event.CommandID, "running", "")
-		if err != nil {
-			return err
-		}
-		if !claim.Accepted {
-			return nil
-		}
-	}
-	if err := applyEvent(ctx, client, event); err != nil {
-		_, _ = client.ConfirmEvent(ctx, event.EventID, "failed", "application_failed")
-		return err
-	}
-	_, err := client.ConfirmEvent(ctx, event.EventID, "success", "")
-	return err
-}
-func main() {
-	client, err := pam.NewClient(pam.Options{Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"), AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"), OrgID: os.Getenv("JMS_ORG_ID")})
-	if err != nil {
-		log.Fatal("Invalid SDK configuration")
-	}
-	defer client.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	err = client.WatchCredentialEvents(ctx, func(event pam.Event) error {
-		var updates []pam.Event
-		if event.CommandID != "" || event.Event == "credential.updated" {
-			updates = []pam.Event{event}
-		} else if event.Event == "snapshot" {
-			updates = event.Credentials /* Reconcile removed connections. */
-		}
-		// Release affected connections on credential.revoked.
-		for _, update := range updates {
-			if err := handleEvent(ctx, client, update); err != nil {
-				log.Printf("Event processing failed: %T", err)
-			}
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("Event stream failed: %T", err)
-	}
-}
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
+
+
+### Низкоуровневые события и команды
+
+Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
 Старые API key сохранены для совместимости. Новые интеграции используют `get_account` и `confirm_event` и требуют обновления Core.
 
-## Команды приложения
-
-Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
-
-## Основные методы
+### API
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
 - `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
@@ -271,18 +301,13 @@ func main() {
 - `SyncAgent(ctx, AgentSyncOptions{...})`
 - `Clone() / Close()`
 
-### Отчёт о состоянии приложения
+## 6. Проверка интеграции
 
-Передавайте полный снимок состояния и ID используемых аккаунтов. Состояния: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. Пустой список очищает прежние сведения. Вызывайте при изменении состояния или из heartbeat приложения. Python, Java и Node.js возвращают false при ошибках сети/API; Go предоставляет `TryReportStatus`. Строгие варианты возвращают подробности ошибок. Неверные аргументы отклоняются. Используется настроенный HTTP timeout. Отчёт не получает секреты, не подтверждает ротацию и не очищает кеш. Не передавайте секреты и тексты исключений в `error_code`. ClientInfo возвращает последний отчёт и его время.
+1. Получите разрешённый аккаунт и проверьте реальное соединение.
+2. Проверьте начальную синхронизацию и обновление; успех — после завершения обработчика.
+3. Отдельно проверьте статус/использование и результат события. Получение и отчёт не подтверждают применение.
 
-```go
-err := client.ReportAccounts(ctx, []string{account.ID})
-// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
-// ReportStatus(ctx, report) also reports application health.
-```
-
-
-## Устранение неполадок
+### Устранение неполадок
 
 Ошибки HTTP, сети, аутентификации и декодирования представлены типом ошибки SDK с кодом и HTTP-статусом. Закрывайте потоки и клиенты после использования; жизненные циклы копий независимы. Повторяйте временные сбои на уровне приложения и не записывайте секреты или заголовки авторизации.
 
@@ -290,66 +315,4 @@ err := client.ReportAccounts(ctx, []string{account.ID})
 
 Все SDK используют протокол версии 1; конфигурация Agent — схему версии 1. Ответ client_upgrade_required (HTTP 426) требует проверки совместимости и обновления. Неизвестные необязательные поля и уведомления допустимы; неподдерживаемые политики нельзя применять или подтверждать. Квитанции отправляются автоматически и не доказывают применение учётных данных. Метаданные клиента могут содержать server_capabilities. Отсутствие или null означает неизвестность; новые имена допустимы. Список описывает возможности сервера, а не разрешения.
 
-## Подключение Go Agent
-
-Идентификация использует app_id, app_secret, org_id и стабильный instance_id; доступ определяется политиками приложения. Пути и действия задаются локально: state_file хранит последние пароли, event_file добавляет события без секретов, delivery задаёт вывод, rules — файлы, шаблоны и reload/restart либо фиксированные скрипты. После уведомления Agent получает и сохраняет актуальный пароль, атомарно заменяет файлы, затем выполняет действие. При сбое доставка повторяется. В rules используйте credentials[].key из get_accounts; ключ подписки включает ID аккаунта. Пустой rules записывает файл для каждого ключа.
-
-Локальные rules задают файлы, JSON/EnvironmentFile или доверенные шаблоны и действие systemd reload/restart либо фиксированный исполняемый файл. Скрипты получают JSON через stdin, используют фиксированные аргументы и таймаут и проверяют применение перед успешным завершением. Core не расширяет эти возможности. После изменения приватной конфигурации перезапустите Agent.
-
-Загруженная конфигурация уже содержит идентификацию Agent и параметры доставки. В rules укажите ID учётных записей приложения, обновление конфигурации, применение изменений и проверку рабочего соединения. allow_account_switch использует одно правило для ротации A/B в обоих направлениях. Необязательный credential_check проверяет новый вход до изменения файлов. Для путей состояния, событий, Socket и интервала сверки 300 секунд есть значения по умолчанию. Пустой rules создаёт файл для каждой учётной записи.
-
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
-
-```json
-[
-  {
-    "accounts": [
-      {
-        "account_id": "<primary-account-id>",
-        "allow_account_switch": true
-      }
-    ],
-    "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
-      "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
-      }
-    },
-    "service_action": {
-      "unit": "order-service.service",
-      "operation": "restart"
-    },
-    "application_check": {
-      "path": "/usr/local/libexec/jms-pam/check-running-db",
-      "confirm_on_success": true
-    }
-  }
-]
-```
-
-`config_update.format` по умолчанию равен `auto`, в том числе при отсутствии поля. Расширения `.txt`, `.env`, `.properties` используют `env` (`KEY=value`), а `.yml`, `.yaml` — `yaml` (`KEY: value` верхнего уровня, новые значения записываются как строки в кавычках). Для других расширений задайте `env` или `yaml`. Каждое поле должно уже существовать ровно один раз; остальные настройки сохраняются. Для секций INI и вложенного YAML используйте `files` + `template_file` для генерации всего файла либо `script`. После обновления файла переменных приложение должно перечитать его или перезапуститься.
-
-```bash
-jms-pam-agent get_accounts
-jms-pam-agent get_secret '<account-id>'
-sudo jms-pam-agent check-config
-sudo systemctl restart jms-pam-agent
-```
+<!-- sdk-doc:end -->

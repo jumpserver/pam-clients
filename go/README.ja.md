@@ -1,24 +1,20 @@
 # JumpServer PAM Go SDK
 
-以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。
+<!-- sdk-doc:start -->
 
-## 動作要件
+## 1. 接続の前提と流れ
+
+1. アプリを作成し、取得可能なアカウントを許可します（pull）。ユーザー名やポリシー ID ではなくアカウント ID を使います。
+2. 自動配信には通知または A/B ローテーションのポリシーを関連付けます（push）。
+3. 接続ウィザードで認証設定を取得し、各レプリカに固定で一意の `instance_id` を設定して AK/SK を保護します。
+
+pull のみなら最初の取得までで十分です。push や A/B には業務コールバックと監視が必要です。SDK がプロトコルと結果を処理し、業務が実接続を切り替えます。例は現行ソース用です。対応する Core と SDK を用意してください。公開済みの 1.0.2 には新 API がすべて含まれるわけではありません。
 
 - Go 1.23+ / coder/websocket
 
-## 設定と実行
+## 2. SDK のインストールと認証設定
 
 SDK をインストールし、下記を設定します。アプリケーション管理で pull 対象のアカウントを許可し、push またはローテーションが必要な場合だけポリシーを関連付けます。接続資料から AK/SK と組織 ID を取得してください。プレースホルダーを置き換え、認証資料を安全に保管します。各レプリカには安定した一意のインスタンス ID を使います。 取得にはアカウント ID を指定します。
-
-```bash
-export JMS_ENDPOINT='https://jumpserver.example.com'
-export JMS_APP_ID='<app-id>'
-export JMS_APP_SECRET='<app-secret>'
-export JMS_ORG_ID='<org-id>'
-export JMS_INSTANCE_ID='app-node-1'
-export JMS_ACCOUNT_ID='<account-id>'
-
-```
 
 以下のコマンドで同じ Core に同梱されたクライアントソースをインストールします。公開済み 1.0.2 には管理コールバックがありません。jumpserver.example.com を Core のアドレスに置き換え、Go のローカル置換パスを含む jms-pam-clients ディレクトリを保持してください。
 
@@ -33,7 +29,28 @@ go get github.com/jumpserver/pam-clients/go@v1.0.2
 import pam "github.com/jumpserver/pam-clients/go"
 ```
 
-## リクエストとレスポンス
+### ローカルソースからの代替インストール
+
+Core がソース取得 API を提供していない場合やオフラインの場合は、対応ソースを `/path/to/pam-clients` に用意し、アプリのディレクトリで実行します。実際のパスに置き換えてください。
+
+```bash
+go mod edit -replace=github.com/jumpserver/pam-clients/go=/path/to/pam-clients/go
+go mod tidy
+```
+
+
+```bash
+export JMS_ENDPOINT='https://jumpserver.example.com'
+export JMS_APP_ID='<app-id>'
+export JMS_APP_SECRET='<app-secret>'
+export JMS_ORG_ID='<org-id>'
+export JMS_INSTANCE_ID='app-node-1'
+export JMS_ACCOUNT_ID='<account-id>'
+```
+
+## 3. 最初の資格情報を取得
+
+`demo.go`
 
 ```go
 package main
@@ -67,6 +84,88 @@ func main() {
 	fmt.Printf("Fetched revision %d; implement application credential switching.\n", account.Revision)
 }
 ```
+
+```bash
+go run ./demo.go
+```
+
+## 4. イベントハンドラー
+
+以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。
+
+`events.go`
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	pam "github.com/jumpserver/pam-clients/go"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	client, err := pam.NewClient(pam.Options{
+		Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"),
+		AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"),
+		OrgID: os.Getenv("JMS_ORG_ID"),
+	})
+	if err != nil {
+		log.Fatal("Invalid SDK configuration")
+	}
+	defer client.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// SDK handles snapshots, fresh fetches, versions, retries and event results.
+	// Applied accounts are reported automatically. Pull-only code can call
+	// client.ReportAccounts(ctx, []string{accountID}); an empty list clears usage.
+	err = client.WatchEvents(ctx, pam.EventHandlers{
+		OnAccountChanged: func(ctx context.Context, account pam.Account) error {
+			// Validate, switch the connection pool and release old connections.
+			// Return nil only after the application uses this account.
+			return fmt.Errorf("implement application account switching")
+		},
+		OnAccountRevoked: func(ctx context.Context, accountID string) error {
+			return fmt.Errorf("implement revoked account cleanup")
+		},
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("Event stream failed: %T", err)
+	}
+}
+```
+
+```bash
+go run ./events.go
+```
+
+コールバックは有界キューの後で直列実行され、通常更新の失敗は 1–30 秒で再試行します。業務処理が完了してから成功を報告し、結果送信の失敗では同じリスナー内で完了済み動作を繰り返しません。コマンドは実行権取得後に実行し、失敗した動作は自動再実行しません。使用アカウントは自動報告され、A/B 切替で現在値を置き換えます。権限範囲から外れた接続の解放処理を実装してください。使用状況報告や情報取得、ファイル配信だけでは業務成功を確認しません。低レベル API と旧フックは明示的確認を維持します。再起動後の冪等性も必要です。
+
+### 監視のライフサイクルと終了
+
+`WatchEvents(ctx, handlers)` / `StartEvents(ctx, handlers)`; `Stop()` / `Wait()`; `context.CancelFunc`
+
+WatchEvents は呼出元の goroutine で待ちます。StartEvents は初回同期完了を保証しません。監視は 1 つです。Stop と Close で取消し、ハンドラー外で Wait してください。長い処理は context の取消しに対応してください。
+
+### 最新の認証情報とバックエンド障害
+
+取得はまず API を呼びます。取得成功時に保持値を更新し、古いバージョンで新しい値を上書きせず、時間による有効期限も設けません。タイムアウト、ネットワーク障害、HTTP 5xx の場合だけ、同じ検索条件の最後に取得した値をローカル由来のフラグ付きで返します。保持値がなければ元のエラーです。SDK は更新・失効・終了までクライアントのメモリに保持し、clone や再起動は空から始まります。Agent は保護された既存のローカル状態に保存します。HTTP 401/403/404 は SDK の保持値を消去して失敗し、不正な成功応答も失敗します。失効は対象を、snapshot は認可範囲外を削除します。設定変更時は次の snapshot で範囲を確認するまで保持します。Agent は HTTP 同期の前に明示的な取り消しと snapshot の範囲縮小を適用して保存し、バックエンド障害中や再起動後も該当するローカル取得を停止します。credential_not_found（HTTP 400）でも SDK の保持値を削除します。 HTTP 426 は保持値を削除せず明示的に失敗し、この要求にキャッシュを返しません。任意のメタデータ API が未提供（HTTP 404）でも保持値を削除しません。Agent の pull 専用値はオフライン用に永続保存しません。SDK は既存の一時障害ルールでメモリ内の保持値を利用できます。
+
+- `account.FromLocal`
+- `GetAccountFresh(ctx, accountID)`
+
+管理された監視を有効にすると、snapshot と credential.updated が自動で取得し、保持値を更新してから業務フックを呼びます。更新失敗時は前の値を保持し再試行します。Agent も更新通知で取得し、障害時は既存値を保持します。更新や手動切替には下記の API 取得必須の呼び出しを使用してください。保持値を新しく取得したバージョンと見なしたり、ローテーションを自動確認したりしません。
+
+アイドル時は 10 秒ごとに ping を送り、約 30 秒メッセージがなければ再接続します。待機は 1–30 秒の指数バックオフで毎回再署名します。snapshot は現在の状態を復元し、履歴イベントは再送しません。
+
+
+
+## 5. 主なメソッド
 
 ### 認可されたアカウントの一覧
 
@@ -166,93 +265,24 @@ func main() {
 ```
 
 
-## イベントと認証情報の適用
+### アプリケーション状態の報告
 
-`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
+実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
 
 ```go
-package main
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	pam "github.com/jumpserver/pam-clients/go"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-)
-
-func applyAccount(account pam.Account) error {
-	return fmt.Errorf("implement connection validation, pool switching and old connection cleanup")
-}
-func applyEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.Event == "application.restart.requested" {
-		return fmt.Errorf("implement restart and health check")
-	}
-	account, err := client.GetAccountFresh(ctx, event.AccountID)
-	if err != nil {
-		return err
-	}
-	if account.Revision != event.AccountRevision {
-		return fmt.Errorf("event account version is superseded")
-	}
-	return applyAccount(account)
-}
-func handleEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.CommandID != "" {
-		claim, err := client.ReportApplicationCommandResult(ctx, event.CommandID, "running", "")
-		if err != nil {
-			return err
-		}
-		if !claim.Accepted {
-			return nil
-		}
-	}
-	if err := applyEvent(ctx, client, event); err != nil {
-		_, _ = client.ConfirmEvent(ctx, event.EventID, "failed", "application_failed")
-		return err
-	}
-	_, err := client.ConfirmEvent(ctx, event.EventID, "success", "")
-	return err
-}
-func main() {
-	client, err := pam.NewClient(pam.Options{Endpoint: os.Getenv("JMS_ENDPOINT"), AppID: os.Getenv("JMS_APP_ID"), AppSecret: os.Getenv("JMS_APP_SECRET"), InstanceID: os.Getenv("JMS_INSTANCE_ID"), OrgID: os.Getenv("JMS_ORG_ID")})
-	if err != nil {
-		log.Fatal("Invalid SDK configuration")
-	}
-	defer client.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	err = client.WatchCredentialEvents(ctx, func(event pam.Event) error {
-		var updates []pam.Event
-		if event.CommandID != "" || event.Event == "credential.updated" {
-			updates = []pam.Event{event}
-		} else if event.Event == "snapshot" {
-			updates = event.Credentials /* Reconcile removed connections. */
-		}
-		// Release affected connections on credential.revoked.
-		for _, update := range updates {
-			if err := handleEvent(ctx, client, update); err != nil {
-				log.Printf("Event processing failed: %T", err)
-			}
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("Event stream failed: %T", err)
-	}
-}
+err := client.ReportAccounts(ctx, []string{account.ID})
+// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
+// ReportStatus(ctx, report) also reports application health.
 ```
+
+
+### 低レベルイベントとアプリコマンド
+
+`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
 
 従来の key API は互換用です。新規連携は `get_account` と `confirm_event` を使い、Core も更新してください。
 
-## アプリケーションコマンド
-
-`account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
-
-## 主なメソッド
+### API
 
 - `GetApplication(ctx) / GetClientInfo(ctx)`
 - `ReportAccounts(ctx, accountIDs) / TryReportStatus(ctx, ApplicationStatus{Status: ..., AccountIDs: ...}) / ReportStatus(ctx, report)`
@@ -271,18 +301,13 @@ func main() {
 - `SyncAgent(ctx, AgentSyncOptions{...})`
 - `Clone() / Close()`
 
-### アプリケーション状態の報告
+## 6. 接続の検証
 
-実行状態と使用中のアカウント ID を完全なスナップショットとして報告します。状態は `starting`、`running`、`degraded`、`stopping`、`stopped`、`error`。空のリストは以前の使用記録を消去します。状態変更時またはアプリ自身のハートビートから呼び出します。Python、Java、Node.js は通信や API の失敗時に false を返し、Go は `TryReportStatus` を提供します。厳格な形式で詳細エラーを取得できます。引数エラーは拒否されます。設定した HTTP タイムアウトを使用します。資格情報の取得、ローテーションの確認、キャッシュの無効化は行いません。`error_code` に秘密や例外メッセージを入れないでください。ClientInfo から最後の報告と時刻を取得できます。
+1. 許可された ID で取得し実接続を検証します。
+2. 監視では初回同期とポリシー更新を確認し、業務処理完了後に成功を確認します。
+3. 使用状態とイベント結果を別々に確認します。取得や状態報告は適用確認ではありません。
 
-```go
-err := client.ReportAccounts(ctx, []string{account.ID})
-// ReportAccounts(ctx, nil) clears the complete explicit usage snapshot.
-// ReportStatus(ctx, report) also reports application health.
-```
-
-
-## トラブルシューティング
+### トラブルシューティング
 
 HTTP、ネットワーク、認証、デコードの失敗はエラーコードと HTTP 状態を含む SDK の例外・エラー型で通知されます。使用後はストリームとクライアントを閉じてください。複製クライアントのライフサイクルは独立しています。一時障害はアプリケーション側で再試行し、秘密情報や認証ヘッダーをログに記録しないでください。
 
@@ -290,66 +315,4 @@ HTTP、ネットワーク、認証、デコードの失敗はエラーコード�
 
 全 SDK はプロトコル版 1、Agent 設定はスキーマ版 1 を使用します。client_upgrade_required（HTTP 426）を受けたら互換性を確認し更新してください。未知の任意フィールドや通知イベントは許容しますが、未対応ポリシーは適用・確認できません。受領通知は自動送信され、認証情報の適用を証明しません。 クライアント情報の server_capabilities は任意です。欠落または null は不明を表し、未知の名前を許容します。サーバー機能の一覧であり、権限を付与しません。
 
-## Go Agent の接続
-
-認証には app_id、app_secret、org_id と安定した instance_id を使用し、認可範囲はアプリケーションに関連付けたポリシーに従います。すべてのパスとサービス操作はローカル設定です。state_file は最新パスワードを保持し、event_file は秘密を含まないイベント情報を追記します。delivery は既定の出力、rules はファイル、テンプレートと reload/restart または固定スクリプトを指定します。更新通知で最新値を取得・保存し、ファイルを原子的に置き換えてから操作を実行します。失敗は再試行します。rules の key には get_accounts の credentials[].key を使用します。購読 key にはアカウント ID が含まれます。空の rules は key ごとの既定ファイルを出力します。
-
-ローカル rules でファイル、JSON/EnvironmentFile または信頼済みテンプレートと、systemd reload/restart や固定実行ファイルを設定します。スクリプトは標準入力で認証情報 JSON を受け取り、固定引数とタイムアウトを使い、適用を検証してから成功を返します。Core は実行パスや権限を拡張できません。設定変更後に Agent を再起動します。
-
-ダウンロードした設定には Agent の識別情報と配信設定が含まれます。rules には業務で使うアカウント ID、設定更新、反映操作、稼働中の接続確認を指定します。allow_account_switch を設定したアカウントは A/B の双方向ローテーションに同じルールを使えます。任意の credential_check でファイル更新前に新しいログインを検証できます。状態、イベント、Socket のパスと 300 秒の照合間隔には既定値があります。rules が空なら資格情報ごとに既定ファイルを出力します。
-
-```json
-{
-  "endpoint": "https://jumpserver.example.com",
-  "app_id": "<application-id>",
-  "app_secret": "<application-secret>",
-  "org_id": "<org-id>",
-  "instance_id": "orders-node-1",
-  "delivery": {
-    "delivery_mode": "json",
-    "delivery_root": "/opt/jumpserver-pam/credentials",
-    "app_user": "orders"
-  },
-  "rules": []
-}
-```
-
-`rules`:
-
-```json
-[
-  {
-    "accounts": [
-      {
-        "account_id": "<primary-account-id>",
-        "allow_account_switch": true
-      }
-    ],
-    "config_update": {
-      "file": "/etc/order-service/config.yml",
-      "format": "auto",
-      "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
-      }
-    },
-    "service_action": {
-      "unit": "order-service.service",
-      "operation": "restart"
-    },
-    "application_check": {
-      "path": "/usr/local/libexec/jms-pam/check-running-db",
-      "confirm_on_success": true
-    }
-  }
-]
-```
-
-`config_update.format` の既定値は `auto` で、省略時も同じです。拡張子 `.txt`、`.env`、`.properties` は `env`（`KEY=value`）、`.yml`、`.yaml` は `yaml`（最上位の `KEY: value`、新しい値は引用符付き文字列）として扱います。他の拡張子では `env` または `yaml` を明示します。対象フィールドは既存で一度だけ出現する必要があり、他の設定は保持されます。INI セクションやネストした YAML は `files` + `template_file` で全体を生成するか、`script` を使用します。環境変数ファイルの更新後はアプリケーションの再読み込みまたは再起動が必要です。
-
-```bash
-jms-pam-agent get_accounts
-jms-pam-agent get_secret '<account-id>'
-sudo jms-pam-agent check-config
-sudo systemctl restart jms-pam-agent
-```
+<!-- sdk-doc:end -->

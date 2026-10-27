@@ -100,7 +100,7 @@ NATIVE_EXAMPLES = {
 HOOK_EXAMPLES = {
     "python": ("python", "subclass_demo.py"),
     "go": ("go", "cmd/hooks/main.go"),
-    "java": ("java", "src/main/java/org/jumpserver/pam/HooksDemo.java"),
+    "java": ("java", "src/main/java/org/jumpserver/pam/EventsDemo.java"),
     "node": ("javascript", "hooks.js"),
 }
 LATEST_CREDENTIAL_APIS = {
@@ -208,15 +208,23 @@ def latest_credentials_section(language, texts):
 
 def managed_section(language, texts):
     syntax, example = HOOK_EXAMPLES[language]
+    code = (CLIENTS / language / example).read_text(encoding="utf-8").rstrip()
+    if language == "node":
+        code = code.replace("require('./index')", "require('@jumpserver/pam')")
+    snippet = f"```{syntax}\n{code}\n```"
+    if language == "python":
+        snippet = f"<!-- python-events-example:start -->\n{snippet}\n<!-- python-events-example:end -->"
+    else:
+        snippet = native_example_section(language, example, snippet)
     return f"""## {texts["managed_title"]}
 
 {texts["managed_intro"]}
 
-```{syntax}
-{(CLIENTS / language / example).read_text(encoding="utf-8").rstrip()}
-```
+{snippet}
 
 {texts["managed_behavior"]}
+
+### {texts["lifecycle_title"]}
 
 {LIFECYCLES[language]}
 
@@ -365,67 +373,105 @@ GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docke
 """
 
 
+SOURCE_INSTALL = {
+    'python': 'python3 -m pip install /path/to/pam-clients/python',
+    'go': 'go mod edit -replace=github.com/jumpserver/pam-clients/go=/path/to/pam-clients/go\ngo mod tidy',
+    'java': 'mvn -f /path/to/pam-clients/java/pom.xml install',
+    'node': 'npm install /path/to/pam-clients/node',
+}
+
+
+def source_installation_section(language, texts):
+    return f"""### {texts['source_install_title']}
+
+{texts['source_install']}
+
+```bash
+{SOURCE_INSTALL[language]}
+```
+"""
+
+
+def native_example_section(language, example, snippet):
+    filename = {
+        'go': 'events.go' if '/hooks/' in example else 'demo.go',
+        'java': example,
+        'node': Path(example).name,
+    }[language]
+    command = {
+        'go': f'go run ./{filename}',
+        'java': (
+            'mvn compile dependency:copy-dependencies\n'
+            f"java -cp 'target/classes:target/dependency/*' org.jumpserver.pam.{Path(example).stem}"
+        ),
+        'node': f'node {filename}',
+    }[language]
+    return f"`{filename}`\n\n{snippet}\n\n```bash\n{command}\n```"
+
+
 def native_guide(language, texts):
-    label, command, runtime, example = EXAMPLES[language]
-    syntax, quickstart, events = NATIVE_EXAMPLES[language]
-    directory = CLIENTS / language
-    methods = "\n".join(f"- `{method}`" for method in NATIVE_METHODS[language])
-    quickstart_code = (directory / quickstart).read_text(encoding="utf-8").rstrip()
-    events_code = (directory / events).read_text(encoding="utf-8").rstrip()
+    label, _, runtime, _ = EXAMPLES[language]
+    syntax, quickstart, _ = NATIVE_EXAMPLES[language]
+    quickstart_code = (CLIENTS / language / quickstart).read_text(encoding="utf-8").rstrip()
     if language == "node":
         quickstart_code = quickstart_code.replace("require('./index')", "require('@jumpserver/pam')")
-        events_code = events_code.replace("require('./index')", "require('@jumpserver/pam')")
+    methods = "\n".join(f"- `{method}`" for method in NATIVE_METHODS[language])
+    quickstart_example = native_example_section(language, quickstart, f'```{syntax}\n{quickstart_code}\n```')
     return f"""# JumpServer PAM {label} SDK
 
-{texts["native_intro"]}
+<!-- sdk-doc:start -->
 
-## {texts["requirements"]}
+## 1. {texts["onboarding_title"]}
+
+{texts["onboarding"]}
+
+{texts["sdk_workflow"]}
 
 - {runtime}
 
-## {texts["configure"]}
+## 2. {texts["sdk_install_title"]}
 
 {texts["native_setup"]}
-
-```bash
-{NATIVE_ENVIRONMENT}
-```
 
 {texts["native_install"]}
 
 {NATIVE_INSTALL[language]}
 
-## {texts["response"]}
+{source_installation_section(language, texts)}
 
-```{syntax}
-{quickstart_code}
+```bash
+{NATIVE_ENVIRONMENT.rstrip()}
 ```
+
+## 3. {texts["first_account_title"]}
+
+{quickstart_example}
+
+{managed_section(language, texts).replace('## ', '## 4. ', 1)}
+
+## 5. {texts["methods"]}
 
 {account_listing_section(language, texts)}
 
 {application_info_section(language, texts)}
 
-## {texts["events"]}
+{status_reporting_section(language, texts)}
+
+### {texts["low_level_title"]}
 
 {texts["event_results"]}
 
-```{syntax}
-{events_code}
-```
-
 {texts["event_compatibility"]}
 
-## {texts["commands"]}
-
-{texts["native_commands"]}
-
-## {texts["methods"]}
+### API
 
 {methods}
 
-{status_reporting_section(language, texts)}
+## 6. {texts["validation_title"]}
 
-## {texts["troubleshooting"]}
+{texts["sdk_validation"]}
+
+### {texts["troubleshooting"]}
 
 {texts["native_errors"]}
 
@@ -433,13 +479,7 @@ def native_guide(language, texts):
 
 {texts["native_compatibility"]}
 
-## {texts["agent_title"]}
-
-{texts["native_agent"]}
-
-{texts["agent_rules"]}
-
-{agent_configuration_section(texts)}
+<!-- sdk-doc:end -->
 """
 
 
@@ -463,6 +503,15 @@ AGENT_RULE = {
 def agent_configuration_section(texts):
     return f"""{texts['agent_config']}
 
+{texts['agent_rules_example']}
+
+| {texts['configure']} | {texts['agent_rules_title']} |
+| --- | --- |
+| `credential_check` | {texts['credential_check_step']} |
+| `config_update` | {texts['config_update_step']} |
+| `service_action` | {texts['service_action_step']} |
+| `application_check` | {texts['application_check_step']} |
+
 ```json
 {json.dumps(AGENT_SAMPLE, indent=2)}
 ```
@@ -473,14 +522,118 @@ def agent_configuration_section(texts):
 {json.dumps([AGENT_RULE], indent=2)}
 ```
 
+### {texts['agent_format_title']}
+
 {texts['agent_config_format']}
+
+{texts['agent_rules']}
+
+```bash
+sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
+sudo systemctl restart jms-pam-agent
+```
+"""
+
+
+def agent_guide(texts):
+    return f"""# {texts['agent_title']}
+
+{texts['agent_overview']}
+
+## 1. {texts['onboarding_title']}
+
+{texts['onboarding']}
+
+## 2. {texts['agent_install_title']}
+
+### Linux / systemd
+
+{texts['agent_setup']}
+
+{texts['agent_bootstrap']}
+
+```bash
+chmod 0600 ./jms_pam_agent.json
+sudo /usr/local/bin/jms-pam-agent install \\
+  --bootstrap ./jms_pam_agent.json --instance-id orders-node-1
+sudo systemctl status jms-pam-agent --no-pager
+```
+
+### {texts['foreground_title']}
+
+{texts['agent_portable']}
+
+{texts['foreground_binary']}
+
+```bash
+chmod 0600 ./jms_pam_agent.json
+./jms-pam-agent init-local \\
+  --bootstrap ./jms_pam_agent.json \\
+  --directory "$HOME/.jms-pam-agent/orders" --instance-id orders-node-1
+./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/orders/agent.json"
+```
+
+```powershell
+$agentDir = Join-Path $HOME '.jms-pam-agent\\orders'
+.\\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id orders-node-1
+.\\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
+```
+
+## 3. {texts['agent_delivery_title']}
+
+{texts['agent_delivery']}
+
+| {texts['agent_delivery_title']} | {texts['configure']} |
+| --- | --- |
+| JSON | `delivery.delivery_mode: json` → `/opt/jumpserver-pam/credentials/<credential-key>.json` |
+| EnvironmentFile (Linux / systemd) | `delivery.delivery_mode: environment` → `/opt/jumpserver-pam/credentials/<credential-key>.env` |
+| Socket | `delivery.delivery_mode: socket` → `/run/jms-pam-agent/agent.sock` |
+
+{texts['agent_paths']}
+
+## 4. {texts['agent_rules_title']}
+
+{agent_configuration_section(texts)}
+
+## 5. {texts['local_api']}
+
+### {texts['account_lookup_title']}
+
+{texts['agent_queries']}
 
 ```bash
 jms-pam-agent get_accounts
 jms-pam-agent get_secret '<account-id>'
-sudo jms-pam-agent check-config
-sudo systemctl restart jms-pam-agent
+
+curl --fail --silent --show-error \\
+  --unix-socket '/run/jms-pam-agent/agent.sock' \\
+  http://localhost/v1/health
+
+curl --fail --silent --show-error \\
+  --unix-socket '/run/jms-pam-agent/agent.sock' \\
+  'http://localhost/v1/credentials/<credential-key>'
 ```
+
+### {texts['confirmation_title']}
+
+{texts['agent_confirmation']}
+
+```bash
+jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
+```
+
+## 6. {texts['validation_title']}
+
+{texts['agent_validation']}
+
+### {texts['troubleshooting']}
+
+```bash
+sudo systemctl status jms-pam-agent --no-pager
+sudo journalctl -u jms-pam-agent -n 100 --no-pager
+```
+
+{texts['recovery']}
 """
 
 
@@ -491,62 +644,21 @@ def python_guide(texts):
 
 <!-- agent-doc:start -->
 
-## {texts["agent_title"]}
-
-{texts["agent_setup"]}
-
-
-{texts["agent_portable"]}
-
-{texts["agent_paths"]}
-
-- JSON: `/opt/jumpserver-pam/credentials/<credential-key>.json`
-- EnvironmentFile: `/opt/jumpserver-pam/credentials/<credential-key>.env`
-- Unix Socket: `/run/jms-pam-agent/agent.sock`
-
-{texts["agent_delivery"]}
-
-{texts["agent_rules"]}
-
-{agent_configuration_section(texts)}
-
-### {texts["local_api"]}
-
-```bash
-curl --fail --silent --show-error \\
-  --unix-socket '/run/jms-pam-agent/agent.sock' \\
-  http://localhost/v1/health
-
-curl --fail --silent --show-error \\
-  --unix-socket '/run/jms-pam-agent/agent.sock' \\
-  'http://localhost/v1/credentials/<credential-key>'
-```
-
-{texts["confirmation"]}
-
-```bash
-/usr/local/bin/jms-pam-agent confirm '<event-id>' \\
-  --socket '/run/jms-pam-agent/agent.sock'
-```
-
-{texts["agent_confirm"]}
-
-### {texts["troubleshooting"]}
-
-```bash
-sudo systemctl start jms-pam-agent
-sudo systemctl status jms-pam-agent --no-pager
-sudo journalctl -u jms-pam-agent -n 100 --no-pager
-sudo systemctl restart jms-pam-agent
-```
-
-{texts["recovery"]}
+{agent_guide(texts)}
 
 <!-- agent-doc:end -->
 
 <!-- sdk-doc:start -->
 
-## {texts["sdk_title"]}
+# {texts['sdk_title']}
+
+## 1. {texts["onboarding_title"]}
+
+{texts["onboarding"]}
+
+{texts["sdk_workflow"]}
+
+## 2. {texts["sdk_install_title"]}
 
 {texts["sdk_setup"]}
 
@@ -554,12 +666,16 @@ sudo systemctl restart jms-pam-agent
 {PYTHON_INSTALL}
 ```
 
+{source_installation_section('python', texts)}
+
 {texts["sdk_config"]}
 
 ```python
 # jms_pam_config.py
 {PYTHON_CONFIG.rstrip()}
 ```
+
+## 3. {texts["first_account_title"]}
 
 {texts["sdk_run"]}
 
@@ -575,38 +691,48 @@ python3
 ```
 <!-- python-account-example:end -->
 
+{managed_section("python", texts).replace('## ', '## 4. ', 1)}
+
+## 5. {texts["methods"]}
+
 {account_listing_section("python", texts)}
 
 {application_info_section("python", texts)}
 
-### {texts["events"]}
+{status_reporting_section("python", texts)}
+
+### {texts["low_level_title"]}
 
 {texts["event_results"]}
 
-<!-- python-events-example:start -->
-```python
-{(CLIENTS / "python" / "subclass_demo.py").read_text().rstrip()}
-```
-<!-- python-events-example:end -->
-
-### {texts["methods"]}
-
-- `list_accounts(search="")`
-- `get_application()` / `get_client_info()`
-- `report_status("running", account_id=...)` / `report_status("stopped")`
-- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
-- `list_accounts_page(limit=200, offset=0, search="")` → `page.count`, `page.accounts`
-- `get_account(account_id=..., allow_local_fallback=True)`
-- `account.username` / `account.secret` / `account.asset` / `account.from_local`
-- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
-- `watch_credential_events(stop_event=...)`
-- `list_application_commands()`
-- `report_application_command_result(command_id=..., status="running")`
-- `clone()` / `close()`
+{texts["command_processing"]}
 
 {texts["event_compatibility"]}
 
-{status_reporting_section("python", texts)}
+### API
+
+- `list_accounts(search="")` / `list_accounts_page(limit=200, offset=0, search="")`
+- `get_application()` / `get_client_info()`
+- `report_accounts(account_ids)` / `report_status("running", account_ids=[...])`
+- `list_policies(search="")` / `get_policy(key=...)` / `get_policy(policy_id=...)`
+- `get_account(account_id=..., allow_local_fallback=True)`
+- `account.username` / `account.secret` / `account.asset` / `account.from_local`
+- `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
+- `watch_credential_events(stop_event=...)`
+- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
+- `list_application_commands()` / `execute_application_command(event, handler)`
+- `report_application_command_result(command_id=..., status="running")`
+- `clone()` / `close()`
+
+## 6. {texts["validation_title"]}
+
+{texts["sdk_validation"]}
+
+### {texts["troubleshooting"]}
+
+{texts["sdk_errors"]}
+
+{texts["native_compatibility"]}
 
 <!-- sdk-doc:end -->
 """
@@ -637,8 +763,17 @@ def main():
         else:
             path = CLIENTS / "python" / f"README.{locale}.md"
             content = path.read_text(encoding="utf-8")
-            sdk = python_guide(texts).split("<!-- sdk-doc:start -->", 1)[1].split("<!-- sdk-doc:end -->", 1)[0]
-            content = re.sub(r"(?<=<!-- sdk-doc:start -->).*?(?=<!-- sdk-doc:end -->)", lambda _: sdk, content, flags=re.S)
+            guide = python_guide(texts)
+            for tab in ("agent", "sdk"):
+                start = f"<!-- {tab}-doc:start -->"
+                end = f"<!-- {tab}-doc:end -->"
+                block = guide.split(start, 1)[1].split(end, 1)[0]
+                content, count = re.subn(
+                    re.escape(start) + r".*?" + re.escape(end),
+                    lambda _: start + block + end, content, flags=re.S,
+                )
+                if count != 1:
+                    raise ValueError(f"Expected one {tab} document block in {path}")
             for kind, example in (("account", "account_demo.py"), ("events", "subclass_demo.py")):
                 start = f"<!-- python-{kind}-example:start -->"
                 end = f"<!-- python-{kind}-example:end -->"
