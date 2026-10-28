@@ -4,9 +4,9 @@
 
 ## 1. Điều kiện và quy trình tích hợp
 
-1. Tạo ứng dụng và cấp quyền lấy tài khoản (pull), dùng ID tài khoản thay vì tên hoặc ID chính sách.
-2. Liên kết chính sách thông báo hoặc luân chuyển A/B để tự động phân phối (push).
-3. Tải cấu hình danh tính từ trình hướng dẫn, dùng `instance_id` ổn định, duy nhất cho mỗi bản sao và bảo vệ AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Chỉ pull thì hoàn thành truy vấn đầu tiên. Push và A/B cần callback nghiệp vụ và lắng nghe. SDK xử lý giao thức và kết quả; ứng dụng đổi kết nối thực. Ví dụ theo mã nguồn hiện tại, cần bản Core/SDK tương thích. Gói 1.0.2 đã phát hành chưa có mọi API mới.
 
@@ -14,7 +14,7 @@ Chỉ pull thì hoàn thành truy vấn đầu tiên. Push và A/B cần callbac
 
 ## 2. Cài SDK và cấu hình danh tính
 
-Cài SDK và cấu hình bên dưới. Cấp quyền tài khoản cho pull trong quản lý ứng dụng; chỉ gắn chính sách khi cần push hoặc luân phiên thông tin xác thực. Lấy AK/SK và ID tổ chức từ tài liệu kết nối. Thay các giá trị mẫu và bảo vệ bí mật triển khai. Mỗi bản sao cần ID ổn định và duy nhất. Lấy theo ID tài khoản.
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 Cài mã nguồn máy khách đi kèm cùng Core; gói 1.0.2 chưa có callback được quản lý. Thay jumpserver.example.com bằng địa chỉ Core và giữ thư mục jms-pam-clients, kể cả đường dẫn thay thế mô-đun Go.
 

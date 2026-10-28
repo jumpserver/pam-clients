@@ -10,9 +10,9 @@ Python 3.9+ 提供憑據策略 SDK。Go jms-pam-agent 無需 Python，可透過�
 
 ## 1. 接入前提與流程
 
-1. 建立應用，授權允許按需取得的帳號（pull）。帳號 ID 是 JumpServer 帳號 ID，不是使用者名稱或策略 ID。
-2. 在 store/services 宣告要同步的授權帳號；需要推送通知或 A/B 切換時，再綁定對應策略。
-3. 在應用接入精靈下載身分配置。每個副本使用穩定、唯一的 `instance_id`，並妥善保管 AK/SK。
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. 安裝與啟動
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` 與 `services` 獨立生效。`store.accounts` 固定為字串陣列：`["all"]` 儲存本應用授權的全部帳號，也可填寫指定帳號 ID。訂閱只提供變更通知，未訂閱的授權帳號也能同步。省略 `store` 可只執行業務更新，空陣列不產生標準憑據檔案。`all` 不可與 ID 混用。
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | 設定與執行 | store |
 | --- | --- |
-| `store.accounts: ["all"]` | 應用授權的全部帳號，包括未訂閱者。 |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | 只儲存明確宣告的帳號 ID。 |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. 接入驗收
 
-1. 確認實例在線且帳號授權符合預期。
-2. 使用 push 時，從綁定策略發送更新並核對檔案或 Socket 的帳號與版本。
-3. A/B 輪換須驗證業務已使用新帳號並釋放舊連線，再檢查事件結果。在線、已取密、已交付不能單獨證明業務生效。
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### 問題排查
 
@@ -289,9 +289,9 @@ Agent 在啟動、相關通知及定時週期同步，預設 300 秒。暫時網
 
 ## 1. 接入前提與流程
 
-1. 建立應用，授權允許按需取得的帳號（pull）。帳號 ID 是 JumpServer 帳號 ID，不是使用者名稱或策略 ID。
-2. 需要主動交付更新時，再綁定改密通知或 A/B 輪換策略（push）；僅授權帳號不會主動推送憑據。
-3. 在應用接入精靈下載身分配置。每個副本使用穩定、唯一的 `instance_id`，並妥善保管 AK/SK。
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 僅按需取密時，完成首次取密即可；主動更新或 A/B 輪換還需實作托管業務回呼並啟動監聽。SDK 處理協議與事件結果，業務驗證並切換真實連線。範例對應目前原始碼；新增 API 需要配套的 Core 與 SDK 建置，已發行的 1.0.2 套件尚未包含全部新介面。
 

@@ -81,6 +81,17 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [self.update]})
         self.assertEqual(self.client.on_account_changed.call_count, 2)
 
+    def test_notifications_disabled_preserves_authorized_connection_until_revocation(self):
+        update = {**self.update, 'credential_mode': 'subscription', 'key': 'account:account-a'}
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [update]})
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [], 'authorized_account_ids': ['account-a']})
+        self.client.on_account_revoked.assert_not_called()
+        self.client.on_account_changed.assert_called_once()
+        self.dispatcher._dispatch(update)
+        self.client.on_account_changed.assert_called_once()
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [], 'authorized_account_ids': []})
+        self.client.on_account_revoked.assert_called_once_with('account-a')
+
     def test_usage_failure_does_not_repeat_successful_application(self):
         self.client.report_accounts.side_effect = OSError('telemetry unavailable')
         self.dispatcher._dispatch(self.update)

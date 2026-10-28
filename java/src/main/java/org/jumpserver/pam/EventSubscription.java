@@ -271,7 +271,8 @@ public final class EventSubscription implements AutoCloseable {
         if (listener instanceof AccountEventListener) {
           Set<String> retained = new HashSet<>();
           for (Event update : event.getCredentials()) retained.add(accountSelector(update));
-          accountScope = retained;
+          accountScope = new HashSet<>(retained);
+          for (String id : event.getAuthorizedAccountIds()) retained.add("account:" + id);
           revokeAccounts(retained, event);
         }
         for (Event update : event.getCredentials()) refresh(update, event, 0);

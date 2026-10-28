@@ -4,9 +4,9 @@
 
 ## 1. Prerequisites and workflow
 
-1. Create an application and authorize the accounts it may retrieve (pull). Use account IDs, not usernames or policy IDs.
-2. Bind a credential notification or A/B rotation policy only when updates must be pushed. Authorization alone does not enable proactive delivery.
-3. Download identity/configuration from the application access wizard. Use a stable, unique `instance_id` for each replica and keep AK/SK private.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Use only the retrieval section for pull-only access. For pushed updates or A/B rotation, implement the managed business callbacks and start listening. The SDK handles protocol and event results; the application validates and switches real connections. These examples reflect the current source: install a matching Core and SDK build before using new APIs; released 1.0.2 packages do not include all of them.
 
@@ -14,7 +14,7 @@ Use only the retrieval section for pull-only access. For pushed updates or A/B r
 
 ## 2. Installation and identity
 
-Install the SDK and use the configuration below. Authorize accounts for pull in Application Management; bind policies only when push or rotation is needed. Obtain the application AK/SK and organization ID from its access materials. Replace placeholders and keep identity material in deployment secrets. Use a stable, unique instance ID for each replica. Fetch by account ID.
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 Install the client source shipped by the same Core using the commands below; released v1.0.2 packages do not include managed callbacks. Replace jumpserver.example.com with your Core address. Keep the extracted jms-pam-clients directory with your application, including the Go module replacement path.
 

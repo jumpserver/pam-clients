@@ -10,9 +10,9 @@ Python 3.9+ предоставляет SDK политик учётных дан�
 
 ## 1. Условия и порядок подключения
 
-1. Создайте приложение и разрешите получение аккаунтов (pull). Используйте ID аккаунта, а не имя или ID политики.
-2. Объявите записи в store/services; привяжите политики для уведомлений или переключений A/B.
-3. Загрузите настройки в мастере, задайте стабильный уникальный `instance_id` каждой реплике и защитите AK/SK.
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. Установка и запуск
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` и `services` независимы. `store.accounts` — массив строк: `["all"]` сохраняет все разрешённые приложению учётные записи, список ID — только выбранные. Подписки обеспечивают уведомления и не обязательны для синхронизации разрешённых записей. Без `store` работают только сервисы; пустой массив ничего не сохраняет. Нельзя смешивать `all` и ID.
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | Настройка и запуск | store |
 | --- | --- |
-| `store.accounts: ["all"]` | Все разрешённые приложению учётные записи, включая записи без подписок. |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | Только явно объявленные ID учётных записей. |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. Проверка интеграции
 
-1. Проверьте доступность экземпляра и разрешённые аккаунты.
-2. Для push отправьте обновление политикой и проверьте доставленные аккаунт и версию.
-3. Для A/B проверьте новое соединение и закрытие старых до результата события. Получение и доставка не доказывают применение.
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### Устранение неполадок
 
@@ -289,9 +289,9 @@ Agent синхронизирует при запуске, по значимым 
 
 ## 1. Условия и порядок подключения
 
-1. Создайте приложение и разрешите получение аккаунтов (pull). Используйте ID аккаунта, а не имя или ID политики.
-2. Для автоматической доставки привяжите политику уведомлений или ротации A/B (push).
-3. Загрузите настройки в мастере, задайте стабильный уникальный `instance_id` каждой реплике и защитите AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Для pull достаточно первого запроса. Для push и A/B реализуйте бизнес-обработчики и слушатель. SDK ведёт протокол и результаты, приложение переключает реальные соединения. Примеры для текущих исходников: нужны совместимые сборки Core и SDK. Опубликованные пакеты 1.0.2 содержат не все новые API.
 

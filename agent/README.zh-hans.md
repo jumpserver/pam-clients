@@ -4,9 +4,9 @@
 
 ## 1. 接入前提与流程
 
-1. 创建应用，授权允许按需获取的账号（pull）。下文的账号 ID 指 JumpServer 账号 ID，不是用户名或策略 ID。
-2. 在 store/services 中声明需要同步的授权账号；需要推送通知或 A/B 切换时，再绑定对应策略。
-3. 在应用的接入向导下载身份配置。每个副本使用稳定、唯一的 `instance_id`，应用 AK/SK 只保存在受保护的配置中。
+1. 创建应用，授权允许按需获取的账号。下文账号 ID 指 JumpServer 账号 ID。
+2. 在 store/services 中声明使用的账号。需要及时更新时，在应用中开启“账号凭据变更通知”，覆盖全部授权账号；需要 A/B 账号切换时再绑定独立轮换策略。
+3. 在应用接入向导下载身份配置。每个副本使用稳定、唯一的实例 ID，AK/SK 保存在受保护的配置中。
 
 ## 2. 安装与启动
 
@@ -53,7 +53,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` 与 `services` 独立生效。`store.accounts` 始终是字符串数组：`["all"]` 保存本应用授权的全部账号，也可填写指定账号 ID。订阅只提供变更通知，未订阅的授权账号也能同步。省略 `store` 可仅执行业务更新，空数组表示不生成标准凭据文件。`all` 不能与 ID 混用。
+`store` 与 `services` 独立生效。`store.accounts` 是字符串数组：`["all"]` 保存应用全部授权账号，也可指定账号 ID。应用开启通知后覆盖全部授权账号，本地声明决定存储哪些账号及执行哪些业务动作；关闭通知仍可按需取密和定时同步。省略 `store` 可仅执行业务更新，空数组表示不生成标准凭据文件。`all` 不能与 ID 混用。
 
 ```json
 {
@@ -83,7 +83,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | 配置与运行 | store |
 | --- | --- |
-| `store.accounts: ["all"]` | 应用授权的全部账号，包括未订阅的账号。 |
+| `store.accounts: ["all"]` | 应用全部授权账号，不受通知开关影响。 |
 | `store.accounts: ["<account-id>"]` | 只保存显式声明的账号 ID。 |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -261,9 +261,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. 接入验收
 
-1. 确认接入实例在线，且账号授权范围符合预期。
-2. 使用 push 时，从已绑定策略发送更新，核对交付文件或 Socket 中的账号与版本。
-3. 使用 A/B 轮换时，验证运行中的业务已使用新账号并释放旧连接，再检查事件生效结果。在线、已取密、已交付都不能单独证明业务切换成功。
+1. 确认实例在线，且账号授权范围符合预期。
+2. 在应用开启通知，修改授权账号凭据后核对交付文件或 Socket 中的版本，并在应用事件中查看各实例回执及处理结果。
+3. 使用 A/B 轮换时，验证运行中的业务已采用新账号并释放旧连接，再确认成功。已接收、已取密、已交付都不能单独证明业务已生效。
 
 ### 排查问题
 

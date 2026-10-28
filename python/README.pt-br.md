@@ -10,9 +10,9 @@ Execute o Agent Go independente no host da aplicação, sem Python. Siga instala
 
 ## 1. Pré-requisitos e fluxo
 
-1. Crie a aplicação e autorize as contas para consulta (pull), usando IDs de conta, não nomes ou IDs de política.
-2. Declare as contas em store/services; vincule políticas para notificações ou trocas A/B.
-3. Baixe a identidade no assistente, use um `instance_id` estável e exclusivo por réplica e proteja AK/SK.
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. Instalação e inicialização
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` e `services` são independentes. `store.accounts` é uma lista de strings: `["all"]` armazena todas as contas autorizadas para a aplicação; uma lista de IDs limita o armazenamento. Assinaturas fornecem notificações, mas não são necessárias para sincronizar contas autorizadas. Omita `store` para usar apenas serviços; uma lista vazia não armazena nada. Não misture `all` e IDs.
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | Configurar e executar | store |
 | --- | --- |
-| `store.accounts: ["all"]` | Todas as contas autorizadas para a aplicação, mesmo sem assinatura. |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | Somente os IDs de contas declarados explicitamente. |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. Validar a integração
 
-1. Confira a instância online e as contas autorizadas.
-2. Para push, envie uma atualização pela política e verifique conta e versão entregues.
-3. Em A/B, verifique a conexão nova e a liberação das antigas antes do resultado. Consulta e entrega não comprovam aplicação.
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### Solução de problemas
 
@@ -289,9 +289,9 @@ Agent sincroniza ao iniciar, por notificações relevantes e periodicamente, por
 
 ## 1. Pré-requisitos e fluxo
 
-1. Crie a aplicação e autorize as contas para consulta (pull), usando IDs de conta, não nomes ou IDs de política.
-2. Vincule uma política de notificação ou rotação A/B para entrega automática (push).
-3. Baixe a identidade no assistente, use um `instance_id` estável e exclusivo por réplica e proteja AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Para pull, basta a primeira consulta. Push e A/B exigem callbacks de negócio e escuta. O SDK cuida do protocolo e resultados; a aplicação troca conexões reais. Os exemplos refletem o código atual: use builds Core/SDK compatíveis. Os pacotes publicados 1.0.2 não incluem todas as APIs novas.
 

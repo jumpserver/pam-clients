@@ -4,9 +4,9 @@
 
 ## 1. Requisitos y flujo de integración
 
-1. Cree la aplicación y autorice las cuentas para consulta (pull). Use IDs de cuenta, no nombres ni IDs de política.
-2. Vincule una política de notificación o rotación A/B para entrega automática (push).
-3. Descargue la identidad desde el asistente, use un `instance_id` estable y único por réplica y proteja AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Para solo pull basta la primera consulta. Push y A/B necesitan callbacks de negocio y escucha. El SDK gestiona protocolo y resultados; la aplicación cambia conexiones reales. Los ejemplos reflejan el código actual: use builds Core/SDK compatibles. Los paquetes publicados 1.0.2 no incluyen todas las APIs nuevas.
 
@@ -14,7 +14,7 @@ Para solo pull basta la primera consulta. Push y A/B necesitan callbacks de nego
 
 ## 2. Instalación del SDK e identidad
 
-Instale el SDK y configure los valores siguientes. Autorice las cuentas para pull en Administración de aplicaciones; vincule políticas solo si necesita push o rotación. Obtenga AK/SK e ID de organización de los materiales de acceso. Sustituya los ejemplos y proteja los secretos de despliegue. Cada réplica necesita un ID estable y único. Obtenga por ID de cuenta.
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 Instale el código del cliente incluido en el mismo Core; los paquetes 1.0.2 no incluyen callbacks gestionados. Sustituya jumpserver.example.com por su Core y conserve el directorio jms-pam-clients, incluida la ruta local de reemplazo de Go.
 

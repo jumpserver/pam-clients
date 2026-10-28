@@ -87,6 +87,7 @@ export interface Event {
   accountId?: string
   accountRevision?: number
   revision?: number
+  authorizedAccountIds?: string[]
   credentials?: SnapshotCredential[]
   [name: string]: unknown
 }

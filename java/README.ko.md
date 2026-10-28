@@ -4,9 +4,9 @@
 
 ## 1. 연동 사전 조건과 흐름
 
-1. 애플리케이션을 만들고 조회할 계정을 승인합니다(pull). 사용자 이름이나 정책 ID 대신 계정 ID를 사용합니다.
-2. 자동 전달이 필요하면 알림 또는 A/B 순환 정책을 연결합니다(push).
-3. 연동 마법사에서 인증 설정을 받고 복제본마다 고유하고 고정된 `instance_id`를 사용하며 AK/SK를 보호합니다.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 pull만 사용하면 첫 조회까지만 진행합니다. push나 A/B는 업무 콜백과 수신 시작이 필요합니다. SDK가 프로토콜과 결과를 처리하고 업무가 실제 연결을 전환합니다. 예제는 현재 소스용입니다. 맞는 Core 및 SDK 빌드를 사용하세요. 배포된 1.0.2에는 모든 새 API가 포함되지 않습니다.
 
@@ -14,7 +14,7 @@ pull만 사용하면 첫 조회까지만 진행합니다. push나 A/B는 업무 
 
 ## 2. SDK 설치 및 인증 설정
 
-SDK를 설치하고 아래 설정을 입력하세요. 애플리케이션 관리에서 pull 대상 계정을 허용하고, push 또는 순환이 필요한 경우에만 정책을 연결합니다. 접속 자료에서 AK/SK와 조직 ID를 가져옵니다. 자리표시자를 교체하고 인증 자료를 안전하게 보관하세요. 복제본마다 안정적이고 고유한 인스턴스 ID를 사용합니다. 조회에는 계정 ID를 지정합니다.
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 아래 명령으로 같은 Core에 포함된 클라이언트 소스를 설치하세요. 배포된 1.0.2에는 관리형 콜백이 없습니다. jumpserver.example.com을 Core 주소로 바꾸고 Go 로컬 대체 경로를 포함한 jms-pam-clients 디렉터리를 보관하세요.
 

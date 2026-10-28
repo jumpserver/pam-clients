@@ -195,7 +195,13 @@ func (w *EventWatcher) dispatch(event Event) {
 					retained[selector] = true
 				}
 			}
-			w.accountScope = retained
+			w.accountScope = make(map[CredentialSelector]bool, len(retained))
+			for selector := range retained {
+				w.accountScope[selector] = true
+			}
+			for _, id := range event.AuthorizedAccountIDs {
+				retained[CredentialSelector{AccountID: id}] = true
+			}
 			w.revokeAccounts(retained, event)
 		}
 		for _, update := range event.Credentials {

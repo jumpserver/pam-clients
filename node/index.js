@@ -494,7 +494,9 @@ class Client {
     if (!['snapshot', 'credential.revoked', 'application.scope.updated', 'configuration.updated'].includes(event.event)) return
     this.#credentialGeneration++
     if (['application.scope.updated', 'configuration.updated'].includes(event.event)) {
-      for (const selector of this.#latestCredentials.keys()) if (selector.startsWith('account:')) this.#latestCredentials.delete(selector)
+      const authorized = new Set(event.authorizedAccountIds || [])
+      for (const selector of this.#latestCredentials.keys())
+        if (selector.startsWith('account:') && !authorized.has(selector.slice(8))) this.#latestCredentials.delete(selector)
       return
     }
     if (event.event !== 'snapshot') {

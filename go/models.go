@@ -287,18 +287,19 @@ type CommandResult struct {
 // Event exposes protocol metadata; Credentials contains initial/reconnect snapshot items.
 // Data preserves all protocol fields, including future notification payloads.
 type Event struct {
-	AccountRevision int64                      `json:"account_revision"`
-	Event           string                     `json:"event"`
-	EventID         string                     `json:"event_id"`
-	CommandID       string                     `json:"command_id"`
-	Key             string                     `json:"key"`
-	CredentialKey   string                     `json:"credential_key"`
-	CredentialMode  string                     `json:"credential_mode"`
-	AccountID       string                     `json:"account_id"`
-	AccountSwitch   *AccountSwitch             `json:"account_switch,omitempty"`
-	Revision        int64                      `json:"revision"`
-	Credentials     []Event                    `json:"credentials"`
-	Data            map[string]json.RawMessage `json:"-"`
+	AccountRevision      int64                      `json:"account_revision"`
+	Event                string                     `json:"event"`
+	EventID              string                     `json:"event_id"`
+	CommandID            string                     `json:"command_id"`
+	Key                  string                     `json:"key"`
+	CredentialKey        string                     `json:"credential_key"`
+	CredentialMode       string                     `json:"credential_mode"`
+	AccountID            string                     `json:"account_id"`
+	AccountSwitch        *AccountSwitch             `json:"account_switch,omitempty"`
+	Revision             int64                      `json:"revision"`
+	AuthorizedAccountIDs []string                   `json:"authorized_account_ids"`
+	Credentials          []Event                    `json:"credentials"`
+	Data                 map[string]json.RawMessage `json:"-"`
 }
 
 func (e *Event) UnmarshalJSON(raw []byte) error {

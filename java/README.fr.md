@@ -4,9 +4,9 @@
 
 ## 1. Prérequis et déroulement
 
-1. Créez l’application et autorisez les comptes à consulter (pull). Utilisez les ID de compte, pas les noms ni les ID de politique.
-2. Liez une politique de notification ou rotation A/B pour la livraison automatique (push).
-3. Téléchargez l’identité dans l’assistant, utilisez un `instance_id` stable et unique par réplique et protégez AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Pour pull seul, la première consultation suffit. Push et A/B exigent des callbacks métier et une écoute. Le SDK gère protocole et résultats ; l’application change les connexions réelles. Les exemples suivent le code actuel : utilisez des builds Core/SDK compatibles. Les paquets publiés 1.0.2 ne contiennent pas toutes les nouvelles API.
 
@@ -14,7 +14,7 @@ Pour pull seul, la première consultation suffit. Push et A/B exigent des callba
 
 ## 2. Installation du SDK et identité
 
-Installez le SDK et renseignez la configuration ci-dessous. Autorisez les comptes pour le pull dans la gestion des applications ; associez des politiques seulement si le push ou la rotation est nécessaire. Récupérez AK/SK et l’identifiant d’organisation dans les données d’accès. Remplacez les valeurs d’exemple et protégez les secrets de déploiement. Chaque réplique nécessite un identifiant stable et unique. Récupérez par identifiant de compte.
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 Installez le code client fourni par le même Core ; les paquets 1.0.2 ne contiennent pas les callbacks gérés. Remplacez jumpserver.example.com par votre Core et conservez le répertoire jms-pam-clients, y compris le chemin local de remplacement Go.
 

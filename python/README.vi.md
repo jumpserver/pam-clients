@@ -10,9 +10,9 @@ Chạy Go Agent độc lập trên máy ứng dụng, không cần Python. Thự
 
 ## 1. Điều kiện và quy trình tích hợp
 
-1. Tạo ứng dụng và cấp quyền lấy tài khoản (pull), dùng ID tài khoản thay vì tên hoặc ID chính sách.
-2. Khai báo tài khoản trong store/services; liên kết chính sách để nhận thông báo hoặc chuyển A/B.
-3. Tải cấu hình danh tính từ trình hướng dẫn, dùng `instance_id` ổn định, duy nhất cho mỗi bản sao và bảo vệ AK/SK.
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. Cài đặt và khởi động
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` và `services` hoạt động độc lập. `store.accounts` luôn là mảng chuỗi: `["all"]` lưu mọi tài khoản được ứng dụng cấp quyền, hoặc liệt kê ID cụ thể. Đăng ký chỉ cung cấp thông báo thay đổi; tài khoản được cấp quyền vẫn đồng bộ khi không đăng ký. Bỏ `store` để chỉ cập nhật dịch vụ; mảng rỗng không lưu tệp chuẩn. Không trộn `all` với ID.
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | Cấu hình và chạy | store |
 | --- | --- |
-| `store.accounts: ["all"]` | Mọi tài khoản được ứng dụng cấp quyền, kể cả không đăng ký. |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | Chỉ các ID tài khoản được khai báo rõ ràng. |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. Kiểm tra tích hợp
 
-1. Kiểm tra bản thể trực tuyến và tài khoản được cấp quyền.
-2. Với push, gửi cập nhật từ chính sách rồi kiểm tra tài khoản và phiên bản được phân phối.
-3. Với A/B, xác minh kết nối mới và giải phóng kết nối cũ trước kết quả sự kiện. Lấy hoặc phân phối chưa chứng minh áp dụng.
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### Khắc phục sự cố
 
@@ -289,9 +289,9 @@ Agent đồng bộ khi khởi động, có thông báo liên quan và theo chu k
 
 ## 1. Điều kiện và quy trình tích hợp
 
-1. Tạo ứng dụng và cấp quyền lấy tài khoản (pull), dùng ID tài khoản thay vì tên hoặc ID chính sách.
-2. Liên kết chính sách thông báo hoặc luân chuyển A/B để tự động phân phối (push).
-3. Tải cấu hình danh tính từ trình hướng dẫn, dùng `instance_id` ổn định, duy nhất cho mỗi bản sao và bảo vệ AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Chỉ pull thì hoàn thành truy vấn đầu tiên. Push và A/B cần callback nghiệp vụ và lắng nghe. SDK xử lý giao thức và kết quả; ứng dụng đổi kết nối thực. Ví dụ theo mã nguồn hiện tại, cần bản Core/SDK tương thích. Gói 1.0.2 đã phát hành chưa có mọi API mới.
 

@@ -4,9 +4,9 @@ Run the standalone Go Agent on the application host; Python is not required. Fol
 
 ## 1. Prerequisites and workflow
 
-1. Create an application and authorize the accounts it may retrieve (pull). Use account IDs, not usernames or policy IDs.
-2. Declare store/services to synchronize authorized accounts. Bind notifications or A/B policies when updates must be pushed.
-3. Download identity/configuration from the application access wizard. Use a stable, unique `instance_id` for each replica and keep AK/SK private.
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. Install and start
 
@@ -53,7 +53,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every account authorized for this application, or specify account IDs. Subscriptions only provide change notifications; authorized accounts can be synchronized without a subscription. Omit `store` for services-only use; an explicit empty array stores nothing. Never combine `all` with IDs.
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -83,7 +83,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | Configure and run | store |
 | --- | --- |
-| `store.accounts: ["all"]` | All application-authorized accounts, including accounts without subscriptions. |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | Only the explicitly declared account IDs. |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -261,9 +261,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. Verify the integration
 
-1. Verify that the instance is online and the expected accounts are authorized.
-2. For push, send an update from the bound policy and verify the delivered file or Socket value and version.
-3. For A/B rotation, verify that the running application uses the new account and has released old connections; then check the event result. Online, fetched and delivered states alone do not prove application success.
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### Troubleshooting
 

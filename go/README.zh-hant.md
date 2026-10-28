@@ -4,9 +4,9 @@
 
 ## 1. 接入前提與流程
 
-1. 建立應用，授權允許按需取得的帳號（pull）。帳號 ID 是 JumpServer 帳號 ID，不是使用者名稱或策略 ID。
-2. 需要主動交付更新時，再綁定改密通知或 A/B 輪換策略（push）；僅授權帳號不會主動推送憑據。
-3. 在應用接入精靈下載身分配置。每個副本使用穩定、唯一的 `instance_id`，並妥善保管 AK/SK。
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 僅按需取密時，完成首次取密即可；主動更新或 A/B 輪換還需實作托管業務回呼並啟動監聽。SDK 處理協議與事件結果，業務驗證並切換真實連線。範例對應目前原始碼；新增 API 需要配套的 Core 與 SDK 建置，已發行的 1.0.2 套件尚未包含全部新介面。
 
@@ -14,7 +14,7 @@
 
 ## 2. 安裝 SDK 與身分配置
 
-安裝 SDK 並填寫下方設定。在應用程式管理中授權可 pull 的帳號；僅在需要 push 或輪換時綁定憑據策略。從接入資料取得應用程式 AK/SK 與組織 ID。替換預留值並保護身分資料，每個副本使用穩定且唯一的實例 ID。依帳號 ID 取密。
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 透過下方命令安裝目前 Core 隨附的用戶端原始碼，避免已發布的 1.0.2 套件缺少託管回呼。將 jumpserver.example.com 替換為 Core 位址；保留解壓後的 jms-pam-clients 目錄，Go 模組使用本機替換路徑。
 

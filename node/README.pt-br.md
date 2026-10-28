@@ -4,9 +4,9 @@
 
 ## 1. Pré-requisitos e fluxo
 
-1. Crie a aplicação e autorize as contas para consulta (pull), usando IDs de conta, não nomes ou IDs de política.
-2. Vincule uma política de notificação ou rotação A/B para entrega automática (push).
-3. Baixe a identidade no assistente, use um `instance_id` estável e exclusivo por réplica e proteja AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Para pull, basta a primeira consulta. Push e A/B exigem callbacks de negócio e escuta. O SDK cuida do protocolo e resultados; a aplicação troca conexões reais. Os exemplos refletem o código atual: use builds Core/SDK compatíveis. Os pacotes publicados 1.0.2 não incluem todas as APIs novas.
 
@@ -14,7 +14,7 @@ Para pull, basta a primeira consulta. Push e A/B exigem callbacks de negócio e 
 
 ## 2. Instalação do SDK e identidade
 
-Instale o SDK e configure os valores abaixo. Autorize contas para pull em Gerenciamento de aplicações; vincule políticas somente quando precisar de push ou rotação. Obtenha AK/SK e ID da organização nos materiais de acesso. Substitua os exemplos e proteja os segredos de implantação. Cada réplica precisa de um ID estável e único. Obtenha por ID da conta.
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 Instale o código do cliente incluído no mesmo Core; os pacotes 1.0.2 não incluem callbacks gerenciados. Substitua jumpserver.example.com pelo seu Core e mantenha o diretório jms-pam-clients, incluindo o caminho local de substituição do Go.
 

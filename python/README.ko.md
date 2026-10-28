@@ -10,9 +10,9 @@ Python 3.9+는 자격 증명 정책 SDK를 제공합니다. Go jms-pam-agent는 
 
 ## 1. 연동 사전 조건과 흐름
 
-1. 애플리케이션을 만들고 조회할 계정을 승인합니다(pull). 사용자 이름이나 정책 ID 대신 계정 ID를 사용합니다.
-2. store/services에 동기화할 계정을 선언하고, 알림 또는 A/B 전환이 필요하면 해당 정책을 연결합니다.
-3. 연동 마법사에서 인증 설정을 받고 복제본마다 고유하고 고정된 `instance_id`를 사용하며 AK/SK를 보호합니다.
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. 설치 및 시작
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store`와 `services`는 독립적입니다. `store.accounts`는 문자열 배열이며 `["all"]`은 애플리케이션에 허가된 모든 계정, ID 배열은 지정한 계정을 저장합니다. 구독은 변경 알림만 제공하며 구독하지 않은 허가된 계정도 동기화됩니다. `store`를 생략하면 업무 처리만 수행하고 빈 배열은 저장하지 않습니다. `all`과 ID를 혼합할 수 없습니다.
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | 설정 및 실행 | store |
 | --- | --- |
-| `store.accounts: ["all"]` | 구독 여부와 관계없이 애플리케이션에 허가된 모든 계정. |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | 명시적으로 선언한 계정 ID만 저장. |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. 연동 검증
 
-1. 인스턴스 온라인 상태와 승인 범위를 확인합니다.
-2. push는 연결 정책에서 업데이트하고 전달 계정과 버전을 확인합니다.
-3. A/B는 실제 연결 전환 및 이전 연결 해제 후 이벤트 결과를 확인합니다. 조회나 전달만으로 업무 적용을 증명하지 않습니다.
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### 문제 해결
 
@@ -289,9 +289,9 @@ Agent는 시작, 관련 알림, 정기 주기(기본 300초)에 동기화합니�
 
 ## 1. 연동 사전 조건과 흐름
 
-1. 애플리케이션을 만들고 조회할 계정을 승인합니다(pull). 사용자 이름이나 정책 ID 대신 계정 ID를 사용합니다.
-2. 자동 전달이 필요하면 알림 또는 A/B 순환 정책을 연결합니다(push).
-3. 연동 마법사에서 인증 설정을 받고 복제본마다 고유하고 고정된 `instance_id`를 사용하며 AK/SK를 보호합니다.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 pull만 사용하면 첫 조회까지만 진행합니다. push나 A/B는 업무 콜백과 수신 시작이 필요합니다. SDK가 프로토콜과 결과를 처리하고 업무가 실제 연결을 전환합니다. 예제는 현재 소스용입니다. 맞는 Core 및 SDK 빌드를 사용하세요. 배포된 1.0.2에는 모든 새 API가 포함되지 않습니다.
 

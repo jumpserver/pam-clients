@@ -513,7 +513,9 @@ public final class Client implements AutoCloseable {
     synchronized (credentialsLock) {
       credentialGeneration++;
       if (name.equals("application.scope.updated") || name.equals("configuration.updated")) {
-        latestCredentials.keySet().removeIf(selector -> selector.startsWith("account_id:"));
+        java.util.Set<String> authorized = new java.util.HashSet<>(event.getAuthorizedAccountIds());
+        latestCredentials.keySet().removeIf(selector -> selector.startsWith("account_id:")
+            && !authorized.contains(selector.substring("account_id:".length())));
         return;
       }
       if (!name.equals("snapshot")) {

@@ -10,9 +10,9 @@ Exécutez l’Agent Go autonome sur l’hôte applicatif, sans Python. Suivez in
 
 ## 1. Prérequis et déroulement
 
-1. Créez l’application et autorisez les comptes à consulter (pull). Utilisez les ID de compte, pas les noms ni les ID de politique.
-2. Déclarez les comptes à synchroniser dans store/services ; liez les politiques pour les notifications ou les bascules A/B.
-3. Téléchargez l’identité dans l’assistant, utilisez un `instance_id` stable et unique par réplique et protégez AK/SK.
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. Installation et démarrage
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` et `services` sont indépendants. `store.accounts` est un tableau de chaînes : `["all"]` conserve tous les comptes autorisés pour cette application ; une liste d’ID limite le stockage. Les abonnements servent aux notifications, sans être requis pour synchroniser un compte autorisé. Omettre `store` permet de gérer uniquement les services ; un tableau vide ne stocke rien. Ne mélangez pas `all` et des ID.
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | Configuration et exécution | store |
 | --- | --- |
-| `store.accounts: ["all"]` | Tous les comptes autorisés pour l’application, même sans abonnement. |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | Uniquement les ID de comptes explicitement déclarés. |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. Vérifier l’intégration
 
-1. Vérifiez l’instance en ligne et les comptes autorisés.
-2. Pour push, envoyez une mise à jour par la politique puis vérifiez le compte et la version livrés.
-3. Pour A/B, validez la nouvelle connexion et fermez les anciennes avant le résultat. Consultation et livraison ne prouvent pas l’application.
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### Dépannage
 
@@ -289,9 +289,9 @@ Agent synchronise au démarrage, sur notification pertinente et périodiquement,
 
 ## 1. Prérequis et déroulement
 
-1. Créez l’application et autorisez les comptes à consulter (pull). Utilisez les ID de compte, pas les noms ni les ID de politique.
-2. Liez une politique de notification ou rotation A/B pour la livraison automatique (push).
-3. Téléchargez l’identité dans l’assistant, utilisez un `instance_id` stable et unique par réplique et protégez AK/SK.
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 Pour pull seul, la première consultation suffit. Push et A/B exigent des callbacks métier et une écoute. Le SDK gère protocole et résultats ; l’application change les connexions réelles. Les exemples suivent le code actuel : utilisez des builds Core/SDK compatibles. Les paquets publiés 1.0.2 ne contiennent pas toutes les nouvelles API.
 

@@ -116,3 +116,21 @@ func TestManagedSnapshotRevocationAndRegrant(t *testing.T) {
 		t.Fatal("regranted account was not applied")
 	}
 }
+
+func TestNotificationDisablePreservesAuthorizedAccount(t *testing.T) {
+	applied, revoked := 0, 0
+	w := managedWatcher(t, "managed-go-notification-off", func(context.Context, Account) error { applied++; return nil })
+	w.handlers.OnAccountRevoked = func(context.Context, string) error { revoked++; return nil }
+	update := managedUpdate()
+	update.CredentialMode, update.Key = "subscription", "account:account"
+	w.dispatch(Event{Event: "snapshot", Credentials: []Event{update}, AuthorizedAccountIDs: []string{"account"}})
+	w.dispatch(Event{Event: "snapshot", AuthorizedAccountIDs: []string{"account"}})
+	w.dispatch(update)
+	if applied != 1 || revoked != 0 {
+		t.Fatal("notification disable changed an authorized connection", applied, revoked)
+	}
+	w.dispatch(Event{Event: "snapshot", AuthorizedAccountIDs: []string{}})
+	if revoked != 1 {
+		t.Fatal("actual authorization revocation did not release the account")
+	}
+}

@@ -4,9 +4,9 @@
 
 ## 1. 接続の前提と流れ
 
-1. アプリを作成し、取得可能なアカウントを許可します（pull）。ユーザー名やポリシー ID ではなくアカウント ID を使います。
-2. 自動配信には通知または A/B ローテーションのポリシーを関連付けます（push）。
-3. 接続ウィザードで認証設定を取得し、各レプリカに固定で一意の `instance_id` を設定して AK/SK を保護します。
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 pull のみなら最初の取得までで十分です。push や A/B には業務コールバックと監視が必要です。SDK がプロトコルと結果を処理し、業務が実接続を切り替えます。例は現行ソース用です。対応する Core と SDK を用意してください。公開済みの 1.0.2 には新 API がすべて含まれるわけではありません。
 
@@ -14,7 +14,7 @@ pull のみなら最初の取得までで十分です。push や A/B には業�
 
 ## 2. SDK のインストールと認証設定
 
-SDK をインストールし、下記を設定します。アプリケーション管理で pull 対象のアカウントを許可し、push またはローテーションが必要な場合だけポリシーを関連付けます。接続資料から AK/SK と組織 ID を取得してください。プレースホルダーを置き換え、認証資料を安全に保管します。各レプリカには安定した一意のインスタンス ID を使います。 取得にはアカウント ID を指定します。
+Install the SDK and configure the identity below. Authorize accounts in the application for on-demand access. Enable Account credential change notifications in the application to receive changes for all authorized accounts; there is no separate account subscription policy. Bind an A/B rotation policy only when account switching is required. Each replica must use a stable, unique instance ID.
 
 以下のコマンドで同じ Core に同梱されたクライアントソースをインストールします。公開済み 1.0.2 には管理コールバックがありません。jumpserver.example.com を Core のアドレスに置き換え、Go のローカル置換パスを含む jms-pam-clients ディレクトリを保持してください。
 

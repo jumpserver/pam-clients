@@ -10,9 +10,9 @@ Python 3.9+ は認証情報ポリシー SDK を提供します。Go 製 jms-pam-
 
 ## 1. 接続の前提と流れ
 
-1. アプリを作成し、取得可能なアカウントを許可します（pull）。ユーザー名やポリシー ID ではなくアカウント ID を使います。
-2. store/services で同期対象を宣言し、通知や A/B 切替が必要なら対応するポリシーを関連付けます。
-3. 接続ウィザードで認証設定を取得し、各レプリカに固定で一意の `instance_id` を設定して AK/SK を保護します。
+1. Create an application and authorize the accounts it may retrieve. Account IDs below are JumpServer account IDs.
+2. Declare accounts in store/services. Enable Account credential change notifications in the application for immediate updates to all authorized accounts; bind an A/B rotation policy only when switching is required.
+3. Download the identity configuration from the application access wizard. Give each replica a stable, unique instance ID and protect the AK/SK.
 
 ## 2. インストールと起動
 
@@ -59,7 +59,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ## 3. store / local_api
 
-`store` と `services` は独立しています。`store.accounts` は文字列配列です。`["all"]` はアプリケーションに許可された全アカウント、ID の配列は指定アカウントを保存します。購読は変更通知用であり、購読のない許可済みアカウントも同期できます。`store` の省略で業務処理のみ、空配列で保存なしとなります。`all` と ID は混在できません。
+`store` and `services` are independent. `store.accounts` is a string array: `["all"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.
 
 ```json
 {
@@ -89,7 +89,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 | 設定と実行 | store |
 | --- | --- |
-| `store.accounts: ["all"]` | 購読の有無にかかわらず、アプリケーションに許可された全アカウント。 |
+| `store.accounts: ["all"]` | All accounts authorized for this application, independently of the notification setting. |
 | `store.accounts: ["<account-id>"]` | 明示したアカウント ID のみ。 |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
@@ -267,9 +267,9 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. 接続の検証
 
-1. インスタンスのオンライン状態と許可範囲を確認します。
-2. push では関連ポリシーから更新し、配信先のアカウントとバージョンを確認します。
-3. A/B では実際の接続切替と旧接続解放後にイベント結果を確認します。取得や配信だけでは適用成功を証明しません。
+1. Verify the instance is online and its authorized account scope is correct.
+2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.
+3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.
 
 ### トラブルシューティング
 
@@ -289,9 +289,9 @@ Agent は起動、関連通知、定期間隔（既定 300 秒）で同期しま
 
 ## 1. 接続の前提と流れ
 
-1. アプリを作成し、取得可能なアカウントを許可します（pull）。ユーザー名やポリシー ID ではなくアカウント ID を使います。
-2. 自動配信には通知または A/B ローテーションのポリシーを関連付けます（push）。
-3. 接続ウィザードで認証設定を取得し、各レプリカに固定で一意の `instance_id` を設定して AK/SK を保護します。
+1. Create an application and authorize the accounts it may retrieve.
+2. Enable Account credential change notifications in the application when immediate updates are needed. This covers all authorized accounts. A/B switching uses a separate rotation policy.
+3. Download the application access materials and protect its AK/SK. Give each replica a stable, unique instance ID.
 
 pull のみなら最初の取得までで十分です。push や A/B には業務コールバックと監視が必要です。SDK がプロトコルと結果を処理し、業務が実接続を切り替えます。例は現行ソース用です。対応する Core と SDK を用意してください。公開済みの 1.0.2 には新 API がすべて含まれるわけではありません。
 

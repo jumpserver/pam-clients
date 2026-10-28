@@ -284,7 +284,8 @@ class EventDispatcher:
             if self.account_events:
                 self.account_scope = {self._account_selector(item) for item in event.get('credentials', [])}
                 try:
-                    self._revoke_accounts(self.account_scope, event)
+                    retained = self.account_scope | {('account', value) for value in event.get('authorized_account_ids', [])}
+                    self._revoke_accounts(retained, event)
                 except Exception as error:
                     self._report_error(error, event)
             for update in event.get("credentials", []):

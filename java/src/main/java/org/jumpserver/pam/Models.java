@@ -721,6 +721,19 @@ public final class Models {
       return revision(data);
     }
 
+    public List<String> getAuthorizedAccountIds() {
+      List<String> ids = new ArrayList<>();
+      JsonNode values = data.get("authorized_account_ids");
+      if (values != null) {
+        if (!values.isArray()) throw new IllegalArgumentException("Invalid authorization snapshot");
+        for (JsonNode value : values) {
+          if (!value.isTextual()) throw new IllegalArgumentException("Invalid account ID");
+          ids.add(value.asText());
+        }
+      }
+      return Collections.unmodifiableList(ids);
+    }
+
     public List<Event> getCredentials() {
       List<Event> items = new ArrayList<>();
       JsonNode credentials = data.get("credentials");

@@ -146,3 +146,25 @@ test('a regrant cancels pending account cleanup', async () => {
     assert.deepEqual((await sdk.getClientInfo()).applicationStatus.accountIds, ['account'])
   } finally { await subscription.stop(); sdk.close() }
 })
+
+
+test('disabling notifications preserves authorized connections until actual revocation', async () => {
+  const sdk = client('managed-node-notification-off')
+  const revoked = []
+  const update = { event: 'credential.updated', eventId: 'notification-event', key: 'account:account',
+    credentialMode: 'subscription', accountId: 'account', accountRevision: 2, revision: 2 }
+  let authorized = true
+  sdk.onEvent = event => { if (event.event === 'snapshot') authorized = event.authorizedAccountIds.includes('account') }
+  sdk.onAccountRevoked = id => { assert.equal(authorized, false); revoked.push(id) }
+  sdk.watchCredentialEvents = async function* () {
+    yield { event: 'snapshot', credentials: [update], authorizedAccountIds: ['account'] }
+    yield { event: 'snapshot', credentials: [], authorizedAccountIds: ['account'] }
+    yield update
+    yield { event: 'snapshot', credentials: [], authorizedAccountIds: [] }
+  }
+  try {
+    await sdk.watchEvents()
+    assert.deepEqual(revoked, ['account'])
+    assert.equal(sdk.applied.length, 1)
+  } finally { sdk.close() }
+})

@@ -237,7 +237,11 @@ class Client:
             self._credential_generation += 1
             if name in {"application.scope.updated", "configuration.updated"}:
                 # Push snapshots cannot prove the full pull authorization scope.
-                self._latest_credentials = {selector: value for selector, value in self._latest_credentials.items() if selector[0] != "account_id"}
+                authorized = event.get('authorized_account_ids')
+                self._latest_credentials = {
+                    selector: value for selector, value in self._latest_credentials.items()
+                    if selector[0] != "account_id" or authorized is not None and selector[1] in authorized
+                }
                 return
             if name != "snapshot":
                 key = event.get("credential_key") or event.get("key")

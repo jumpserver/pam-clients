@@ -12,8 +12,12 @@ func (c *Client) reconcileLatestCredentials(event Event) {
 	defer c.mu.Unlock()
 	c.credentialGeneration++
 	if event.Event == "application.scope.updated" || event.Event == "configuration.updated" {
+		authorized := make(map[string]bool)
+		for _, id := range event.AuthorizedAccountIDs {
+			authorized[id] = true
+		}
 		for selector := range c.latestCredentials {
-			if selector.AccountID != "" {
+			if selector.AccountID != "" && !authorized[selector.AccountID] {
 				delete(c.latestCredentials, selector)
 			}
 		}

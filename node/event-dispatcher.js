@@ -251,7 +251,8 @@ class EventSubscription {
     if (event.event === 'snapshot') {
       if (this.#accountEvents) {
         this.#scope = new Set((event.credentials || []).map(update => this.#accountSelector(update)))
-        await this.#revokeAccounts(this.#scope, event)
+        const retained = new Set([...this.#scope, ...(event.authorizedAccountIds || []).map(id => `account:${id}`)])
+        await this.#revokeAccounts(retained, event)
       }
       for (const update of event.credentials || []) {
         try {
