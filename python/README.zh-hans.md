@@ -78,7 +78,7 @@ WebSocket 的 `received` 回执表示收到请求，不表示执行成功。SDK 
 
 ### Linux / systemd
 
-新配置使用 `config_version: 2`，需要配套更新 Core 与 Agent。已有版本 1 或未标版本的 `delivery` / `rules` 配置保留旧行为，两套结构不能混用。先更新二进制再使用新字段。Core 不能新增本机脚本路径；修改私有配置后重启 Agent。
+Core 与 Agent 的协议版本和 `config_version` 统一为 1。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。Core 只同步账号范围和版本元数据，不下发本机脚本路径；修改私有配置后重启 Agent。
 
 Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
@@ -123,7 +123,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ```json
 {
-  "config_version": 2,
+  "config_version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
@@ -171,10 +171,10 @@ EnvironmentFile 将用户名、密码和账号元数据以明文 `KEY=value` 写
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "files": [
         {
           "path": "/etc/sample-app/database.env",
@@ -183,7 +183,7 @@ EnvironmentFile 将用户名、密码和账号元数据以明文 `KEY=value` 写
         }
       ]
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     }
@@ -204,14 +204,16 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ## 4. 更新业务配置与 A/B 轮换
 
-将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本；所有相关业务验证成功，且配置 `application_check.confirm_on_success: true`，才自动确认轮换成功。
+将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本；所有相关业务验证成功，且配置 `app_check.confirm_on_success: true`，才自动确认轮换成功。
+
+业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
 
 | 配置与运行 | 更新业务配置与 A/B 轮换 |
 | --- | --- |
 | `credential_check` | 可选：修改文件前，用新账号验证目标连接。 |
-| `config_update` | 通过字段映射、模板或脚本更新业务文件。 |
-| `service_action` | 对固定服务执行 reload/restart，或运行固定脚本。 |
-| `application_check` | 验证运行中的业务已使用新连接，再确认生效。 |
+| `update_config` | 通过字段映射、模板或脚本更新业务文件。 |
+| `reload_service` | 对固定服务执行 reload/restart，或运行固定脚本。 |
+| `app_check` | 验证运行中的业务已使用新连接，再确认生效。 |
 
 `services`:
 
@@ -223,24 +225,22 @@ EnvironmentFile=/etc/sample-app/database.env
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>",
-        "alias": "database",
-        "username": "db_app_a"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "file": "/etc/sample-app/config.yml",
       "format": "yaml",
       "fields_map": {
-        "DB_USER": "database.username",
-        "DB_PASSWORD": "database.secret"
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
       }
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     },
-    "application_check": {
+    "app_check": {
       "path": "/usr/local/libexec/jms-pam/check-running-db",
       "confirm_on_success": true
     }
@@ -248,7 +248,7 @@ EnvironmentFile=/etc/sample-app/database.env
 ]
 ```
 
-单账号可直接映射 `username` / `secret`；多账号必须使用唯一 alias，以 `database.username`、`cache.secret` 等限定字段来源。alias 在 A/B 切换后保持不变。账号声明中的可选 `username` 只供阅读，真实值始终取自 Core。所需账号全部就绪后再修改文件，业务动作只执行一次；缺少账号或映射有歧义时，在写入前报错。
+`services.accounts` 用 `id` 指定账号。单账号可直接映射 `username` / `secret`；多账号必须使用唯一 alias，以 `database.username`、`cache.secret` 等限定字段来源。alias 在 A/B 切换后保持不变。账号声明中的可选 `username` 只供阅读，真实值始终取自 Core。所需账号全部就绪后再修改文件，业务动作只执行一次；缺少账号或映射有歧义时，在写入前报错。
 
 ```json
 {
@@ -257,15 +257,15 @@ EnvironmentFile=/etc/sample-app/database.env
   "update_on_notification": true,
   "accounts": [
     {
-      "account_id": "<primary-account-id>",
+      "id": "<primary-account-id>",
       "alias": "database"
     },
     {
-      "account_id": "<cache-account-id>",
+      "id": "<cache-account-id>",
       "alias": "cache"
     }
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {
@@ -275,11 +275,11 @@ EnvironmentFile=/etc/sample-app/database.env
       "CACHE_PASSWORD": "cache.secret"
     }
   },
-  "service_action": {
+  "reload_service": {
     "unit": "sample-app.service",
     "operation": "restart"
   },
-  "application_check": {
+  "app_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
   }
@@ -288,9 +288,9 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ### 配置文件格式
 
-`config_update.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
+`update_config.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
 
-新配置使用 `config_version: 2`，需要配套更新 Core 与 Agent。已有版本 1 或未标版本的 `delivery` / `rules` 配置保留旧行为，两套结构不能混用。先更新二进制再使用新字段。Core 不能新增本机脚本路径；修改私有配置后重启 Agent。
+Core 与 Agent 的协议版本和 `config_version` 统一为 1。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。Core 只同步账号范围和版本元数据，不下发本机脚本路径；修改私有配置后重启 Agent。
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -319,7 +319,7 @@ curl --fail --silent --show-error \
 
 ### 确认业务生效
 
-业务验证真实连接、完成切换后再确认事件。可选择 `application_check` 验证成功后通过 `confirm_on_success: true` 自动确认，或由业务在验证后显式确认；同步执行的检查脚本不要反向调用确认接口。本地结果先持久化，`confirmed` 表示 Core 已接受，`pending` 表示稍后重试。
+业务验证真实连接、完成切换后再确认事件。可选择 `app_check` 验证成功后通过 `confirm_on_success: true` 自动确认，或由业务在验证后显式确认；同步执行的检查脚本不要反向调用确认接口。本地结果先持久化，`confirmed` 表示 Core 已接受，`pending` 表示稍后重试。
 
 ```bash
 jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -455,7 +455,7 @@ watch_events 等待停止；start_events 返回不代表初始同步完成，依
 
 ### 最新凭据与后端不可用
 
-SDK 取密先请求 API，成功后替换保留值，不允许旧版本覆盖新版本。仅超时、网络错误或 HTTP 5xx 可回退到相同选择条件下已获取的值，并标记本地来源；保留值不按时间过期。SDK 使用客户端私有内存，clone 和重启从空状态开始。HTTP 401/403/404 或 credential_not_found（HTTP 400）清空保留凭据并报错；HTTP 426、成功响应格式错误均不使用回退，可选元数据接口缺失不会清空凭据。Agent v2 在受保护的状态中保留 store/services 声明的账号，未声明的按需查询不会自动持久化。明确撤销在 HTTP 刷新前生效，离线也不例外；push 快照不代表已存储账号的完整授权范围，成功对账会核对当前应用授权。
+SDK 取密先请求 API，成功后替换保留值，不允许旧版本覆盖新版本。仅超时、网络错误或 HTTP 5xx 可回退到相同选择条件下已获取的值，并标记本地来源；保留值不按时间过期。SDK 使用客户端私有内存，clone 和重启从空状态开始。HTTP 401/403/404 或 credential_not_found（HTTP 400）清空保留凭据并报错；HTTP 426、成功响应格式错误均不使用回退，可选元数据接口缺失不会清空凭据。Agent 在受保护的状态中保留 store/services 声明的账号，未声明的按需查询不会自动持久化。明确撤销在 HTTP 刷新前生效，离线也不例外；push 快照不代表已存储账号的完整授权范围，成功对账会核对当前应用授权。
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

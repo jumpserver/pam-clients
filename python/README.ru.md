@@ -18,7 +18,7 @@ Python 3.9+ предоставляет SDK политик учётных дан�
 
 ### Linux / systemd
 
-Новый формат использует `config_version: 2` и требует обновления Core и Agent. Версия 1 и конфигурации `delivery` / `rules` без версии сохраняют прежнее поведение. Не смешивайте форматы; сначала обновите бинарные файлы. Core не может добавлять локальные исполняемые пути. После изменения частной конфигурации перезапустите Agent.
+Core и Agent используют протокол 1 и `config_version: 1`. Настраивайте `store` и `services` независимо, не смешивая со старой структурой `delivery` / `rules`. Core передаёт область доступа и версии, но не локальные исполняемые пути. После изменения частной конфигурации перезапустите Agent.
 
 Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
@@ -63,7 +63,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ```json
 {
-  "config_version": 2,
+  "config_version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
@@ -111,10 +111,10 @@ EnvironmentFile сохраняет имя, пароль и метаданные 
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "files": [
         {
           "path": "/etc/sample-app/database.env",
@@ -123,7 +123,7 @@ EnvironmentFile сохраняет имя, пароль и метаданные 
         }
       ]
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     }
@@ -144,14 +144,16 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ## 4. Обновление конфигурации и ротация A/B
 
-Добавьте объекты ниже в `services`, задав уникальный стабильный `name`. `allow_account_switch` задаётся на уровне сервиса, по умолчанию false: true следует активной записи однозначной пары A/B; остальные записи фиксированы. Достаточно объявить A. `update_on_notification` также относится к сервису, по умолчанию true. False откладывает действия до плановой сверки, по умолчанию через 300 секунд; хранение и отзыв прав продолжают работать. Каждый сервис хранит свои версии. Ротация подтверждается только после проверки всех связанных сервисов с `application_check.confirm_on_success: true`.
+Добавьте объекты ниже в `services`, задав уникальный стабильный `name`. `allow_account_switch` задаётся на уровне сервиса, по умолчанию false: true следует активной записи однозначной пары A/B; остальные записи фиксированы. Достаточно объявить A. `update_on_notification` также относится к сервису, по умолчанию true. False откладывает действия до плановой сверки, по умолчанию через 300 секунд; хранение и отзыв прав продолжают работать. Каждый сервис хранит свои версии. Ротация подтверждается только после проверки всех связанных сервисов с `app_check.confirm_on_success: true`.
+
+Настройки используют `update_config` → `reload_service` → `app_check`: обновить файл, перезагрузить/перезапустить службу (или выполнить фиксированный скрипт), затем проверить работающее приложение. Требуется обновлённый Agent. Для этих трёх этапов `services` принимает только новые имена; старые имена вызывают ошибку.
 
 | Настройка и запуск | Обновление конфигурации и ротация A/B |
 | --- | --- |
 | `credential_check` | Необязательно: проверьте новый вход до изменения файлов. |
-| `config_update` | Обновите файл через поля, шаблон или скрипт. |
-| `service_action` | Выполните reload/restart фиксированной службы или фиксированный скрипт. |
-| `application_check` | Проверьте реальное соединение работающего приложения и подтвердите. |
+| `update_config` | Обновите файл через поля, шаблон или скрипт. |
+| `reload_service` | Выполните reload/restart фиксированной службы или фиксированный скрипт. |
+| `app_check` | Проверьте реальное соединение работающего приложения и подтвердите. |
 
 `services`:
 
@@ -163,24 +165,22 @@ EnvironmentFile=/etc/sample-app/database.env
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>",
-        "alias": "database",
-        "username": "db_app_a"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "file": "/etc/sample-app/config.yml",
       "format": "yaml",
       "fields_map": {
-        "DB_USER": "database.username",
-        "DB_PASSWORD": "database.secret"
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
       }
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     },
-    "application_check": {
+    "app_check": {
       "path": "/usr/local/libexec/jms-pam/check-running-db",
       "confirm_on_success": true
     }
@@ -188,7 +188,7 @@ EnvironmentFile=/etc/sample-app/database.env
 ]
 ```
 
-Для одной записи допустимы `username` / `secret`. Для нескольких нужны уникальные alias и ссылки вида `database.username`, `cache.secret`. Alias не меняется при переключении A/B. Необязательный `username` — подсказка; реальные значения поступают из Core. Все записи должны быть готовы до изменения файла, затем действие сервиса выполняется один раз. Неоднозначное сопоставление вызывает ошибку до записи.
+В `services.accounts` укажите запись через `id`. Для одной записи допустимы `username` / `secret`. Для нескольких нужны уникальные alias и ссылки вида `database.username`, `cache.secret`. Alias не меняется при переключении A/B. Необязательный `username` — подсказка; реальные значения поступают из Core. Все записи должны быть готовы до изменения файла, затем действие сервиса выполняется один раз. Неоднозначное сопоставление вызывает ошибку до записи.
 
 ```json
 {
@@ -197,15 +197,15 @@ EnvironmentFile=/etc/sample-app/database.env
   "update_on_notification": true,
   "accounts": [
     {
-      "account_id": "<primary-account-id>",
+      "id": "<primary-account-id>",
       "alias": "database"
     },
     {
-      "account_id": "<cache-account-id>",
+      "id": "<cache-account-id>",
       "alias": "cache"
     }
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {
@@ -215,11 +215,11 @@ EnvironmentFile=/etc/sample-app/database.env
       "CACHE_PASSWORD": "cache.secret"
     }
   },
-  "service_action": {
+  "reload_service": {
     "unit": "sample-app.service",
     "operation": "restart"
   },
-  "application_check": {
+  "app_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
   }
@@ -228,9 +228,9 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ### Формат конфигурации
 
-`config_update.format` по умолчанию равен `auto`, в том числе при отсутствии поля. Расширения `.txt`, `.env`, `.properties` используют `env` (`KEY=value`), а `.yml`, `.yaml` — `yaml` (`KEY: value` верхнего уровня, новые значения записываются как строки в кавычках). Для других расширений задайте `env` или `yaml`. Каждое поле должно уже существовать ровно один раз; остальные настройки сохраняются. Для секций INI и вложенного YAML используйте `files` + `template_file` для генерации всего файла либо `script`. После обновления файла переменных приложение должно перечитать его или перезапуститься.
+`update_config.format` по умолчанию равен `auto`, в том числе при отсутствии поля. Расширения `.txt`, `.env`, `.properties` используют `env` (`KEY=value`), а `.yml`, `.yaml` — `yaml` (`KEY: value` верхнего уровня, новые значения записываются как строки в кавычках). Для других расширений задайте `env` или `yaml`. Каждое поле должно уже существовать ровно один раз; остальные настройки сохраняются. Для секций INI и вложенного YAML используйте `files` + `template_file` для генерации всего файла либо `script`. После обновления файла переменных приложение должно перечитать его или перезапуститься.
 
-Новый формат использует `config_version: 2` и требует обновления Core и Agent. Версия 1 и конфигурации `delivery` / `rules` без версии сохраняют прежнее поведение. Не смешивайте форматы; сначала обновите бинарные файлы. Core не может добавлять локальные исполняемые пути. После изменения частной конфигурации перезапустите Agent.
+Core и Agent используют протокол 1 и `config_version: 1`. Настраивайте `store` и `services` независимо, не смешивая со старой структурой `delivery` / `rules`. Core передаёт область доступа и версии, но не локальные исполняемые пути. После изменения частной конфигурации перезапустите Agent.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -259,7 +259,7 @@ curl --fail --silent --show-error \
 
 ### Подтверждение применения
 
-Подтверждайте после проверки и переключения реального соединения. Используйте `application_check` с `confirm_on_success: true` или явное подтверждение. Не вызывайте API подтверждения из синхронной проверки. Результат сохраняется: `confirmed` принят Core, `pending` повторяется.
+Подтверждайте после проверки и переключения реального соединения. Используйте `app_check` с `confirm_on_success: true` или явное подтверждение. Не вызывайте API подтверждения из синхронной проверки. Результат сохраняется: `confirmed` принят Core, `pending` повторяется.
 
 ```bash
 jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -395,7 +395,7 @@ watch_events ждёт остановки; start_events не гарантируе
 
 ### Последние учётные данные и недоступность сервера
 
-SDK сначала обращается к API и обновляет сохранённое значение без отката версии. Только тайм-аут, сетевая ошибка или HTTP 5xx допускают прежнее значение того же селектора с отметкой локального источника и без временного срока. Клоны и перезапуски SDK начинают с пустого кэша. HTTP 401/403/404 или credential_not_found (400) удаляют значения; 426 и неверные успешные ответы завершаются ошибкой без кэша. Отсутствие необязательного API метаданных кэш не очищает. Agent v2 сохраняет записи, объявленные в store/services; необъявленный разовый запрос автоматически не сохраняется. Явный отзыв применяется до HTTP-обновления даже офлайн. Push-снимки не определяют все права хранения; успешная сверка проверяет текущие права приложения.
+SDK сначала обращается к API и обновляет сохранённое значение без отката версии. Только тайм-аут, сетевая ошибка или HTTP 5xx допускают прежнее значение того же селектора с отметкой локального источника и без временного срока. Клоны и перезапуски SDK начинают с пустого кэша. HTTP 401/403/404 или credential_not_found (400) удаляют значения; 426 и неверные успешные ответы завершаются ошибкой без кэша. Отсутствие необязательного API метаданных кэш не очищает. Agent сохраняет записи, объявленные в store/services; необъявленный разовый запрос автоматически не сохраняется. Явный отзыв применяется до HTTP-обновления даже офлайн. Push-снимки не определяют все права хранения; успешная сверка проверяет текущие права приложения.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

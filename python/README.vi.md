@@ -18,7 +18,7 @@ Chạy Go Agent độc lập trên máy ứng dụng, không cần Python. Thự
 
 ### Linux / systemd
 
-Cấu hình mới dùng `config_version: 2`, cần cập nhật Core và Agent tương ứng. Phiên bản 1 hoặc cấu hình `delivery` / `rules` không ghi phiên bản giữ hành vi cũ. Không trộn hai cấu trúc; cập nhật chương trình trước. Core không thể thêm đường dẫn thực thi cục bộ. Khởi động lại Agent sau khi sửa cấu hình riêng.
+Core và Agent dùng giao thức 1 và `config_version: 1`. Cấu hình `store` và `services` độc lập, không trộn với cấu trúc cũ `delivery` / `rules`. Core đồng bộ phạm vi tài khoản và phiên bản, không gửi đường dẫn thực thi cục bộ. Khởi động lại Agent sau khi sửa cấu hình riêng.
 
 Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
@@ -63,7 +63,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ```json
 {
-  "config_version": 2,
+  "config_version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
@@ -111,10 +111,10 @@ EnvironmentFile ghi tên người dùng, mật khẩu và siêu dữ liệu dạ
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "files": [
         {
           "path": "/etc/sample-app/database.env",
@@ -123,7 +123,7 @@ EnvironmentFile ghi tên người dùng, mật khẩu và siêu dữ liệu dạ
         }
       ]
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     }
@@ -144,14 +144,16 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ## 4. Cập nhật cấu hình và luân chuyển A/B
 
-Thêm các đối tượng dưới đây vào `services` với `name` duy nhất, ổn định. `allow_account_switch` ở cấp dịch vụ mặc định false: true theo tài khoản hiện hành của liên kết A/B rõ ràng; tài khoản khác giữ cố định. Chỉ cần khai báo A. `update_on_notification` cũng ở cấp dịch vụ, mặc định true. False đợi lần đối soát định kỳ tiếp theo, mặc định 300 giây; lưu trữ và thu hồi quyền vẫn hoạt động. Mỗi dịch vụ lưu phiên bản riêng. Chỉ tự xác nhận luân chuyển khi tất cả dịch vụ liên quan kiểm tra thành công với `application_check.confirm_on_success: true`.
+Thêm các đối tượng dưới đây vào `services` với `name` duy nhất, ổn định. `allow_account_switch` ở cấp dịch vụ mặc định false: true theo tài khoản hiện hành của liên kết A/B rõ ràng; tài khoản khác giữ cố định. Chỉ cần khai báo A. `update_on_notification` cũng ở cấp dịch vụ, mặc định true. False đợi lần đối soát định kỳ tiếp theo, mặc định 300 giây; lưu trữ và thu hồi quyền vẫn hoạt động. Mỗi dịch vụ lưu phiên bản riêng. Chỉ tự xác nhận luân chuyển khi tất cả dịch vụ liên quan kiểm tra thành công với `app_check.confirm_on_success: true`.
+
+Cấu hình dùng `update_config` → `reload_service` → `app_check`: cập nhật tệp, reload/restart dịch vụ (hoặc chạy script cố định), rồi kiểm tra ứng dụng đang chạy. Cần Agent đã cập nhật. Ba bước này trong `services` chỉ chấp nhận tên mới; tên cũ bị từ chối.
 
 | Cấu hình và chạy | Cập nhật cấu hình và luân chuyển A/B |
 | --- | --- |
 | `credential_check` | Tùy chọn: kiểm tra đăng nhập mới trước khi sửa tệp. |
-| `config_update` | Cập nhật tệp bằng ánh xạ trường, mẫu hoặc script. |
-| `service_action` | Reload/restart dịch vụ cố định hoặc chạy script cố định. |
-| `application_check` | Kiểm tra kết nối ứng dụng đang chạy rồi mới xác nhận. |
+| `update_config` | Cập nhật tệp bằng ánh xạ trường, mẫu hoặc script. |
+| `reload_service` | Reload/restart dịch vụ cố định hoặc chạy script cố định. |
+| `app_check` | Kiểm tra kết nối ứng dụng đang chạy rồi mới xác nhận. |
 
 `services`:
 
@@ -163,24 +165,22 @@ Thêm các đối tượng dưới đây vào `services` với `name` duy nhất
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>",
-        "alias": "database",
-        "username": "db_app_a"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "file": "/etc/sample-app/config.yml",
       "format": "yaml",
       "fields_map": {
-        "DB_USER": "database.username",
-        "DB_PASSWORD": "database.secret"
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
       }
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     },
-    "application_check": {
+    "app_check": {
       "path": "/usr/local/libexec/jms-pam/check-running-db",
       "confirm_on_success": true
     }
@@ -188,7 +188,7 @@ Thêm các đối tượng dưới đây vào `services` với `name` duy nhất
 ]
 ```
 
-Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều tài khoản cần alias duy nhất và tham chiếu như `database.username`, `cache.secret`. Alias không đổi khi chuyển A/B. `username` tùy chọn chỉ để đọc; giá trị thật lấy từ Core. Phải có đủ tài khoản trước khi ghi tệp, sau đó thực hiện hành động dịch vụ một lần. Ánh xạ thiếu hoặc mơ hồ phải báo lỗi trước khi sửa.
+Trong `services.accounts`, dùng `id` để chọn tài khoản. Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều tài khoản cần alias duy nhất và tham chiếu như `database.username`, `cache.secret`. Alias không đổi khi chuyển A/B. `username` tùy chọn chỉ để đọc; giá trị thật lấy từ Core. Phải có đủ tài khoản trước khi ghi tệp, sau đó thực hiện hành động dịch vụ một lần. Ánh xạ thiếu hoặc mơ hồ phải báo lỗi trước khi sửa.
 
 ```json
 {
@@ -197,15 +197,15 @@ Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều 
   "update_on_notification": true,
   "accounts": [
     {
-      "account_id": "<primary-account-id>",
+      "id": "<primary-account-id>",
       "alias": "database"
     },
     {
-      "account_id": "<cache-account-id>",
+      "id": "<cache-account-id>",
       "alias": "cache"
     }
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {
@@ -215,11 +215,11 @@ Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều 
       "CACHE_PASSWORD": "cache.secret"
     }
   },
-  "service_action": {
+  "reload_service": {
     "unit": "sample-app.service",
     "operation": "restart"
   },
-  "application_check": {
+  "app_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
   }
@@ -228,9 +228,9 @@ Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều 
 
 ### Định dạng cấu hình
 
-`config_update.format` mặc định là `auto`, kể cả khi bỏ qua trường này. Các đuôi `.txt`, `.env`, `.properties` dùng `env` (`KEY=value`); `.yml`, `.yaml` dùng `yaml` (`KEY: value` cấp cao nhất, giá trị mới ghi dưới dạng chuỗi có dấu ngoặc kép). Với đuôi khác, chỉ định `env` hoặc `yaml`. Mỗi trường ánh xạ phải tồn tại đúng một lần; các thiết lập khác được giữ nguyên. Với section INI hoặc YAML lồng nhau, dùng `files` + `template_file` để tạo toàn bộ tệp, hoặc `script`. Sau khi cập nhật tệp biến môi trường, ứng dụng phải đọc lại tệp hoặc khởi động lại.
+`update_config.format` mặc định là `auto`, kể cả khi bỏ qua trường này. Các đuôi `.txt`, `.env`, `.properties` dùng `env` (`KEY=value`); `.yml`, `.yaml` dùng `yaml` (`KEY: value` cấp cao nhất, giá trị mới ghi dưới dạng chuỗi có dấu ngoặc kép). Với đuôi khác, chỉ định `env` hoặc `yaml`. Mỗi trường ánh xạ phải tồn tại đúng một lần; các thiết lập khác được giữ nguyên. Với section INI hoặc YAML lồng nhau, dùng `files` + `template_file` để tạo toàn bộ tệp, hoặc `script`. Sau khi cập nhật tệp biến môi trường, ứng dụng phải đọc lại tệp hoặc khởi động lại.
 
-Cấu hình mới dùng `config_version: 2`, cần cập nhật Core và Agent tương ứng. Phiên bản 1 hoặc cấu hình `delivery` / `rules` không ghi phiên bản giữ hành vi cũ. Không trộn hai cấu trúc; cập nhật chương trình trước. Core không thể thêm đường dẫn thực thi cục bộ. Khởi động lại Agent sau khi sửa cấu hình riêng.
+Core và Agent dùng giao thức 1 và `config_version: 1`. Cấu hình `store` và `services` độc lập, không trộn với cấu trúc cũ `delivery` / `rules`. Core đồng bộ phạm vi tài khoản và phiên bản, không gửi đường dẫn thực thi cục bộ. Khởi động lại Agent sau khi sửa cấu hình riêng.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -259,7 +259,7 @@ curl --fail --silent --show-error \
 
 ### Xác nhận ứng dụng đã áp dụng
 
-Chỉ xác nhận sau khi kiểm tra và đổi kết nối thực. Dùng `application_check` với `confirm_on_success: true` hoặc xác nhận tường minh. Không gọi API xác nhận từ script kiểm tra đồng bộ. Kết quả lưu trước: `confirmed` đã được Core chấp nhận, `pending` sẽ thử lại.
+Chỉ xác nhận sau khi kiểm tra và đổi kết nối thực. Dùng `app_check` với `confirm_on_success: true` hoặc xác nhận tường minh. Không gọi API xác nhận từ script kiểm tra đồng bộ. Kết quả lưu trước: `confirmed` đã được Core chấp nhận, `pending` sẽ thử lại.
 
 ```bash
 jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -395,7 +395,7 @@ watch_events chờ dừng; start_events không đảm bảo đồng bộ ban đ�
 
 ### Thông tin xác thực mới nhất và lỗi máy chủ
 
-SDK gọi API trước và cập nhật giá trị giữ lại, không quay về phiên bản cũ. Chỉ timeout, lỗi mạng hoặc HTTP 5xx mới cho phép dùng giá trị đã lấy cho cùng bộ chọn, đánh dấu nguồn cục bộ và không hết hạn theo thời gian. Clone và khởi động lại SDK bắt đầu với bộ nhớ rỗng. HTTP 401/403/404 hoặc credential_not_found (400) xóa giá trị; 426 và phản hồi thành công sai định dạng không dùng dự phòng. API siêu dữ liệu tùy chọn bị thiếu không xóa bộ nhớ. Agent v2 lưu tài khoản khai báo trong store/services; truy vấn tức thời chưa khai báo không tự lưu bền. Thu hồi rõ ràng có hiệu lực trước khi làm mới HTTP, cả khi ngoại tuyến. Snapshot push không xác định toàn bộ quyền lưu trữ; đối soát thành công kiểm tra quyền ứng dụng hiện tại.
+SDK gọi API trước và cập nhật giá trị giữ lại, không quay về phiên bản cũ. Chỉ timeout, lỗi mạng hoặc HTTP 5xx mới cho phép dùng giá trị đã lấy cho cùng bộ chọn, đánh dấu nguồn cục bộ và không hết hạn theo thời gian. Clone và khởi động lại SDK bắt đầu với bộ nhớ rỗng. HTTP 401/403/404 hoặc credential_not_found (400) xóa giá trị; 426 và phản hồi thành công sai định dạng không dùng dự phòng. API siêu dữ liệu tùy chọn bị thiếu không xóa bộ nhớ. Agent lưu tài khoản khai báo trong store/services; truy vấn tức thời chưa khai báo không tự lưu bền. Thu hồi rõ ràng có hiệu lực trước khi làm mới HTTP, cả khi ngoại tuyến. Snapshot push không xác định toàn bộ quyền lưu trữ; đối soát thành công kiểm tra quyền ứng dụng hiện tại.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

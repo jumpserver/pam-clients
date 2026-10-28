@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -29,11 +30,81 @@ type LocalAPIConfiguration struct {
 var accountIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var serviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-func (c Config) modern() bool {
-	return c.ConfigVersion == 2 || c.Store != nil || c.Services != nil || c.LocalAPI != nil
+var serviceFields = [][2]string{
+	{"config_update", "update_config"},
+	{"service_action", "reload_service"},
+	{"application_check", "app_check"},
 }
 
-// Keep delivery/rules as the v1 implementation detail, never as v2 wire fields.
+// Translate only the services wire format. Rule's internal names also form the
+// persisted configuration fingerprints; keeping them stable avoids replaying
+// completed service actions when an existing configuration adopts the new keys.
+func translateServiceFields(raw json.RawMessage, export bool) (json.RawMessage, error) {
+	var services []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &services); err != nil {
+		return nil, errors.New("services must be an array of service objects")
+	}
+	for index, service := range services {
+		if rawAccounts, exists := service["accounts"]; exists {
+			var accounts []map[string]json.RawMessage
+			if err := json.Unmarshal(rawAccounts, &accounts); err != nil {
+				return nil, fmt.Errorf("services[%d].accounts must be an array of account objects", index)
+			}
+			from, to := "id", "account_id"
+			if export {
+				from, to = to, from
+			}
+			for _, account := range accounts {
+				if !export {
+					for field := range account {
+						if strings.EqualFold(field, "account_id") {
+							return nil, fmt.Errorf("services[%d].accounts uses id, not account_id", index)
+						}
+					}
+				}
+				if value, exists := account[from]; exists {
+					account[to] = value
+					delete(account, from)
+				}
+			}
+			service["accounts"], _ = json.Marshal(accounts)
+		}
+		for _, names := range serviceFields {
+			old, current := names[0], names[1]
+			for field := range service {
+				if field != old && field != current && (strings.EqualFold(field, old) || strings.EqualFold(field, current)) {
+					return nil, fmt.Errorf("services[%d] field must be named %s", index, current)
+				}
+			}
+			_, hasOld := service[old]
+			if !export && hasOld {
+				return nil, fmt.Errorf("services[%d].%s is not supported; use %s", index, old, current)
+			}
+			from, to := current, old
+			if export {
+				from, to = old, current
+			}
+			if value, exists := service[from]; exists {
+				service[to] = value
+				delete(service, from)
+			}
+		}
+	}
+	return json.Marshal(services)
+}
+
+func currentServiceFieldNames(message string) string {
+	for _, names := range serviceFields {
+		message = strings.ReplaceAll(message, names[0], names[1])
+	}
+	return strings.ReplaceAll(message, "services.accounts.account_id", "services.accounts.id")
+}
+
+func (c Config) modern() bool {
+	return c.Store != nil || c.Services != nil || c.LocalAPI != nil
+}
+
+// Storage and service consumption use the same v1 format as the client protocol.
 func (c Config) MarshalJSON() ([]byte, error) {
 	type plain Config
 	if !c.modern() {
@@ -49,7 +120,16 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 	delete(object, "delivery")
 	delete(object, "rules")
-	object["config_version"] = json.RawMessage("2")
+	if c.Services != nil && len(c.Services) == 0 {
+		object["services"] = json.RawMessage("[]")
+	}
+	if services, exists := object["services"]; exists {
+		object["services"], err = translateServiceFields(services, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	object["config_version"] = json.RawMessage("1")
 	return json.Marshal(object)
 }
 
@@ -57,7 +137,7 @@ func (c Config) normalized() Config {
 	if !c.modern() {
 		return c
 	}
-	c.ConfigVersion = 2
+	c.ConfigVersion = 1
 	api := LocalAPIConfiguration{}
 	if c.LocalAPI != nil {
 		api = *c.LocalAPI
@@ -90,8 +170,8 @@ func (c Config) normalized() Config {
 }
 
 func (c Config) validateServices() error {
-	if c.ConfigVersion != 0 && c.ConfigVersion != 1 && c.ConfigVersion != 2 {
-		return unsupportedVersion("configuration", "config_version", c.ConfigVersion, 2)
+	if c.ConfigVersion != 0 && c.ConfigVersion != 1 {
+		return unsupportedVersion("configuration", "config_version", c.ConfigVersion, CurrentConfigVersion)
 	}
 	if len(c.Rules) > 0 {
 		return errors.New("services cannot be combined with legacy rules")

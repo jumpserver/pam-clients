@@ -34,7 +34,7 @@ func (f *servicesRemote) SyncAgent(_ context.Context, options pam.AgentSyncOptio
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastScope = options.DeliveryScope
-	result := pam.AgentSync{ConfigSchemaVersion: 2, ConfigDigest: "services", Scope: pam.AgentScope{Keys: []string{}, ConfirmationKeys: []string{}}}
+	result := pam.AgentSync{ConfigSchemaVersion: 1, ServerCapabilities: []string{"agent_store_services"}, ConfigDigest: "services", Scope: pam.AgentScope{Keys: []string{}, ConfirmationKeys: []string{}}}
 	if f.fault != nil {
 		return result, f.fault
 	}
@@ -82,7 +82,7 @@ func (f *servicesRemote) GetCredentialFresh(_ context.Context, selector pam.Cred
 func servicesFixture(t *testing.T) (Config, *servicesRemote) {
 	t.Helper()
 	base, _, _ := fixture(t)
-	config := Config{ConfigVersion: 2, Endpoint: base.Endpoint, AppID: base.AppID, AppSecret: base.AppSecret, InstanceID: base.InstanceID, StateFile: base.StateFile, PullIntervalSeconds: 300, LocalAPI: &LocalAPIConfiguration{Socket: base.Delivery.Socket, Owner: base.Delivery.User}, Store: &StoreConfiguration{Root: base.Delivery.Root, Owner: base.Delivery.User, Accounts: []string{"all"}}}
+	config := Config{ConfigVersion: 1, Endpoint: base.Endpoint, AppID: base.AppID, AppSecret: base.AppSecret, InstanceID: base.InstanceID, StateFile: base.StateFile, PullIntervalSeconds: 300, LocalAPI: &LocalAPIConfiguration{Socket: base.Delivery.Socket, Owner: base.Delivery.User}, Store: &StoreConfiguration{Root: base.Delivery.Root, Owner: base.Delivery.User, Accounts: []string{"all"}}}
 	remote := &servicesRemote{active: testA, rotation: 1, values: map[string]pam.Credential{}}
 	for _, id := range []string{testA, testB, testC} {
 		remote.values[id] = pam.Credential{Key: "account:" + id, Revision: 1, Account: pam.Account{ID: id, Revision: 1, Username: "user-" + id[len(id)-1:], Secret: "secret-" + id[len(id)-1:]}}
@@ -103,11 +103,11 @@ func TestServicesConfigurationAndExplicitAccountScope(t *testing.T) {
 	}
 	raw, err := json.Marshal(config.normalized())
 	if err != nil || strings.Contains(string(raw), `"delivery"`) || strings.Contains(string(raw), `"rules"`) {
-		t.Fatal("v2 export contains legacy configuration", err)
+		t.Fatal("service export contains legacy configuration", err)
 	}
 	loaded, err := decodeConfig(raw)
-	if err != nil || loaded.ConfigVersion != 2 || loaded.Services[0].Name != "db" {
-		t.Fatal("v2 configuration did not round trip", err)
+	if err != nil || loaded.ConfigVersion != 1 || loaded.Services[0].Name != "db" {
+		t.Fatal("service configuration did not round trip", err)
 	}
 	for _, accounts := range [][]string{nil, {"all", testA}, {testA, testA}, {"invalid"}} {
 		config.Store.Accounts = accounts
@@ -170,6 +170,17 @@ func TestServicesShareFetchButTrackNotificationAndRotationSeparately(t *testing.
 	config.Services = []Rule{
 		{Name: "immediate", AllowAccountSwitch: true, Accounts: []AccountSelector{{AccountID: testA, Alias: "database", Username: "DISPLAY_ONLY"}, {AccountID: testC, Alias: "cache"}}, ConfigUpdate: &ConfigUpdate{File: path, Format: "yaml", FieldsMap: map[string]string{"DB_USER": "database.username", "DB_PASSWORD": "database.secret", "CACHE_PASSWORD": "cache.secret"}}, ApplicationCheck: check},
 		{Name: "deferred", AllowAccountSwitch: true, UpdateOnNotification: &no, Accounts: []AccountSelector{{AccountID: testA}}, ConfigUpdate: &ConfigUpdate{Files: []File{{Path: deferredPath, Format: "json"}}}, ApplicationCheck: check},
+	}
+	config.Services[0].ServiceAction = &Action{Path: "/usr/bin/true"}
+	// Exercise all three renamed JSON blocks through the real update and
+	// rotation-confirmation lifecycle, including restart deduplication below.
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err = decodeConfig(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
 	a, err := New(config, remote)
 	if err != nil {

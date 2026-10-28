@@ -18,16 +18,18 @@
       "name": "sample-app",
       "accounts": [
         {
-          "account_id": "<primary-account-id>",
           "username": "db_app_a",
-          "alias": "database"
+          "alias": "database",
+          "id": "<primary-account-id>"
         },
         {
-          "account_id": "<cache-account-id>",
-          "alias": "cache"
+          "alias": "cache",
+          "id": "<cache-account-id>"
         }
       ],
-      "config_update": {
+      "allow_account_switch": true,
+      "update_on_notification": true,
+      "update_config": {
         "file": "/etc/sample-app/config.yml",
         "format": "yaml",
         "fields_map": {
@@ -37,26 +39,25 @@
           "CACHE_PASSWORD": "cache.secret"
         }
       },
-      "service_action": {
+      "reload_service": {
         "unit": "sample-app.service",
         "operation": "restart"
       },
-      "application_check": {
+      "app_check": {
         "path": "/usr/local/libexec/check-sample-app",
         "confirm_on_success": true
-      },
-      "allow_account_switch": true,
-      "update_on_notification": true
+      }
     },
     {
       "name": "report-worker",
       "accounts": [
         {
-          "account_id": "<report-account-id>",
-          "username": "report_reader"
+          "username": "report_reader",
+          "id": "<report-account-id>"
         }
       ],
-      "config_update": {
+      "update_on_notification": false,
+      "update_config": {
         "files": [
           {
             "path": "/etc/report-worker/database.env",
@@ -64,11 +65,10 @@
             "owner": "appuser"
           }
         ]
-      },
-      "update_on_notification": false
+      }
     }
   ],
-  "config_version": 2,
+  "config_version": 1,
   "local_api": {
     "owner": "appuser"
   }

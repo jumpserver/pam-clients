@@ -1,6 +1,6 @@
 # PAM Agent store / services 配置
 
-新版 Core 与 Agent 使用 `config_version: 2`。完整样例见 [store-services.json](../examples/store-services.json)，接入说明由 [docs/build.py](../../docs/build.py) 统一生成。已有版本 1 或未标版本的 delivery / rules 配置继续兼容；不能混用新旧字段。
+Core 与 Agent 统一使用协议版本 1 和 `config_version: 1`。完整样例见 [store-services.json](../examples/store-services.json)，接入说明由 [docs/build.py](../../docs/build.py) 统一生成。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。
 
 迁移配置时核对旧 delivery 输出位置，按需调整业务读取路径；旧版输出文件不在新版 store 的文件记录中，不会自动删除。新版只清理自身记录的标准存储文件，不删除业务配置文件。
 
@@ -31,17 +31,21 @@ store 按实际 account_id 生成单独的 `.json` 或 `.env` 文件，A/B 账�
 
 启动及定时同步会处理所有有待更新的业务。连续通知不会重置定时同步的截止时间。相同账号可以用于多个业务，各业务独立记录已执行版本，避免即时业务反复执行或定时业务被错误跳过。
 
+## 业务执行步骤
+
+业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
+
 ## 多账号映射
 
-账号仍使用 account_id 识别，username 可选且只供阅读，不参与选择或渲染。多账号映射使用唯一 alias：
+`services.accounts` 用 `id` 指定账号，`username` 可选且只供阅读，不参与选择或渲染。多账号映射使用唯一 alias：
 
 ```json
 {
   "accounts": [
-    {"account_id": "<database-account-a>", "alias": "database"},
-    {"account_id": "<cache-account>", "alias": "cache"}
+    {"id": "<database-account-a>", "alias": "database"},
+    {"id": "<cache-account>", "alias": "cache"}
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {

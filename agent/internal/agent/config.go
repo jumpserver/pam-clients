@@ -235,8 +235,13 @@ func validKey(key string) bool {
 	return key != "" && key != "." && key != ".." && !strings.ContainsAny(key, "/\\\x00\r\n")
 }
 
-func (c Config) Validate() error {
+func (c Config) Validate() (err error) {
 	if c.modern() {
+		defer func() {
+			if err != nil {
+				err = errors.New(currentServiceFieldNames(err.Error()))
+			}
+		}()
 		if err := c.validateServices(); err != nil {
 			return err
 		}
@@ -512,24 +517,44 @@ func decodeConfig(raw []byte) (Config, error) {
 	if err != nil {
 		return config, err
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return config, formatJSONError("configuration", err)
+	}
+	for field := range fields {
+		if field != "services" && strings.EqualFold(field, "services") {
+			return config, errors.New("Agent configuration field must be named services")
+		}
+	}
+	_, hasServices := fields["services"]
+	if hasServices {
+		fields["services"], err = translateServiceFields(fields["services"], false)
+		if err != nil {
+			return config, err
+		}
+		raw, err = json.Marshal(fields)
+		if err != nil {
+			return config, formatJSONError("configuration", err)
+		}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
-		return config, formatJSONError("configuration", err)
+		diagnostic := formatJSONError("configuration", err)
+		if hasServices {
+			diagnostic = errors.New(currentServiceFieldNames(diagnostic.Error()))
+		}
+		return config, diagnostic
 	}
 	config.ConfigVersion = version
 	if config.modern() {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &fields); err != nil {
-			return config, formatJSONError("configuration", err)
-		}
 		if _, exists := fields["delivery"]; exists {
 			return config, errors.New("store/services configuration cannot contain legacy delivery")
 		}
 		if _, exists := fields["rules"]; exists {
 			return config, errors.New("store/services configuration cannot contain legacy rules")
 		}
-		config.ConfigVersion = 2
+		config.ConfigVersion = 1
 	}
 	return config, nil
 }

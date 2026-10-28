@@ -179,8 +179,8 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 	if err = validateScope(response.Scope); err != nil {
 		return a.failure(err, false)
 	}
-	if response.ConfigSchemaVersion != 2 {
-		return a.failure(errors.New("Core must support Agent store/services configuration version 2"), false)
+	if response.ConfigSchemaVersion != pam.ConfigSchemaVersion || !contains(response.ServerCapabilities, "agent_store_services") {
+		return a.failure(errors.New("Core does not support Agent store/services synchronization in v1"), false)
 	}
 	metadata := map[string]pam.CredentialRevision{}
 	for _, item := range response.Credentials {

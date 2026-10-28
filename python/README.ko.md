@@ -18,7 +18,7 @@ Python 3.9+는 자격 증명 정책 SDK를 제공합니다. Go jms-pam-agent는 
 
 ### Linux / systemd
 
-새 설정은 `config_version: 2`이며 해당 Core와 Agent 업데이트가 필요합니다. 버전 1 또는 버전 없는 `delivery` / `rules`는 기존 동작을 유지합니다. 두 형식을 혼합하지 말고 먼저 바이너리를 갱신합니다. Core는 로컬 실행 경로를 추가할 수 없습니다. 비공개 설정 변경 후 Agent를 재시작합니다.
+Core와 Agent의 프로토콜 버전 및 `config_version`은 1입니다. `store`와 `services`를 독립적으로 설정하고 기존 `delivery` / `rules` 구조와 혼합하지 마세요. Core는 계정 범위와 버전 메타데이터만 동기화하며 로컬 실행 경로를 전달하지 않습니다. 비공개 설정 변경 후 Agent를 재시작하세요.
 
 Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
@@ -63,7 +63,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ```json
 {
-  "config_version": 2,
+  "config_version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
@@ -111,10 +111,10 @@ EnvironmentFile은 사용자 이름, 암호 및 메타데이터를 평문 `KEY=v
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "files": [
         {
           "path": "/etc/sample-app/database.env",
@@ -123,7 +123,7 @@ EnvironmentFile은 사용자 이름, 암호 및 메타데이터를 평문 `KEY=v
         }
       ]
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     }
@@ -144,14 +144,16 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ## 4. 애플리케이션 설정 변경 및 A/B 순환
 
-아래 업무 객체를 `services`에 추가하고 고유하고 안정적인 `name`을 지정합니다. service의 `allow_account_switch`는 기본 false입니다. true이면 관련 A/B의 현재 계정을 따르고 관련 없는 계정은 고정합니다. A만 선언하면 됩니다. `update_on_notification`도 service에 두며 기본 true입니다. false이면 다음 정기 동기화(기본 300초)에 업무를 갱신합니다. 저장 및 권한 취소 처리는 계속됩니다. 업무별 버전을 기록하며 모든 관련 업무의 검증 성공과 `application_check.confirm_on_success: true`가 충족되어야 교체를 자동 확인합니다.
+아래 업무 객체를 `services`에 추가하고 고유하고 안정적인 `name`을 지정합니다. service의 `allow_account_switch`는 기본 false입니다. true이면 관련 A/B의 현재 계정을 따르고 관련 없는 계정은 고정합니다. A만 선언하면 됩니다. `update_on_notification`도 service에 두며 기본 true입니다. false이면 다음 정기 동기화(기본 300초)에 업무를 갱신합니다. 저장 및 권한 취소 처리는 계속됩니다. 업무별 버전을 기록하며 모든 관련 업무의 검증 성공과 `app_check.confirm_on_success: true`가 충족되어야 교체를 자동 확인합니다.
+
+설정은 `update_config` → `reload_service` → `app_check` 순으로 업무 설정을 갱신하고, 서비스를 reload/restart하거나 고정 스크립트를 실행한 뒤 실행 중인 애플리케이션을 검증합니다. 업데이트된 Agent가 필요합니다. `services`의 이 세 단계는 새 이름만 허용하며 기존 이름은 오류로 처리됩니다.
 
 | 설정 및 실행 | 애플리케이션 설정 변경 및 A/B 순환 |
 | --- | --- |
 | `credential_check` | 선택: 파일 변경 전에 새 계정 연결을 검증합니다. |
-| `config_update` | 필드 매핑, 템플릿 또는 스크립트로 업무 파일을 변경합니다. |
-| `service_action` | 고정 서비스 reload/restart 또는 고정 스크립트를 실행합니다. |
-| `application_check` | 실행 중인 업무 연결을 검증한 후 적용을 확인합니다. |
+| `update_config` | 필드 매핑, 템플릿 또는 스크립트로 업무 파일을 변경합니다. |
+| `reload_service` | 고정 서비스 reload/restart 또는 고정 스크립트를 실행합니다. |
+| `app_check` | 실행 중인 업무 연결을 검증한 후 적용을 확인합니다. |
 
 `services`:
 
@@ -163,24 +165,22 @@ EnvironmentFile=/etc/sample-app/database.env
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>",
-        "alias": "database",
-        "username": "db_app_a"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "file": "/etc/sample-app/config.yml",
       "format": "yaml",
       "fields_map": {
-        "DB_USER": "database.username",
-        "DB_PASSWORD": "database.secret"
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
       }
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     },
-    "application_check": {
+    "app_check": {
       "path": "/usr/local/libexec/jms-pam/check-running-db",
       "confirm_on_success": true
     }
@@ -188,7 +188,7 @@ EnvironmentFile=/etc/sample-app/database.env
 ]
 ```
 
-단일 계정은 `username` / `secret`을 직접 사용할 수 있습니다. 여러 계정은 고유 alias와 `database.username`, `cache.secret` 같은 참조가 필요합니다. A/B 전환에도 alias는 유지됩니다. 선택 사항인 `username`은 표시용이며 실제 값은 Core에서 가져옵니다. 모든 계정이 준비된 후 파일을 갱신하고 업무 동작을 한 번 실행합니다. 누락되거나 모호한 매핑은 쓰기 전에 실패합니다.
+`services.accounts`에서 `id`로 계정을 지정합니다. 단일 계정은 `username` / `secret`을 직접 사용할 수 있습니다. 여러 계정은 고유 alias와 `database.username`, `cache.secret` 같은 참조가 필요합니다. A/B 전환에도 alias는 유지됩니다. 선택 사항인 `username`은 표시용이며 실제 값은 Core에서 가져옵니다. 모든 계정이 준비된 후 파일을 갱신하고 업무 동작을 한 번 실행합니다. 누락되거나 모호한 매핑은 쓰기 전에 실패합니다.
 
 ```json
 {
@@ -197,15 +197,15 @@ EnvironmentFile=/etc/sample-app/database.env
   "update_on_notification": true,
   "accounts": [
     {
-      "account_id": "<primary-account-id>",
+      "id": "<primary-account-id>",
       "alias": "database"
     },
     {
-      "account_id": "<cache-account-id>",
+      "id": "<cache-account-id>",
       "alias": "cache"
     }
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {
@@ -215,11 +215,11 @@ EnvironmentFile=/etc/sample-app/database.env
       "CACHE_PASSWORD": "cache.secret"
     }
   },
-  "service_action": {
+  "reload_service": {
     "unit": "sample-app.service",
     "operation": "restart"
   },
-  "application_check": {
+  "app_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
   }
@@ -228,9 +228,9 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ### 설정 파일 형식
 
-`config_update.format`의 기본값은 `auto`이며 생략해도 동일합니다. 확장자 `.txt`, `.env`, `.properties`는 `env`(`KEY=value`), `.yml`, `.yaml`은 `yaml`(최상위 `KEY: value`, 새 값은 따옴표로 감싼 문자열)로 처리합니다. 다른 확장자는 `env` 또는 `yaml`을 명시하세요. 매핑 필드는 이미 존재하며 한 번만 나타나야 하고 다른 설정은 보존됩니다. INI 섹션이나 중첩 YAML은 `files` + `template_file`로 전체 파일을 생성하거나 `script`를 사용하세요. 환경 변수 파일을 갱신한 후에는 애플리케이션이 다시 읽거나 재시작해야 적용됩니다.
+`update_config.format`의 기본값은 `auto`이며 생략해도 동일합니다. 확장자 `.txt`, `.env`, `.properties`는 `env`(`KEY=value`), `.yml`, `.yaml`은 `yaml`(최상위 `KEY: value`, 새 값은 따옴표로 감싼 문자열)로 처리합니다. 다른 확장자는 `env` 또는 `yaml`을 명시하세요. 매핑 필드는 이미 존재하며 한 번만 나타나야 하고 다른 설정은 보존됩니다. INI 섹션이나 중첩 YAML은 `files` + `template_file`로 전체 파일을 생성하거나 `script`를 사용하세요. 환경 변수 파일을 갱신한 후에는 애플리케이션이 다시 읽거나 재시작해야 적용됩니다.
 
-새 설정은 `config_version: 2`이며 해당 Core와 Agent 업데이트가 필요합니다. 버전 1 또는 버전 없는 `delivery` / `rules`는 기존 동작을 유지합니다. 두 형식을 혼합하지 말고 먼저 바이너리를 갱신합니다. Core는 로컬 실행 경로를 추가할 수 없습니다. 비공개 설정 변경 후 Agent를 재시작합니다.
+Core와 Agent의 프로토콜 버전 및 `config_version`은 1입니다. `store`와 `services`를 독립적으로 설정하고 기존 `delivery` / `rules` 구조와 혼합하지 마세요. Core는 계정 범위와 버전 메타데이터만 동기화하며 로컬 실행 경로를 전달하지 않습니다. 비공개 설정 변경 후 Agent를 재시작하세요.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -259,7 +259,7 @@ curl --fail --silent --show-error \
 
 ### 애플리케이션 적용 확인
 
-실제 연결 검증 및 전환 후 확인합니다. `application_check`와 `confirm_on_success: true` 또는 명시적 확인을 사용합니다. 동기 검사에서 확인 API를 호출하지 마세요. 결과는 저장되며 `confirmed`는 Core 수락, `pending`은 재시도입니다.
+실제 연결 검증 및 전환 후 확인합니다. `app_check`와 `confirm_on_success: true` 또는 명시적 확인을 사용합니다. 동기 검사에서 확인 API를 호출하지 마세요. 결과는 저장되며 `confirmed`는 Core 수락, `pending`은 재시도입니다.
 
 ```bash
 jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -395,7 +395,7 @@ watch_events는 중지까지 기다립니다. start_events는 초기 동기화 �
 
 ### 최신 자격 증명과 백엔드 장애
 
-SDK는 API를 먼저 요청하며 성공 시 보관 값을 갱신하고 이전 버전으로 돌아가지 않습니다. 시간 초과, 네트워크 오류, HTTP 5xx에서만 같은 선택 조건의 기존 값을 로컬 출처로 반환할 수 있습니다. 보관 값에는 시간 만료가 없고 SDK clone 및 재시작 시 메모리는 비워집니다. HTTP 401/403/404 또는 credential_not_found(400)는 보관 값을 지우고 실패합니다. 426과 잘못된 성공 응답은 대체 값을 사용하지 않으며 선택적 메타데이터 API 부재는 값을 지우지 않습니다. Agent v2는 store/services에 선언된 계정을 보호된 상태에 보관하며, 선언되지 않은 즉시 조회를 자동 저장하지 않습니다. 명시적 취소는 오프라인에서도 HTTP 갱신 전에 적용됩니다. push 스냅샷은 전체 저장 권한을 나타내지 않으며 동기화 성공 시 현재 애플리케이션 권한을 확인합니다.
+SDK는 API를 먼저 요청하며 성공 시 보관 값을 갱신하고 이전 버전으로 돌아가지 않습니다. 시간 초과, 네트워크 오류, HTTP 5xx에서만 같은 선택 조건의 기존 값을 로컬 출처로 반환할 수 있습니다. 보관 값에는 시간 만료가 없고 SDK clone 및 재시작 시 메모리는 비워집니다. HTTP 401/403/404 또는 credential_not_found(400)는 보관 값을 지우고 실패합니다. 426과 잘못된 성공 응답은 대체 값을 사용하지 않으며 선택적 메타데이터 API 부재는 값을 지우지 않습니다. Agent는 store/services에 선언된 계정을 보호된 상태에 보관하며, 선언되지 않은 즉시 조회를 자동 저장하지 않습니다. 명시적 취소는 오프라인에서도 HTTP 갱신 전에 적용됩니다. push 스냅샷은 전체 저장 권한을 나타내지 않으며 동기화 성공 시 현재 애플리케이션 권한을 확인합니다.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

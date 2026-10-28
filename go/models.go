@@ -262,6 +262,7 @@ type AgentScope struct {
 }
 type AgentSync struct {
 	ConfigSchemaVersion         int                  `json:"config_schema_version,omitempty"`
+	ServerCapabilities          []string             `json:"server_capabilities,omitempty"`
 	UnavailableSwitchAccountIDs []string             `json:"unavailable_switch_account_ids,omitempty"`
 	ConfigDigest                string               `json:"config_digest"`
 	Credentials                 []CredentialRevision `json:"credentials"`

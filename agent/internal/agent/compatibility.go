@@ -12,7 +12,7 @@ import (
 // These are local file formats, independent of the SDK and wire protocol versions.
 // Additive changes keep v1 defaults; incompatible semantics need a new reader
 // and migration before either constant changes.
-const CurrentConfigVersion = 2
+const CurrentConfigVersion = 1
 const CurrentStateVersion = 1
 
 func unsupportedVersion(kind, field string, version, supported int) error {
@@ -44,7 +44,7 @@ func readFormatVersion(raw []byte, kind, field string, supported int) (int, erro
 			return 0, fmt.Errorf("Agent %s %s must be a positive integer", kind, field)
 		}
 	}
-	if version != supported && !(kind == "configuration" && version == 1) {
+	if version != supported {
 		return 0, unsupportedVersion(kind, field, version, supported)
 	}
 	return version, nil

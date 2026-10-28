@@ -78,7 +78,7 @@ Run the standalone Go Agent on the application host; Python is not required. Fol
 
 ### Linux / systemd
 
-Use `config_version: 2` with the corresponding updated Core and Agent. Existing version 1 / unversioned `delivery` + `rules` configurations retain their old behavior; do not mix the two schemas. Update binaries before using new fields. Core cannot supply new local executable paths. Edit the private configuration and restart the Agent.
+Core and Agent use protocol version 1 and `config_version: 1`. Configure `store` and `services` independently; do not mix them with the older `delivery` / `rules` structure. Core supplies account scope and version metadata, never local executable paths. Restart the Agent after editing its private configuration.
 
 Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
@@ -123,7 +123,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ```json
 {
-  "config_version": 2,
+  "config_version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
@@ -171,10 +171,10 @@ EnvironmentFile writes the username, password and account metadata as plaintext 
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "files": [
         {
           "path": "/etc/sample-app/database.env",
@@ -183,7 +183,7 @@ EnvironmentFile writes the username, password and account metadata as plaintext 
         }
       ]
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     }
@@ -206,12 +206,14 @@ EnvironmentFile=/etc/sample-app/database.env
 
 Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.
 
+New configurations use `update_config` → `reload_service` → `app_check`: update the business file, reload/restart the service (or run a fixed script), then verify the running application. These names require an updated Agent. `services` accepts only these three step names; old names are rejected.
+
 | Configure and run | Update business configuration and A/B rotation |
 | --- | --- |
 | `credential_check` | Optional: validate the new login before changing files. |
-| `config_update` | Update the existing business file using field mappings, a template or a script. |
-| `service_action` | Reload/restart the configured service or run a fixed script. |
-| `application_check` | Verify the running business connection; only then confirm application success. |
+| `update_config` | Update the existing business file using field mappings, a template or a script. |
+| `reload_service` | Reload/restart the configured service or run a fixed script. |
+| `app_check` | Verify the running business connection; only then confirm application success. |
 
 `services`:
 
@@ -223,24 +225,22 @@ Add the service objects below to `services`. Each service needs a unique stable 
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>",
-        "alias": "database",
-        "username": "db_app_a"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "file": "/etc/sample-app/config.yml",
       "format": "yaml",
       "fields_map": {
-        "DB_USER": "database.username",
-        "DB_PASSWORD": "database.secret"
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
       }
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     },
-    "application_check": {
+    "app_check": {
       "path": "/usr/local/libexec/jms-pam/check-running-db",
       "confirm_on_success": true
     }
@@ -248,7 +248,7 @@ Add the service objects below to `services`. Each service needs a unique stable 
 ]
 ```
 
-One account may use `username` / `secret` directly. Multiple accounts require unique aliases and qualified references such as `database.username` and `cache.secret`. Alias references stay stable across A/B switches. Optional selector `username` is a display hint only; actual values come from Core. Resolve every required account before writing the file, then run the service action once. Missing or ambiguous mappings fail before mutation.
+In `services.accounts`, use `id` to select an account. One account may use `username` / `secret` directly. Multiple accounts require unique aliases and qualified references such as `database.username` and `cache.secret`. Alias references stay stable across A/B switches. Optional selector `username` is a display hint only; actual values come from Core. Resolve every required account before writing the file, then run the service action once. Missing or ambiguous mappings fail before mutation.
 
 ```json
 {
@@ -257,15 +257,15 @@ One account may use `username` / `secret` directly. Multiple accounts require un
   "update_on_notification": true,
   "accounts": [
     {
-      "account_id": "<primary-account-id>",
+      "id": "<primary-account-id>",
       "alias": "database"
     },
     {
-      "account_id": "<cache-account-id>",
+      "id": "<cache-account-id>",
       "alias": "cache"
     }
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {
@@ -275,11 +275,11 @@ One account may use `username` / `secret` directly. Multiple accounts require un
       "CACHE_PASSWORD": "cache.secret"
     }
   },
-  "service_action": {
+  "reload_service": {
     "unit": "sample-app.service",
     "operation": "restart"
   },
-  "application_check": {
+  "app_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
   }
@@ -288,9 +288,9 @@ One account may use `username` / `secret` directly. Multiple accounts require un
 
 ### Configuration format
 
-`config_update.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
+`update_config.format` defaults to `auto`; omitting it has the same effect. Detection uses the file extension: `.txt`, `.env` and `.properties` use `env` (`KEY=value`); `.yml` and `.yaml` use `yaml` (top-level `KEY: value`, written as quoted strings). For other extensions, explicitly choose `env` or `yaml`. Mapped fields must already exist exactly once; unrelated settings are preserved. INI sections and nested YAML require `files` + `template_file` to generate the whole file, or a custom `script`. Environment-file updates take effect after the application rereads the file or restarts.
 
-Use `config_version: 2` with the corresponding updated Core and Agent. Existing version 1 / unversioned `delivery` + `rules` configurations retain their old behavior; do not mix the two schemas. Update binaries before using new fields. Core cannot supply new local executable paths. Edit the private configuration and restart the Agent.
+Core and Agent use protocol version 1 and `config_version: 1`. Configure `store` and `services` independently; do not mix them with the older `delivery` / `rules` structure. Core supplies account scope and version metadata, never local executable paths. Restart the Agent after editing its private configuration.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -319,7 +319,7 @@ curl --fail --silent --show-error \
 
 ### Confirm application success
 
-Validate the running connection and switch the application before confirming an event. Use either a successful `application_check` with `confirm_on_success: true`, or explicit confirmation after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.
+Validate the running connection and switch the application before confirming an event. Use either a successful `app_check` with `confirm_on_success: true`, or explicit confirmation after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.
 
 ```bash
 jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -455,7 +455,7 @@ watch_events waits until stopped. start_events returns before initial synchroniz
 
 ### Latest credentials and backend outages
 
-SDK credential getters request the API first. A successful fetch replaces the retained value without allowing revisions to move backwards. Only a timeout, network error or HTTP 5xx permits fallback to a previously fetched value for the same selector, marked as local; retained values have no time expiry. SDK caches are client-local memory: clones and restarts start empty. HTTP 401/403/404 or credential_not_found (HTTP 400) clear retained credentials and raise. HTTP 426 and malformed successful responses raise without using fallback; a missing optional metadata endpoint does not clear credentials. Agent v2 persists accounts declared by store/services in protected state; an undeclared on-demand query is not automatically retained. Explicit revocations take effect before HTTP refresh, including while offline. Push snapshots do not define the full authorization scope of stored accounts; successful reconciliation checks the current application authorization.
+SDK credential getters request the API first. A successful fetch replaces the retained value without allowing revisions to move backwards. Only a timeout, network error or HTTP 5xx permits fallback to a previously fetched value for the same selector, marked as local; retained values have no time expiry. SDK caches are client-local memory: clones and restarts start empty. HTTP 401/403/404 or credential_not_found (HTTP 400) clear retained credentials and raise. HTTP 426 and malformed successful responses raise without using fallback; a missing optional metadata endpoint does not clear credentials. Agent persists accounts declared by store/services in protected state; an undeclared on-demand query is not automatically retained. Explicit revocations take effect before HTTP refresh, including while offline. Push snapshots do not define the full authorization scope of stored accounts; successful reconciliation checks the current application authorization.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

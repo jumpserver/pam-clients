@@ -18,7 +18,7 @@ Execute o Agent Go independente no host da aplicação, sem Python. Siga instala
 
 ### Linux / systemd
 
-O novo formato usa `config_version: 2` e exige atualizar Core e Agent. A versão 1 e configurações `delivery` / `rules` sem versão mantêm o comportamento anterior. Não misture formatos e atualize primeiro os binários. Core não pode adicionar caminhos executáveis locais. Reinicie Agent após editar a configuração privada.
+Core e Agent usam protocolo 1 e `config_version: 1`. Configure `store` e `services` de forma independente, sem misturar com a estrutura antiga `delivery` / `rules`. Core sincroniza escopo e versões, nunca caminhos executáveis locais. Reinicie Agent após editar a configuração privada.
 
 Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
 
@@ -63,7 +63,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 ```json
 {
-  "config_version": 2,
+  "config_version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
@@ -111,10 +111,10 @@ EnvironmentFile grava usuário, senha e metadados em texto simples `KEY=value` n
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "files": [
         {
           "path": "/etc/sample-app/database.env",
@@ -123,7 +123,7 @@ EnvironmentFile grava usuário, senha e metadados em texto simples `KEY=value` n
         }
       ]
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     }
@@ -144,14 +144,16 @@ EnvironmentFile=/etc/sample-app/database.env
 
 ## 4. Atualização da configuração e rotação A/B
 
-Adicione os objetos abaixo a `services`, com um `name` único e estável. `allow_account_switch` fica no serviço e o padrão é false: true acompanha a conta ativa de uma associação A/B inequívoca; outras contas permanecem fixas. Basta declarar A. `update_on_notification` também fica no serviço e o padrão é true. False adia ações até a próxima reconciliação, por padrão a cada 300 segundos; armazenamento e revogações continuam ativos. Cada serviço registra suas versões. A rotação só é confirmada após todos os serviços envolvidos passarem na verificação com `application_check.confirm_on_success: true`.
+Adicione os objetos abaixo a `services`, com um `name` único e estável. `allow_account_switch` fica no serviço e o padrão é false: true acompanha a conta ativa de uma associação A/B inequívoca; outras contas permanecem fixas. Basta declarar A. `update_on_notification` também fica no serviço e o padrão é true. False adia ações até a próxima reconciliação, por padrão a cada 300 segundos; armazenamento e revogações continuam ativos. Cada serviço registra suas versões. A rotação só é confirmada após todos os serviços envolvidos passarem na verificação com `app_check.confirm_on_success: true`.
+
+As configurações usam `update_config` → `reload_service` → `app_check`: atualizar o arquivo, recarregar/reiniciar o serviço (ou executar um script fixo) e validar a aplicação em execução. É necessário um Agent atualizado. `services` aceita apenas esses três nomes de etapas; os nomes antigos são rejeitados.
 
 | Configurar e executar | Atualização da configuração e rotação A/B |
 | --- | --- |
 | `credential_check` | Opcional: valide o novo login antes de alterar arquivos. |
-| `config_update` | Atualize o arquivo por campos, modelo ou script. |
-| `service_action` | Execute reload/restart do serviço fixo ou um script fixo. |
-| `application_check` | Valide a conexão da aplicação em execução e só então confirme. |
+| `update_config` | Atualize o arquivo por campos, modelo ou script. |
+| `reload_service` | Execute reload/restart do serviço fixo ou um script fixo. |
+| `app_check` | Valide a conexão da aplicação em execução e só então confirme. |
 
 `services`:
 
@@ -163,24 +165,22 @@ Adicione os objetos abaixo a `services`, com um `name` único e estável. `allow
     "update_on_notification": true,
     "accounts": [
       {
-        "account_id": "<primary-account-id>",
-        "alias": "database",
-        "username": "db_app_a"
+        "id": "<primary-account-id>"
       }
     ],
-    "config_update": {
+    "update_config": {
       "file": "/etc/sample-app/config.yml",
       "format": "yaml",
       "fields_map": {
-        "DB_USER": "database.username",
-        "DB_PASSWORD": "database.secret"
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
       }
     },
-    "service_action": {
+    "reload_service": {
       "unit": "sample-app.service",
       "operation": "restart"
     },
-    "application_check": {
+    "app_check": {
       "path": "/usr/local/libexec/jms-pam/check-running-db",
       "confirm_on_success": true
     }
@@ -188,7 +188,7 @@ Adicione os objetos abaixo a `services`, com um `name` único e estável. `allow
 ]
 ```
 
-Uma conta aceita `username` / `secret` diretamente. Várias contas exigem aliases únicos e referências como `database.username` ou `cache.secret`. O alias permanece estável na troca A/B. O `username` opcional é apenas informativo; os valores reais vêm do Core. Todas as contas devem estar prontas antes da escrita e a ação de serviço executa uma vez. Mapeamentos ausentes ou ambíguos falham antes da alteração.
+Em `services.accounts`, use `id` para selecionar a conta. Uma conta aceita `username` / `secret` diretamente. Várias contas exigem aliases únicos e referências como `database.username` ou `cache.secret`. O alias permanece estável na troca A/B. O `username` opcional é apenas informativo; os valores reais vêm do Core. Todas as contas devem estar prontas antes da escrita e a ação de serviço executa uma vez. Mapeamentos ausentes ou ambíguos falham antes da alteração.
 
 ```json
 {
@@ -197,15 +197,15 @@ Uma conta aceita `username` / `secret` diretamente. Várias contas exigem aliase
   "update_on_notification": true,
   "accounts": [
     {
-      "account_id": "<primary-account-id>",
+      "id": "<primary-account-id>",
       "alias": "database"
     },
     {
-      "account_id": "<cache-account-id>",
+      "id": "<cache-account-id>",
       "alias": "cache"
     }
   ],
-  "config_update": {
+  "update_config": {
     "file": "/etc/sample-app/config.yml",
     "format": "yaml",
     "fields_map": {
@@ -215,11 +215,11 @@ Uma conta aceita `username` / `secret` diretamente. Várias contas exigem aliase
       "CACHE_PASSWORD": "cache.secret"
     }
   },
-  "service_action": {
+  "reload_service": {
     "unit": "sample-app.service",
     "operation": "restart"
   },
-  "application_check": {
+  "app_check": {
     "path": "/usr/local/libexec/jms-pam/check-running-db",
     "confirm_on_success": true
   }
@@ -228,9 +228,9 @@ Uma conta aceita `username` / `secret` diretamente. Várias contas exigem aliase
 
 ### Formato da configuração
 
-`config_update.format` usa `auto` por padrão, inclusive quando omitido. As extensões `.txt`, `.env` e `.properties` usam `env` (`KEY=value`); `.yml` e `.yaml` usam `yaml` (`KEY: value` no nível superior, valores gravados como strings entre aspas). Para outras extensões, informe `env` ou `yaml`. Cada campo deve existir exatamente uma vez; as demais configurações são preservadas. Para seções INI ou YAML aninhado, use `files` + `template_file` para gerar o arquivo inteiro, ou um `script`. Após atualizar o arquivo de variáveis, a aplicação precisa relê-lo ou reiniciar.
+`update_config.format` usa `auto` por padrão, inclusive quando omitido. As extensões `.txt`, `.env` e `.properties` usam `env` (`KEY=value`); `.yml` e `.yaml` usam `yaml` (`KEY: value` no nível superior, valores gravados como strings entre aspas). Para outras extensões, informe `env` ou `yaml`. Cada campo deve existir exatamente uma vez; as demais configurações são preservadas. Para seções INI ou YAML aninhado, use `files` + `template_file` para gerar o arquivo inteiro, ou um `script`. Após atualizar o arquivo de variáveis, a aplicação precisa relê-lo ou reiniciar.
 
-O novo formato usa `config_version: 2` e exige atualizar Core e Agent. A versão 1 e configurações `delivery` / `rules` sem versão mantêm o comportamento anterior. Não misture formatos e atualize primeiro os binários. Core não pode adicionar caminhos executáveis locais. Reinicie Agent após editar a configuração privada.
+Core e Agent usam protocolo 1 e `config_version: 1`. Configure `store` e `services` de forma independente, sem misturar com a estrutura antiga `delivery` / `rules`. Core sincroniza escopo e versões, nunca caminhos executáveis locais. Reinicie Agent após editar a configuração privada.
 
 ```bash
 sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
@@ -259,7 +259,7 @@ curl --fail --silent --show-error \
 
 ### Confirmar a aplicação
 
-Confirme após validar e trocar a conexão real. Use `application_check` com `confirm_on_success: true` ou confirmação explícita. Não chame a confirmação de um script de verificação síncrono. O resultado é persistido: `confirmed` indica aceite pelo Core; `pending` será repetido.
+Confirme após validar e trocar a conexão real. Use `app_check` com `confirm_on_success: true` ou confirmação explícita. Não chame a confirmação de um script de verificação síncrono. O resultado é persistido: `confirmed` indica aceite pelo Core; `pending` será repetido.
 
 ```bash
 jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -395,7 +395,7 @@ watch_events espera a parada; start_events não garante a sincronização inicia
 
 ### Credenciais mais recentes e indisponibilidade do servidor
 
-O SDK consulta primeiro a API e atualiza o valor retido sem voltar a versões anteriores. Apenas timeout, erro de rede ou HTTP 5xx permitem um valor anterior do mesmo seletor, marcado como local e sem expiração temporal. Clones e reinícios do SDK começam sem cache. HTTP 401/403/404 ou credential_not_found (400) apagam valores; 426 e respostas inválidas falham sem fallback. Uma API opcional de metadados ausente não limpa o cache. Agent v2 persiste contas declaradas em store/services; uma consulta avulsa não declarada não é salva automaticamente. Revogações explícitas valem antes da atualização HTTP, mesmo offline. Snapshots push não definem toda a autorização de armazenamento; a reconciliação bem-sucedida verifica os direitos atuais.
+O SDK consulta primeiro a API e atualiza o valor retido sem voltar a versões anteriores. Apenas timeout, erro de rede ou HTTP 5xx permitem um valor anterior do mesmo seletor, marcado como local e sem expiração temporal. Clones e reinícios do SDK começam sem cache. HTTP 401/403/404 ou credential_not_found (400) apagam valores; 426 e respostas inválidas falham sem fallback. Uma API opcional de metadados ausente não limpa o cache. Agent persiste contas declaradas em store/services; uma consulta avulsa não declarada não é salva automaticamente. Revogações explícitas valem antes da atualização HTTP, mesmo offline. Snapshots push não definem toda a autorização de armazenamento; a reconciliação bem-sucedida verifica os direitos atuais.
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`

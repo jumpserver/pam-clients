@@ -484,7 +484,7 @@ def native_guide(language, texts):
 
 
 AGENT_SAMPLE = {
-    'config_version': 2, 'endpoint': 'https://jumpserver.example.com',
+    'config_version': 1, 'endpoint': 'https://jumpserver.example.com',
     'app_id': '<application-id>', 'app_secret': '<application-secret>',
     'org_id': '<org-id>', 'instance_id': 'app-node-1', 'pull_interval': 300,
     'local_api': {'owner': 'appuser'},
@@ -493,42 +493,44 @@ AGENT_SAMPLE = {
 }
 AGENT_RULE = {
     'name': 'sample-app', 'allow_account_switch': True, 'update_on_notification': True,
-    'accounts': [{'account_id': '<primary-account-id>', 'alias': 'database', 'username': 'db_app_a'}],
-    'config_update': {
+    'accounts': [{'id': '<primary-account-id>'}],
+    'update_config': {
         'file': '/etc/sample-app/config.yml', 'format': 'yaml',
-        'fields_map': {'DB_USER': 'database.username', 'DB_PASSWORD': 'database.secret'},
+        'fields_map': {'DB_USER': 'username', 'DB_PASSWORD': 'secret'},
     },
-    'service_action': {'unit': 'sample-app.service', 'operation': 'restart'},
-    'application_check': {'path': '/usr/local/libexec/jms-pam/check-running-db', 'confirm_on_success': True},
+    'reload_service': {'unit': 'sample-app.service', 'operation': 'restart'},
+    'app_check': {'path': '/usr/local/libexec/jms-pam/check-running-db', 'confirm_on_success': True},
 }
 AGENT_MULTI_SERVICE = {
     **AGENT_RULE,
     'accounts': [
-        {'account_id': '<primary-account-id>', 'alias': 'database'},
-        {'account_id': '<cache-account-id>', 'alias': 'cache'},
+        {'id': '<primary-account-id>', 'alias': 'database'},
+        {'id': '<cache-account-id>', 'alias': 'cache'},
     ],
-    'config_update': {
+    'update_config': {
         'file': '/etc/sample-app/config.yml', 'format': 'yaml',
         'fields_map': {'DB_USER': 'database.username', 'DB_PASSWORD': 'database.secret', 'CACHE_USER': 'cache.username', 'CACHE_PASSWORD': 'cache.secret'},
     },
 }
 AGENT_ENVIRONMENT_RULE = {
     'name': 'sample-app-env', 'allow_account_switch': True, 'update_on_notification': True,
-    'accounts': [{'account_id': '<primary-account-id>'}],
-    'config_update': {'files': [{'path': '/etc/sample-app/database.env', 'format': 'environment', 'owner': 'appuser'}]},
-    'service_action': {'unit': 'sample-app.service', 'operation': 'restart'},
+    'accounts': [{'id': '<primary-account-id>'}],
+    'update_config': {'files': [{'path': '/etc/sample-app/database.env', 'format': 'environment', 'owner': 'appuser'}]},
+    'reload_service': {'unit': 'sample-app.service', 'operation': 'restart'},
 }
 
 
 def agent_configuration_section(texts):
     return f"""{texts['services_model']}
 
+{texts['services_field_names']}
+
 | {texts['configure']} | {texts['agent_rules_title']} |
 | --- | --- |
 | `credential_check` | {texts['credential_check_step']} |
-| `config_update` | {texts['config_update_step']} |
-| `service_action` | {texts['service_action_step']} |
-| `application_check` | {texts['application_check_step']} |
+| `update_config` | {texts['update_config_step']} |
+| `reload_service` | {texts['reload_service_step']} |
+| `app_check` | {texts['app_check_step']} |
 
 `services`:
 
