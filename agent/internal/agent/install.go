@@ -14,7 +14,7 @@ import (
 
 type InstallOptions struct{ Bootstrap, ConfigFile, InstanceID string }
 
-// Unit always installs the fixed jms-pam-agent service.
+// Unit always installs the fixed pam-agent service.
 func Unit(binary, config string) string {
 	quote := func(value string) string { return strconv.Quote(strings.ReplaceAll(value, "%", "%%")) }
 	return "[Unit]\nDescription=JumpServer PAM Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=root\nUMask=0077\nExecStart=" + quote(binary) + " run --config " + quote(config) + "\nRestart=on-failure\nRestartSec=5\nKillMode=control-group\n\n[Install]\nWantedBy=multi-user.target\n"
@@ -30,13 +30,23 @@ func Prepare(ctx context.Context, options InstallOptions) (Config, error) {
 		return Config{}, errors.New("cannot resolve installation config path")
 	}
 	options.ConfigFile = resolved
-	existing, err := LoadConfig(options.ConfigFile)
+	existing, err := loadBootstrapConfig(options.ConfigFile)
 	if err == nil {
+		missingInstanceID := existing.InstanceID == ""
+		if missingInstanceID && options.InstanceID != "" {
+			existing.InstanceID = options.InstanceID
+		}
+		if err := existing.ensureInstanceID(); err != nil {
+			return Config{}, err
+		}
+		if err := existing.Validate(); err != nil {
+			return Config{}, err
+		}
 		if options.InstanceID != "" && options.InstanceID != existing.InstanceID {
 			return Config{}, errors.New("existing installation belongs to another instance")
 		}
 		if options.Bootstrap != "" {
-			bootstrap, err := LoadConfig(options.Bootstrap)
+			bootstrap, err := loadBootstrapConfig(options.Bootstrap)
 			if err != nil {
 				return Config{}, err
 			}
@@ -47,15 +57,20 @@ func Prepare(ctx context.Context, options InstallOptions) (Config, error) {
 		if err := verifyAccess(ctx, existing); err != nil {
 			return Config{}, err
 		}
+		if missingInstanceID {
+			if err := writeJSON(options.ConfigFile, existing.compactDefaults()); err != nil {
+				return Config{}, err
+			}
+		}
 		return existing, nil
 	}
 	if _, statErr := os.Lstat(options.ConfigFile); !os.IsNotExist(statErr) {
-		return Config{}, errors.New("existing Agent configuration is invalid; repair it before installation")
+		return Config{}, errors.New("existing PAM Agent configuration is invalid; repair it before installation")
 	}
 	if options.Bootstrap == "" {
-		return Config{}, errors.New("install requires --bootstrap with the complete local Agent configuration")
+		return Config{}, errors.New("install requires --bootstrap with the complete local PAM Agent configuration")
 	}
-	config, err := LoadConfig(options.Bootstrap)
+	config, err := loadBootstrapConfig(options.Bootstrap)
 	if err != nil {
 		return Config{}, err
 	}
@@ -64,6 +79,9 @@ func Prepare(ctx context.Context, options InstallOptions) (Config, error) {
 	}
 	if config.InstanceID == "<instance-id>" {
 		return Config{}, errors.New("set a stable instance_id or pass --instance-id")
+	}
+	if err = config.ensureInstanceID(); err != nil {
+		return Config{}, err
 	}
 	if err = config.Validate(); err != nil {
 		return Config{}, err
@@ -126,7 +144,7 @@ func Install(ctx context.Context, options InstallOptions) error {
 		err = exec.CommandContext(bounded, "/usr/bin/systemctl", args...).Run()
 		cancel()
 		if err != nil {
-			return errors.New("systemd Agent installation failed")
+			return errors.New("systemd PAM Agent installation failed")
 		}
 	}
 	return nil

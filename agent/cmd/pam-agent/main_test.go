@@ -11,7 +11,7 @@ import (
 
 func TestDiagnosticsExplainLocalFailuresWithoutBackendDetails(t *testing.T) {
 	local := errors.New("private files must be regular files with mode 0600")
-	if got := diagnostic(fmt.Errorf("cannot load Agent configuration: %w", local)); !strings.Contains(got, "configuration") || !strings.Contains(got, "0600") {
+	if got := diagnostic(fmt.Errorf("cannot load PAM Agent configuration: %w", local)); !strings.Contains(got, "configuration") || !strings.Contains(got, "0600") {
 		t.Fatal("local diagnostic hid the cause")
 	}
 	for _, code := range []string{"NetworkError", "ResponseError", "untrusted-secret-value"} {

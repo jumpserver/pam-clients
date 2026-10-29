@@ -123,7 +123,7 @@ class DatabaseConnection:
 
 class Application:
     def __init__(self, config):
-        version = config.get("config_version", 1)
+        version = config.get("version", 1)
         if type(version) is not int or version != 1:
             raise ValueError("Unsupported demo configuration version")
         self.config = config

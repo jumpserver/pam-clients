@@ -15,7 +15,7 @@ func defaultCredentialFilename(key, suffix string) string {
 
 func validateSocketPath(path string) error {
 	if len(path) >= 108 {
-		return errors.New("Windows Agent socket path is too long; choose a shorter local directory")
+		return errors.New("Windows PAM Agent socket path is too long; choose a shorter local directory")
 	}
 	return nil
 }

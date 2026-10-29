@@ -82,7 +82,7 @@ func (f *servicesRemote) GetCredentialFresh(_ context.Context, selector pam.Cred
 func servicesFixture(t *testing.T) (Config, *servicesRemote) {
 	t.Helper()
 	base, _, _ := fixture(t)
-	config := Config{ConfigVersion: 1, Endpoint: base.Endpoint, AppID: base.AppID, AppSecret: base.AppSecret, InstanceID: base.InstanceID, StateFile: base.StateFile, PullIntervalSeconds: 300, LocalAPI: &LocalAPIConfiguration{Socket: base.Delivery.Socket, Owner: base.Delivery.User}, Store: &StoreConfiguration{Root: base.Delivery.Root, Owner: base.Delivery.User, Accounts: []string{"all"}}}
+	config := Config{ConfigVersion: 1, Endpoint: base.Endpoint, AppID: base.AppID, AppSecret: base.AppSecret, InstanceID: base.InstanceID, StateFile: base.StateFile, PullIntervalSeconds: 300, Socket: &SocketConfiguration{Socket: base.Delivery.Socket, Owner: base.Delivery.User}, Store: &StoreConfiguration{Root: base.Delivery.Root, Owner: base.Delivery.User, Accounts: []string{"all"}}}
 	remote := &servicesRemote{active: testA, rotation: 1, values: map[string]pam.Credential{}}
 	for _, id := range []string{testA, testB, testC} {
 		remote.values[id] = pam.Credential{Key: "account:" + id, Revision: 1, Account: pam.Account{ID: id, Revision: 1, Username: "user-" + id[len(id)-1:], Secret: "secret-" + id[len(id)-1:]}}

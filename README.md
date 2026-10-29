@@ -1,6 +1,6 @@
 # JumpServer PAM 客户端
 
-本目录统一维护应用接入 JumpServer 的 SDK、Agent 和示例，按实现语言组织。
+本目录统一维护应用接入 JumpServer 的 SDK、PAM Agent 和示例，按实现语言组织。
 
 | 目录 | 当前能力 | 接入文档 |
 | --- | --- | --- |
@@ -8,7 +8,7 @@
 | `go/` | 完整 SDK；Go 1.23+ | [中文](go/README.zh-hans.md) / [English](go/README.en.md) |
 | `java/` | 完整 SDK；Java 11+ | [中文](java/README.zh-hans.md) / [English](java/README.en.md) |
 | `node/` | 完整 SDK、TypeScript 类型声明；Node.js 20.3+ | [中文](node/README.zh-hans.md) / [English](node/README.en.md) |
-| `agent/` | 独立 Agent；Linux amd64 / arm64 发行包 | [中文](agent/README.zh-hans.md) / [English](agent/README.en.md) |
+| `agent/` | 独立 PAM Agent；Linux amd64 / arm64 发行包 | [中文](agent/README.zh-hans.md) / [English](agent/README.en.md) |
 | `curl/` | 旧账号取密接口的协议调试脚本 | [中文](curl/README.zh-hans.md) / [English](curl/README.en.md) |
 
 四种语言的 SDK 以 Python 为功能基准，封装同一套凭据客户端协议。应用只传入服务端地址、应用 AK/SK、组织及实例配置，调用客户端方法即可；API 路径、查询编码、HMAC 签名、Digest、UTC 时间、请求 ID 和版本头由 SDK 自动生成。HTTP 请求和 WebSocket 重连都会重新签名。
@@ -25,22 +25,22 @@
 | 查询待处理指令 | `list_application_commands()` | `ListApplicationCommands(ctx)` | `listApplicationCommands()` | `listApplicationCommands()` |
 | 认领并执行指令 | `execute_application_command(event, handler)` | `ExecuteApplicationCommand(ctx, event, handler)` | `executeApplicationCommand(event, handler)` | `executeApplicationCommand(event, handler)` |
 | 上报指令结果 | `report_application_command_result(...)` | `ReportApplicationCommandResult(...)` | `reportApplicationCommandResult(...)` | `reportApplicationCommandResult({...})` |
-| Agent 状态同步 | `sync_agent(...)` | `SyncAgent(ctx, options)` | `syncAgent(...)` | `syncAgent({...})` |
+| PAM Agent 状态同步 | `sync_agent(...)` | `SyncAgent(ctx, options)` | `syncAgent(...)` | `syncAgent({...})` |
 | 生命周期 | `clone()` / `close()` / `with` | `Clone()` / `Close()` | `clone()` / `close()` / try-with-resources | `clone()` / `close()` |
 
 每个客户端实例对应一个稳定、唯一的应用副本 ID。取密直接返回账号、资产及缓存来源，错误包含错误码及 HTTP 状态。事件接收回执自动发送，仅表示读取事件。订阅和轮换均在校验事件账号版本、验证真实连接、切换连接池并释放旧连接后，按 event_id 上报应用结果。指令只有认领成功才执行，业务处理失败的原始错误会保留。
 
 新接入使用托管账号回调：Python `on_account_changed`、Go `EventHandlers.OnAccountChanged`、Java `AccountEventListener`、Node.js `onAccountChanged`，配合已有的 `watch_events` / `WatchEvents` / `watchEvents`。SDK 自动处理快照、实时取密、账号与版本检查、失败重试、指令认领和结果上报。回调成功返回代表业务已验证并切换连接；只有此时 SDK 才确认成功。结果上报失败只重试上报，同一次监听不重复已完成动作。处理仍须支持进程重启后的幂等执行。
 
-托管回调自动上报其已应用账号；普通 pull 应用可调用 `report_accounts` / `ReportAccounts` / `reportAccounts` 主动声明完整使用账号列表，空列表清除记录。该声明复用状态上报，不扩大授权、不改变订阅范围，也不确认轮换。Agent 的本地 `POST /v1/usage` 与 `report_accounts` CLI 提供同样的声明能力，并保留本机规则声明的账号。
+托管回调自动上报其已应用账号；普通 pull 应用可调用 `report_accounts` / `ReportAccounts` / `reportAccounts` 主动声明完整使用账号列表，空列表清除记录。该声明复用状态上报，不扩大授权、不改变订阅范围，也不确认轮换。PAM Agent 的本地 `POST /v1/usage` 与 `report_accounts` CLI 提供同样的声明能力，并保留本机规则声明的账号。
 
-上述托管回调和使用账号声明需要包含这些接口的新版 SDK / Agent；仅升级 Core 不会升级应用主机上的客户端。旧客户端继续使用原有接口，Python 和 Node.js 的推荐示例会明确拒绝缺少托管回调能力的旧 SDK。
+上述托管回调和使用账号声明需要包含这些接口的新版 SDK / PAM Agent；仅升级 Core 不会升级应用主机上的客户端。旧客户端继续使用原有接口，Python 和 Node.js 的推荐示例会明确拒绝缺少托管回调能力的旧 SDK。
 
-各 SDK 使用协议版本 1，Agent 配置版本为 1。遇到 `client_upgrade_required`（HTTP 426）需检查兼容性并升级；未知可选字段和通知事件可以传给应用，未实现的策略类型不得应用或确认。
+各 SDK 使用协议版本 1，PAM Agent 配置版本为 1。遇到 `client_upgrade_required`（HTTP 426）需检查兼容性并升级；未知可选字段和通知事件可以传给应用，未实现的策略类型不得应用或确认。
 
 程序版本与协议、本地配置及状态版本分别管理。实例信息增加可选服务端能力列表；旧响应缺少此字段时保持 v1 接入方式。兼容错误仍显式报错，但不会撤销已有凭据；可选元数据接口缺失也不清理缓存。完整规则及四语言错误分类接口见 [协议兼容规则](docs/protocol-compatibility.md)。
 
-四种 SDK 均支持事件处理函数、首次与重连快照同步、串行处理及失败退避重试，原有调用形式保留。启用高层监听后，凭据更新事件会自动取密，成功后替换本地保留的最新凭据。保留值不按时间过期；普通取密先请求 API，只有超时、网络故障或 HTTP 5xx 时才返回本地值，并标记来源。权限拒绝或明确撤销后停止使用相应凭据。Agent 自动更新并保存最新凭据，后端故障期间保留已有值。轮换切换仍要求实时获取并显式确认。接口与生命周期对照见 [事件处理接口](EVENT_HANDLERS.md)。
+四种 SDK 均支持事件处理函数、首次与重连快照同步、串行处理及失败退避重试，原有调用形式保留。启用高层监听后，凭据更新事件会自动取密，成功后替换本地保留的最新凭据。保留值不按时间过期；普通取密先请求 API，只有超时、网络故障或 HTTP 5xx 时才返回本地值，并标记来源。权限拒绝或明确撤销后停止使用相应凭据。PAM Agent 自动更新并保存最新凭据，后端故障期间保留已有值。轮换切换仍要求实时获取并显式确认。接口与生命周期对照见 [事件处理接口](EVENT_HANDLERS.md)。
 
 ## 在应用中安装 SDK
 
@@ -111,12 +111,12 @@ npm install ./jms-pam-clients/node
 
 文档中心可以选择编程语言，正文跟随界面语言；地区别名会映射到对应文档，未知或缺失的语言回退到英文。API 路径、配置字段和代码标识符保持原名。维护与生成方法见 [文档维护](docs/README.md)。
 
-## Python SDK 与 Go Agent
+## Python SDK 与 PAM Agent
 
 - SDK 入口：`python/jms_pam/client.py`。
 - 响应模型：`python/jms_pam/models.py`，使用带类型提示的 dataclass。
-- Agent 命令入口：`agent/cmd/jms-pam-agent`；配置、交付、本地 API 和安装源码位于 `agent/internal/agent`，复用 Go SDK。
-- Python 分发包：`jms-pam`，通过 `jms_pam` 导入 SDK。Agent 为独立 Go 二进制 `jms-pam-agent`，固定服务名 `jms-pam-agent.service`。
+- PAM Agent 命令入口：`agent/cmd/pam-agent`；配置、交付、本地 API 和安装源码位于 `agent/internal/agent`，复用 Go SDK。
+- Python 分发包：`jms-pam`，通过 `jms_pam` 导入 SDK。PAM Agent 为独立 Go 二进制 `pam-agent`，固定服务名 `pam-agent.service`。
 - 示例应用：`python/demo.py`、`python/postgresql_app.py`、`python/file_apps/`。
 
 在应用环境安装：
@@ -129,7 +129,7 @@ python3 -m pip install jms-pam==1.0.2
 
 ## 语言规范
 
-凭据策略 SDK 与 Agent 使用统一的 HTTP / WebSocket 协议，新实现采用各自语言的接口习惯。
+凭据策略 SDK 与 PAM Agent 使用统一的 HTTP / WebSocket 协议，新实现采用各自语言的接口习惯。
 
 - Python 遵循 [PEP 8](https://peps.python.org/pep-0008/)：方法、参数和属性使用 `snake_case`，类使用 `CapWords`，通过关键字参数调用客户端，响应使用 dataclass，客户端支持上下文管理器。
 - Go 遵循 [Effective Go](https://go.dev/doc/effective_go)，使用 `gofmt`、导出标识符和显式错误返回；耗时操作接受 `context.Context`。
@@ -138,18 +138,18 @@ python3 -m pip install jms-pam==1.0.2
 
 Python 的原始 `credential.v1` 请求对象接口作为兼容入口保留；新接入统一使用 `from jms_pam import Client`。
 
-## Go Agent
+## PAM Agent
 
-以 `/etc/jms-pam-agent/agent.json` 为核心，支持默认 JSON 文件、EnvironmentFile、本机模板、systemd reload/restart、固定脚本及 Unix Socket。通知触发实时取密，保留最新成功值并在交付失败时重试。服务通过 `systemctl start jms-pam-agent` 启动；身份仅使用应用 AK/SK 与稳定的 `instance_id`，账号范围随应用授权，交付和服务动作由本机配置决定。详见 [配置与安装](agent/README.zh-hans.md) / [English](agent/README.en.md)。
+以 `/etc/jms-pam-agent/agent.json` 为核心，支持默认 JSON 文件、EnvironmentFile、本机模板、systemd reload/restart、固定脚本及 Unix Socket。通知触发实时取密，保留最新成功值并在交付失败时重试。服务通过 `systemctl start pam-agent` 启动；身份仅使用应用 AK/SK 与稳定的 `instance_id`，账号范围随应用授权，交付和服务动作由本机配置决定。详见 [配置与安装](agent/README.zh-hans.md) / [English](agent/README.en.md)。
 
-CLI 提供 `get_accounts` 和 `get_secret ACCOUNT_ID`，通过运行中的 Agent 查询，并标明 API / 本地最新值来源。macOS / Linux 开发可用 `init-local` 和 `run --local` 前台运行，记录私有 `events.jsonl` 并原子更新最新凭据文件；生产配置也支持可选的 `event_file`。
+CLI 提供 `get_accounts` 和 `get_secret ACCOUNT_ID`，通过运行中的 PAM Agent 查询，并标明 API / 本地最新值来源。macOS / Linux 开发可用 `init-local` 和 `run --local` 前台运行，记录私有 `events.jsonl` 并原子更新最新凭据文件；生产配置也支持可选的 `event_file`。
 
 ## 独立发布与 JumpServer 集成
 
-本仓库独立维护 Python、Go、Java、Node.js、cURL SDK 和 Go Agent。
+本仓库独立维护 Python、Go、Java、Node.js、cURL SDK 和 PAM Agent。
 客户端协议版本为 1；客户端版本独立于 JumpServer 服务端版本。
 
-推送 `vX.Y.Z` tag 后，Release CI 测试 Go 客户端并编译 Linux amd64 / arm64 Agent，
+推送 `vX.Y.Z` tag 后，Release CI 测试 Go 客户端并编译 Linux amd64 / arm64 PAM Agent，
 同时打包各 SDK 源码，上传到草稿 Release。完整协议测试由 SDK contracts CI 执行。
 发布前检查两项 CI 均通过，然后发布草稿。当前稳定版本为 `1.0.2`。
 Go 模块位于 `github.com/jumpserver/pam-clients/go`；Go 子模块使用 `go/vX.Y.Z` tag，
@@ -165,19 +165,23 @@ git submodule update --init --recursive apps/accounts/clients
 然后在 JumpServer 提交新的 gitlink。构建后端镜像前必须初始化 submodule。
 docker-web 使用独立的 `pam-agent-version.txt` 从本仓库 Release 下载二进制。
 
-## Agent 与 Go SDK
+## PAM Agent 与 Go SDK
 
-`agent/` 是独立 Go 模块，可部署程序入口为 `agent/cmd/jms-pam-agent`，
+以下内容用于仓库开发与源码构建，需要 Go 1.23+。使用者按 [PAM Agent 接入文档](agent/README.zh-hans.md) 下载二进制并配置运行。
+
+`agent/` 是独立 Go 模块，可部署程序入口为 `agent/cmd/pam-agent`，
 内部实现为 `agent/internal/agent`。`go/` 只提供 SDK 和 SDK 示例。
-根目录 `go.work` 支持两个模块联合开发；Agent 的本地模块替换保证发布时使用同一提交的 SDK。
+根目录 `go.work` 支持两个模块联合开发；PAM Agent 的本地模块替换保证发布时使用同一提交的 SDK。
 
 ```bash
 cd agent
 go test -race ./...
-go build -o jms-pam-agent ./cmd/jms-pam-agent
+go build -trimpath -o pam-agent ./cmd/pam-agent
 ```
 
 仓库根目录运行 `go test -race ./go/... ./agent/...` 可同时验证两个模块。
+
+其他平台构建、调试和格式兼容维护见 [PAM Agent 开发说明](docs/agent-development.md)。
 
 ## Python SDK 自动发布
 

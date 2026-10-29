@@ -48,13 +48,13 @@ SDK 处理首次与重连快照，按事件账号实时取密，检查账号 ID 
 | Java | `isFromLocal()` | `getAccount(accountId, false)` |
 | Node.js | `fromLocal` | `getAccount({accountId, allowLocalFallback: false})` |
 
-SDK 在当前客户端进程内存中保留最新值，关闭后释放；clone 和进程重启从空状态开始。Agent 使用已有受保护的本地状态保存凭据，收到更新通知后主动获取最新值，后端故障期间保留已有值。
+SDK 在当前客户端进程内存中保留最新值，关闭后释放；clone 和进程重启从空状态开始。PAM Agent 使用已有受保护的本地状态保存凭据，收到更新通知后主动获取最新值，后端故障期间保留已有值。
 
-Agent 收到明确撤销或授权范围缩小的快照时，先停用相应本地取密并持久化授权范围，再尝试 HTTP 同步；后端暂时不可用或 Agent 重启不会恢复已撤销的访问。整项订阅策略撤销同时停用其账号项。已经交付的业务文件仍按既有交付规则处理。
+PAM Agent 收到明确撤销或授权范围缩小的快照时，先停用相应本地取密并持久化授权范围，再尝试 HTTP 同步；后端暂时不可用或 PAM Agent 重启不会恢复已撤销的访问。整项订阅策略撤销同时停用其账号项。已经交付的业务文件仍按既有交付规则处理。
 
 HTTP 401/403、凭据取密的 HTTP 404 和 `credential_not_found`（HTTP 400）清空 SDK 保留值并报错。`client_upgrade_required`／HTTP 426 保留凭据并明确报错，不以缓存代替本次请求成功；可选元数据接口的 HTTP 404 不清理凭据。格式错误的成功响应不使用本地值。明确撤销删除对应项；授权快照删除范围外的项；配置变更通知先保留已有值，等待后续授权快照核对。已撤销的在途请求不能重新填充本地状态。详见 [协议兼容规则](docs/protocol-compatibility.md)。
 
-高层事件刷新与 Agent 始终实时取密；高层事件处理拒绝低于事件版本的 API 凭据。业务轮换切换示例也要求实时取密，保留值不被当作新版本且不自动确认轮换。原有低层事件入口继续返回事件，由现有业务代码调用取密接口；这些取密结果同样更新 SDK 保留值。
+高层事件刷新与 PAM Agent 始终实时取密；高层事件处理拒绝低于事件版本的 API 凭据。业务轮换切换示例也要求实时取密，保留值不被当作新版本且不自动确认轮换。原有低层事件入口继续返回事件，由现有业务代码调用取密接口；这些取密结果同样更新 SDK 保留值。
 
 ## 可运行示例与文档
 
@@ -67,8 +67,8 @@ HTTP 401/403、凭据取密的 HTTP 404 和 `credential_not_found`（HTTP 400）
 
 本地测试覆盖签名协议、断线重连、首次与重连快照、慢处理、失败重试、取消、凭据保留、自动更新及权限边界。真实业务连接池切换需要在目标应用中验证。
 
-## 独立 Go Agent
+## 独立 PAM Agent
 
-Agent 入口为 `agent/cmd/jms-pam-agent`，运行逻辑位于 `agent/internal/agent`，以本机私有配置驱动默认文件、可信模板和有超时的 systemd 或固定脚本动作。服务固定为 `jms-pam-agent.service`，使用 `systemctl start jms-pam-agent`。脚本通过标准输入接收凭据，Core 不能扩大本机执行规则。取密或交付失败按 1–30 秒退避重试；交付不自动确认业务生效。Python 包不再注册 Agent 命令。
+PAM Agent 入口为 `agent/cmd/pam-agent`，运行逻辑位于 `agent/internal/agent`，以本机私有配置驱动默认文件、可信模板和有超时的 systemd 或固定脚本动作。服务固定为 `pam-agent.service`，使用 `systemctl start pam-agent`。脚本通过标准输入接收凭据，Core 不能扩大本机执行规则。取密或交付失败按 1–30 秒退避重试；交付不自动确认业务生效。Python 包不再注册 PAM Agent 命令。
 
 本地开发支持 `init-local` / `run --local`；签名授权范围仍来自 Core，本机路径和属主由当前用户配置。可选 `event_file` 追加收到、保存和交付阶段的事件元数据，不记录密码；最新密码单独保留在私有状态和交付文件中。CLI `get_accounts` 不取密码，`get_secret ACCOUNT_ID` 优先在线取密，只在 API 临时不可用时返回仍授权的保留值，JSON 标明 `source`。

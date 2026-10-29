@@ -483,13 +483,16 @@ def native_guide(language, texts):
 """
 
 
-AGENT_SAMPLE = {
-    'config_version': 1, 'endpoint': 'https://jumpserver.example.com',
+AGENT_BASE = {
+    'version': 1, 'endpoint': 'https://jumpserver.example.com',
     'app_id': '<application-id>', 'app_secret': '<application-secret>',
-    'org_id': '<org-id>', 'instance_id': 'app-node-1', 'pull_interval': 300,
-    'local_api': {'owner': 'appuser'},
+    'org_id': '<org-id>', 'pull_interval': 300,
+}
+AGENT_STORE = {
     'store': {'accounts': ['all'], 'root': '/opt/jumpserver-pam/credentials', 'format': 'json', 'owner': 'appuser'},
-    'services': [],
+}
+AGENT_SOCKET = {
+    'socket': {'path': '/run/jms-pam-agent/agent.sock', 'owner': 'appuser'},
 }
 AGENT_RULE = {
     'name': 'sample-app', 'allow_account_switch': True, 'update_on_notification': True,
@@ -518,6 +521,68 @@ AGENT_ENVIRONMENT_RULE = {
     'update_config': {'files': [{'path': '/etc/sample-app/database.env', 'format': 'environment', 'owner': 'appuser'}]},
     'reload_service': {'unit': 'sample-app.service', 'operation': 'restart'},
 }
+AGENT_SAMPLE = {
+    **AGENT_BASE, **AGENT_STORE, **AGENT_SOCKET,
+    'services': [AGENT_RULE],
+}
+AGENT_UPDATE_TEMPLATE = {
+    'files': [{
+        'path': '/etc/sample-app/credentials.json', 'format': 'template',
+        'template_file': '/etc/pam-agent/templates/credentials.json.tmpl', 'owner': 'appuser',
+    }],
+}
+AGENT_TEMPLATE = '''{
+  "database": {
+    "username": {{json (index .Credentials "<primary-account-id>").Username}},
+    "password": {{json (index .Credentials "<primary-account-id>").Secret}}
+  }
+}'''
+AGENT_UPDATE_SCRIPT = {
+    'target': '/etc/sample-app/credentials.json',
+    'script': {
+        'path': '/usr/local/libexec/pam-agent/update-credentials',
+        'args': ['/etc/sample-app/credentials.json'], 'timeout_seconds': 30,
+    },
+}
+AGENT_SCRIPT_PAYLOAD = {
+    'event': 'credentials.updated',
+    'credentials': {
+        '<primary-account-id>': {
+            'account_id': '<active-account-id>', 'username': 'db_app',
+            'secret': '<password>', 'event_id': '<event-id>',
+        },
+    },
+}
+AGENT_UPDATE_SCRIPT_SOURCE = '''#!/usr/bin/env python3
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+payload = json.load(sys.stdin)
+credential = payload["credentials"]["<primary-account-id>"]
+target = Path(sys.argv[1])
+original = target.stat()
+with target.open(encoding="utf-8") as source:
+    config = json.load(source)
+config.setdefault("database", {}).update(
+    username=credential["username"], password=credential["secret"]
+)
+
+fd, temporary = tempfile.mkstemp(prefix=".pam-agent-", dir=target.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        os.fchmod(output.fileno(), 0o600)
+        os.fchown(output.fileno(), original.st_uid, original.st_gid)
+        json.dump(config, output, ensure_ascii=False)
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, target)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+'''
 
 
 def agent_configuration_section(texts):
@@ -538,21 +603,69 @@ def agent_configuration_section(texts):
 {json.dumps([AGENT_RULE], indent=2)}
 ```
 
+### accounts
+
 {texts['aliases_model']}
 
 ```json
 {json.dumps(AGENT_MULTI_SERVICE, indent=2)}
 ```
 
-### {texts['agent_format_title']}
+### update_config
+
+{texts['update_config_methods']}
+
+#### file + fields_map
 
 {texts['agent_config_format']}
 
-{texts['services_upgrade']}
+```json
+{json.dumps({'update_config': AGENT_RULE['update_config']}, indent=2)}
+```
+
+#### files + template_file
+
+{texts['update_config_template']}
+
+```json
+{json.dumps({'update_config': AGENT_UPDATE_TEMPLATE}, indent=2)}
+```
+
+`/etc/pam-agent/templates/credentials.json.tmpl`:
+
+```gotemplate
+{AGENT_TEMPLATE}
+```
+
+{texts['update_config_payload_keys']}
+
+#### script
+
+{texts['update_config_script']}
+
+```json
+{json.dumps({'update_config': AGENT_UPDATE_SCRIPT}, indent=2)}
+```
+
+{texts['update_config_script_payload']}
+
+```json
+{json.dumps(AGENT_SCRIPT_PAYLOAD, indent=2)}
+```
+
+{texts['update_config_script_example']}
+
+`/usr/local/libexec/pam-agent/update-credentials`:
+
+```python
+{AGENT_UPDATE_SCRIPT_SOURCE.rstrip()}
+```
+
+{texts['update_config_apply']}
 
 ```bash
-sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
-sudo systemctl restart jms-pam-agent
+sudo pam-agent check-config --config /etc/jms-pam-agent/agent.json
+sudo systemctl restart pam-agent
 ```
 """
 
@@ -570,23 +683,15 @@ def agent_guide(texts):
 
 ### Linux / systemd
 
-{texts['services_upgrade']}
-
-Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
-
-```bash
-cd /path/to/pam-clients/agent
-go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
-sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
-```
+{texts['agent_setup']}
 
 {texts['agent_bootstrap']}
 
 ```bash
-chmod 0600 ./jms_pam_agent.json
-sudo /usr/local/bin/jms-pam-agent install \\
-  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
-sudo systemctl status jms-pam-agent --no-pager
+chmod 0600 ./pam-agent.json
+sudo /usr/local/bin/pam-agent install \\
+  --bootstrap ./pam-agent.json
+sudo systemctl status pam-agent --no-pager
 ```
 
 ### {texts['foreground_title']}
@@ -596,28 +701,40 @@ sudo systemctl status jms-pam-agent --no-pager
 {texts['foreground_binary']}
 
 ```bash
-chmod 0600 ./jms_pam_agent.json
-./jms-pam-agent init-local \\
-  --bootstrap ./jms_pam_agent.json \\
-  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
+chmod 0600 ./pam-agent.json
+./pam-agent init-local \\
+  --bootstrap ./pam-agent.json \\
+  --directory "$HOME/.jms-pam-agent/sample-app"
+./pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
 $agentDir = Join-Path $HOME '.jms-pam-agent\\sample-app'
-.\\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
-.\\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
+.\\pam-agent.exe init-local --bootstrap (Join-Path $PWD 'pam-agent.json') --directory $agentDir
+.\\pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. store / local_api
+## 3. {texts['agent_sample_title']}
 
-{texts['store_model']}
+{texts['configuration_blocks_help']}
 
 ```json
 {json.dumps(AGENT_SAMPLE, indent=2)}
 ```
 
+{texts['agent_instance_id']}
+
 {texts['pull_interval']}
+
+## 4. store
+
+{texts['store_purpose']}
+
+{texts['store_model']}
+
+```json
+{json.dumps(AGENT_STORE, indent=2)}
+```
 
 | {texts['configure']} | {texts['agent_default_output_title']} |
 | --- | --- |
@@ -625,9 +742,47 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\\sample-app'
 | `store.accounts: ["<account-id>"]` | {texts['store_selected_label']} |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
-| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
 {texts['store_layout']}
+
+## 5. socket
+
+{texts['socket_purpose']}
+
+{texts['socket_model']}
+
+```json
+{json.dumps(AGENT_SOCKET, indent=2)}
+```
+
+### {texts['account_lookup_title']}
+
+{texts['agent_queries']}
+
+```bash
+pam-agent get_accounts
+pam-agent get_secret '<account-id>'
+
+curl --fail --silent --show-error \\
+  --unix-socket '/run/jms-pam-agent/agent.sock' \\
+  http://localhost/v1/health
+
+curl --fail --silent --show-error \\
+  --unix-socket '/run/jms-pam-agent/agent.sock' \\
+  'http://localhost/v1/credential?account_id=<account-id>'
+```
+
+### {texts['confirmation_title']}
+
+{texts['agent_confirmation']}
+
+```bash
+pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
+```
+
+## 6. services
+
+{agent_configuration_section(texts)}
 
 ### EnvironmentFile / systemd
 
@@ -650,46 +805,15 @@ JMS_PAM_SECRET="<password>"
 EnvironmentFile=/etc/sample-app/database.env
 ```
 
-## 4. {texts['agent_rules_title']}
-
-{agent_configuration_section(texts)}
-
-## 5. {texts['local_api']}
-
-### {texts['account_lookup_title']}
-
-{texts['agent_queries']}
-
-```bash
-jms-pam-agent get_accounts
-jms-pam-agent get_secret '<account-id>'
-
-curl --fail --silent --show-error \\
-  --unix-socket '/run/jms-pam-agent/agent.sock' \\
-  http://localhost/v1/health
-
-curl --fail --silent --show-error \\
-  --unix-socket '/run/jms-pam-agent/agent.sock' \\
-  'http://localhost/v1/credential?account_id=<account-id>'
-```
-
-### {texts['confirmation_title']}
-
-{texts['agent_confirmation']}
-
-```bash
-jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
-```
-
-## 6. {texts['validation_title']}
+## 7. {texts['validation_title']}
 
 {texts['agent_validation']}
 
 ### {texts['troubleshooting']}
 
 ```bash
-sudo systemctl status jms-pam-agent --no-pager
-sudo journalctl -u jms-pam-agent -n 100 --no-pager
+sudo systemctl status pam-agent --no-pager
+sudo journalctl -u pam-agent -n 100 --no-pager
 ```
 
 {texts['recovery']}
@@ -697,7 +821,7 @@ sudo journalctl -u jms-pam-agent -n 100 --no-pager
 
 
 def python_guide(texts):
-    return f"""# JumpServer PAM Python SDK / Agent
+    return f"""# JumpServer PAM Python SDK / PAM Agent
 
 {texts["python_intro"]}
 

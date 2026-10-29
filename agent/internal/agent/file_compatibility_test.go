@@ -54,13 +54,13 @@ func TestV1ConfigurationFixturesKeepDefaultsAndOriginalFiles(t *testing.T) {
 			if err := json.Unmarshal(raw, &versioned); err != nil {
 				t.Fatal(err)
 			}
-			versioned["config_version"] = json.RawMessage("1")
+			versioned["version"] = json.RawMessage("1")
 			if err := writeJSON(path, versioned); err != nil {
 				t.Fatal(err)
 			}
 			explicit, err := LoadConfig(path)
 			if err != nil || !reflect.DeepEqual(legacy, explicit) {
-				t.Fatal("adding config_version changed delivery behavior", err)
+				t.Fatal("adding version changed delivery behavior", err)
 			}
 		})
 	}
@@ -165,14 +165,14 @@ func TestPreparationVersionsNewFilesAndKeepsExistingConfiguration(t *testing.T) 
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(installed)
-	if err != nil || !bytes.Contains(raw, []byte(`"config_version": 1`)) {
+	if err != nil || !bytes.Contains(raw, []byte(`"version": 1`)) {
 		t.Fatal("new service configuration did not record its format version")
 	}
 	local, err := PrepareLocal(context.Background(), bootstrap, filepath.Join(root, "local"), config.InstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw, err := os.ReadFile(local); err != nil || !bytes.Contains(raw, []byte(`"config_version": 1`)) {
+	if raw, err := os.ReadFile(local); err != nil || !bytes.Contains(raw, []byte(`"version": 1`)) {
 		t.Fatal("new foreground configuration did not record its format version")
 	}
 	localConfig, err := LoadConfig(local)
@@ -207,12 +207,12 @@ func TestUnsupportedFileVersionsAreRejectedWithoutOverwrite(t *testing.T) {
 	if err := json.Unmarshal(configRaw, &object); err != nil {
 		t.Fatal(err)
 	}
-	object["config_version"] = json.RawMessage("3")
+	object["version"] = json.RawMessage("3")
 	configRaw, _ = json.Marshal(object)
 	if err := atomicWrite(configPath, configRaw, 0600, -1, -1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "config_version 3") {
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "version 3") {
 		t.Fatal("unsupported configuration lacked a clear error")
 	}
 	if actual, _ := os.ReadFile(configPath); !bytes.Equal(configRaw, actual) {

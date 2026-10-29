@@ -22,8 +22,8 @@ type StoreConfiguration struct {
 	Owner    string   `json:"owner,omitempty"`
 }
 
-type LocalAPIConfiguration struct {
-	Socket string `json:"socket_path,omitempty"`
+type SocketConfiguration struct {
+	Socket string `json:"path,omitempty"`
 	Owner  string `json:"owner,omitempty"`
 }
 
@@ -101,7 +101,7 @@ func currentServiceFieldNames(message string) string {
 }
 
 func (c Config) modern() bool {
-	return c.Store != nil || c.Services != nil || c.LocalAPI != nil
+	return c.Store != nil || c.Services != nil || c.Socket != nil
 }
 
 // Storage and service consumption use the same v1 format as the client protocol.
@@ -129,7 +129,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	}
-	object["config_version"] = json.RawMessage("1")
+	object["version"] = json.RawMessage("1")
 	return json.Marshal(object)
 }
 
@@ -138,9 +138,9 @@ func (c Config) normalized() Config {
 		return c
 	}
 	c.ConfigVersion = 1
-	api := LocalAPIConfiguration{}
-	if c.LocalAPI != nil {
-		api = *c.LocalAPI
+	api := SocketConfiguration{}
+	if c.Socket != nil {
+		api = *c.Socket
 	}
 	if api.Socket == "" {
 		api.Socket = DefaultSocket
@@ -153,7 +153,7 @@ func (c Config) normalized() Config {
 			api.Owner = current.Username
 		}
 	}
-	c.LocalAPI = &api
+	c.Socket = &api
 	c.Delivery = DeliveryConfiguration{Mode: "socket", Socket: api.Socket, User: api.Owner, Root: filepath.Join(filepath.Dir(c.StateFile), "credentials")}
 	if c.Store != nil {
 		store := *c.Store
@@ -171,7 +171,7 @@ func (c Config) normalized() Config {
 
 func (c Config) validateServices() error {
 	if c.ConfigVersion != 0 && c.ConfigVersion != 1 {
-		return unsupportedVersion("configuration", "config_version", c.ConfigVersion, CurrentConfigVersion)
+		return unsupportedVersion("configuration", "version", c.ConfigVersion, CurrentConfigVersion)
 	}
 	if len(c.Rules) > 0 {
 		return errors.New("services cannot be combined with legacy rules")

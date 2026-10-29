@@ -42,6 +42,7 @@ type State struct {
 	StateVersion        int                          `json:"state_version"`
 	Events              map[string]pam.Event         `json:"pending_events"`
 	Identity            string                       `json:"identity"`
+	InstanceID          string                       `json:"instance_id,omitempty"`
 	LocalDeliveryHash   string                       `json:"local_delivery_hash"`
 	Latest              map[string]Credential        `json:"credentials"`
 	Delivered           map[string]int64             `json:"delivered"`
@@ -73,6 +74,9 @@ type Agent struct {
 }
 
 func New(config Config, remote Remote) (*Agent, error) {
+	if err := config.ensureInstanceID(); err != nil {
+		return nil, err
+	}
 	config = config.normalized()
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -115,8 +119,9 @@ func New(config Config, remote Remote) (*Agent, error) {
 		return nil, err
 	}
 	if state.Identity != expectedIdentity {
-		return nil, errors.New("retained Agent state belongs to another identity or instance")
+		return nil, errors.New("retained PAM Agent state belongs to another identity or instance")
 	}
+	state.InstanceID = config.InstanceID
 	if state.Latest == nil {
 		state.Latest = map[string]Credential{}
 	}
@@ -167,6 +172,11 @@ func New(config Config, remote Remote) (*Agent, error) {
 	}
 	if err := service.restoreAccountUsage(); err != nil {
 		return nil, err
+	}
+	if config.instanceIDGenerated {
+		if err := service.persist(); err != nil {
+			return nil, err
+		}
 	}
 	return service, nil
 }
@@ -927,7 +937,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	schedule := func(err error) {
 		next := interval
 		if err != nil {
-			log.Printf("Agent synchronization or delivery failed: %T", err)
+			log.Printf("PAM Agent synchronization or delivery failed: %T", err)
 			next = delay
 			delay *= 2
 			if delay > 30*time.Second {

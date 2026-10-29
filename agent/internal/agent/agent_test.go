@@ -162,7 +162,7 @@ func TestLegacySubscriptionKeyMigratesToOneAccountFile(t *testing.T) {
 			t.Fatalf("legacy default file remains: %v", err)
 		}
 		if _, exists := restarted.state.Latest[oldKey]; exists {
-			t.Fatal("legacy subscription secret remains in Agent state")
+			t.Fatal("legacy subscription secret remains in PAM Agent state")
 		}
 	}
 	if _, err = os.Stat(filepath.Join(config.Delivery.Root, newKey+".json")); err != nil {
@@ -868,7 +868,7 @@ func TestMappedBusinessFilesFollowAccountSwitch(t *testing.T) {
 			}
 			decoded, err := decodeConfig(encoded)
 			if err != nil || decoded.Rules[0].ConfigUpdate.FieldsMap["DB_USER"] != "username" {
-				t.Fatal("fields_map was not preserved in Agent configuration", err)
+				t.Fatal("fields_map was not preserved in PAM Agent configuration", err)
 			}
 			if err := Deliver(context.Background(), config, latest, map[string]bool{"policy": true}); err != nil {
 				t.Fatal(err)
@@ -1205,7 +1205,7 @@ func TestTemplateFailureDoesNotMutateFilesAndScriptTimeout(t *testing.T) {
 	}
 }
 
-func TestConfigCapabilitiesPathsAndLocalAPI(t *testing.T) {
+func TestConfigCapabilitiesPathsAndAPI(t *testing.T) {
 	config, remote, service := fixture(t)
 	config.Rules = []Rule{{Keys: []string{"db"}, Action: &Action{Type: "script", Path: "sh -c echo secret"}}}
 	if config.Validate() == nil {
@@ -1246,8 +1246,8 @@ func TestFixedServiceAndPrivateConfig(t *testing.T) {
 	if _, err := LoadConfig(path); err == nil {
 		t.Fatal("public identity file accepted")
 	}
-	unit := Unit("/usr/local/bin/jms-pam-agent", DefaultConfig)
-	if ServiceName != "jms-pam-agent.service" || !strings.Contains(unit, "/etc/jms-pam-agent/agent.json") {
+	unit := Unit("/usr/local/bin/pam-agent", DefaultConfig)
+	if ServiceName != "pam-agent.service" || !strings.Contains(unit, "/etc/jms-pam-agent/agent.json") {
 		t.Fatal("service name or path is not fixed")
 	}
 }
@@ -1333,10 +1333,10 @@ func TestRunServesRetainedCredentialsOfflineAndStopsCleanly(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Agent did not join its reader and stop")
+		t.Fatal("PAM Agent did not join its reader and stop")
 	}
 	if _, err = os.Lstat(config.Delivery.Socket); !os.IsNotExist(err) {
-		t.Fatal("Agent socket was left behind")
+		t.Fatal("PAM Agent socket was left behind")
 	}
 }
 
@@ -1383,7 +1383,7 @@ func TestNativeAgentAutomaticallyRefreshesAndRestartsOffline(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
-			t.Error("native Agent failed to stop")
+			t.Error("native PAM Agent failed to stop")
 		}
 	}()
 	waitRevision := func(revision int64) {

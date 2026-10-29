@@ -1,4 +1,4 @@
-"""Start/stop the two demo apps and their foreground Agent on this workstation."""
+"""Start/stop the two demo apps and their foreground PAM Agent on this workstation."""
 
 import argparse
 import json
@@ -34,10 +34,10 @@ def main():
             if pid and running(pid, root / config_name):
                 os.kill(pid, signal.SIGTERM)
                 print("Stopping", unit, "PID", pid)
-        return  # SIGTERM handlers release live DB connections and the Agent socket.
-    binary = root / "jms-pam-agent"
+        return  # SIGTERM handlers release live DB connections and the PAM Agent socket.
+    binary = root / "pam-agent"
     if not binary.exists():
-        subprocess.run(["go", "build", "-o", str(binary), "./cmd/jms-pam-agent"],
+        subprocess.run(["go", "build", "-o", str(binary), "./cmd/pam-agent"],
                        cwd=Path(__file__).resolve().parents[2] / "agent", check=True)
     for unit, config_name in units:
         if pids.get(unit) and running(pids[unit], root / config_name):
@@ -72,7 +72,7 @@ def main():
                 raise RuntimeError(f"Demo did not become ready at {url}; inspect its private log")
             time.sleep(0.2)
         urls.append(url)
-    print("Ready: SDK", urls[0], "· Agent", urls[1])
+    print("Ready: SDK", urls[0], "· PAM Agent", urls[1])
 
 
 if __name__ == "__main__":

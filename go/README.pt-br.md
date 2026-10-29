@@ -154,12 +154,12 @@ WatchEvents espera na goroutine; StartEvents não garante a sincronização inic
 
 ### Credenciais mais recentes e indisponibilidade do servidor
 
-O SDK consulta primeiro a API e atualiza o valor retido sem voltar a versões anteriores. Apenas timeout, erro de rede ou HTTP 5xx permitem um valor anterior do mesmo seletor, marcado como local e sem expiração temporal. Clones e reinícios do SDK começam sem cache. HTTP 401/403/404 ou credential_not_found (400) apagam valores; 426 e respostas inválidas falham sem fallback. Uma API opcional de metadados ausente não limpa o cache. Agent persiste contas declaradas em store/services; uma consulta avulsa não declarada não é salva automaticamente. Revogações explícitas valem antes da atualização HTTP, mesmo offline. Snapshots push não definem toda a autorização de armazenamento; a reconciliação bem-sucedida verifica os direitos atuais.
+O SDK consulta primeiro a API e atualiza o valor retido sem voltar a versões anteriores. Apenas timeout, erro de rede ou HTTP 5xx permitem um valor anterior do mesmo seletor, marcado como local e sem expiração temporal. Clones e reinícios do SDK começam sem cache. HTTP 401/403/404 ou credential_not_found (400) apagam valores; 426 e respostas inválidas falham sem fallback. Uma API opcional de metadados ausente não limpa o cache. PAM Agent persiste contas declaradas em store/services; uma consulta avulsa não declarada não é salva automaticamente. Revogações explícitas valem antes da atualização HTTP, mesmo offline. Snapshots push não definem toda a autorização de armazenamento; a reconciliação bem-sucedida verifica os direitos atuais.
 
 - `account.FromLocal`
 - `GetAccountFresh(ctx, accountID)`
 
-Com escuta gerenciada ativa, snapshot e credential.updated consultam automaticamente, substituem o valor e chamam o manipulador. Falha na atualização mantém o anterior e tenta novamente. O Agent também consulta após notificações e mantém os dados durante falhas do servidor. Use as chamadas que exigem a API abaixo para atualizar ou trocar conexões; uma credencial retida não é uma versão recém-obtida nem confirma rotações automaticamente.
+Com escuta gerenciada ativa, snapshot e credential.updated consultam automaticamente, substituem o valor e chamam o manipulador. Falha na atualização mantém o anterior e tenta novamente. O PAM Agent também consulta após notificações e mantém os dados durante falhas do servidor. Use as chamadas que exigem a API abaixo para atualizar ou trocar conexões; uma credencial retida não é uma versão recém-obtida nem confirma rotações automaticamente.
 
 Quando ocioso, envia ping a cada 10 segundos; cerca de 30 segundos sem mensagens causam reconexão, com espera exponencial de 1–30 segundos e nova assinatura. O snapshot restaura o estado atual sem reproduzir eventos passados.
 
@@ -313,6 +313,6 @@ Falhas HTTP, rede, autenticação e decodificação usam o tipo de erro SDK com 
 
 `PAMError`
 
-Todos os SDKs usam protocolo versão 1; Agent usa esquema de configuração versão 1. Em client_upgrade_required (HTTP 426), verifique compatibilidade e atualize. Campos opcionais e notificações desconhecidos são tolerados; não aplique nem confirme políticas não suportadas. Os recibos são automáticos e não provam aplicação de credenciais. Os metadados do cliente podem incluir server_capabilities. Ausente ou null significa desconhecido; novos nomes são tolerados. A lista descreve recursos do servidor, não permissões.
+Todos os SDKs usam protocolo versão 1; PAM Agent usa esquema de configuração versão 1. Em client_upgrade_required (HTTP 426), verifique compatibilidade e atualize. Campos opcionais e notificações desconhecidos são tolerados; não aplique nem confirme políticas não suportadas. Os recibos são automáticos e não provam aplicação de credenciais. Os metadados do cliente podem incluir server_capabilities. Ausente ou null significa desconhecido; novos nomes são tolerados. A lista descreve recursos do servidor, não permissões.
 
 <!-- sdk-doc:end -->

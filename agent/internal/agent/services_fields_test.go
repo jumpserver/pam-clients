@@ -8,7 +8,7 @@ import (
 )
 
 func TestServiceFieldNamesRoundTrip(t *testing.T) {
-	current := `{"config_version":1,"services":[{"name":"app","accounts":[{"id":"account-a"}],"update_config":{"file":"/etc/app.env","fields_map":{"DB_PASSWORD":"secret"}},"reload_service":{"unit":"app.service","operation":"restart"},"app_check":{"path":"/usr/local/bin/check-app","confirm_on_success":true}}]}`
+	current := `{"version":1,"services":[{"name":"app","accounts":[{"id":"account-a"}],"update_config":{"file":"/etc/app.env","fields_map":{"DB_PASSWORD":"secret"}},"reload_service":{"unit":"app.service","operation":"restart"},"app_check":{"path":"/usr/local/bin/check-app","confirm_on_success":true}}]}`
 	// The internal representation keeps existing persisted fingerprints stable,
 	// while the configuration file accepts and exports only the new field names.
 	oldConfig := Config{ConfigVersion: 1, Services: []Rule{{
@@ -59,7 +59,7 @@ func TestEmptyServicesRemainV1AfterExport(t *testing.T) {
 	if err != nil || loaded.ConfigVersion != 1 || !loaded.modern() {
 		t.Fatalf("empty services lost the v1 service configuration: %v", err)
 	}
-	if _, err = decodeConfig([]byte(`{"config_version":2,"services":[]}`)); err == nil {
+	if _, err = decodeConfig([]byte(`{"version":2,"services":[]}`)); err == nil {
 		t.Fatal("an undeclared configuration version was accepted")
 	}
 }

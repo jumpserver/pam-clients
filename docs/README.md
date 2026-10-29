@@ -6,10 +6,11 @@ SDK 编程语言为 Python、Go、Java 和 Node.js；cURL 保留为协议调试�
 
 - Python 的英文与简体中文 README 保留手写的完整参考说明；其中 `agent-doc`、`sdk-doc` 标记内的文档中心内容统一由 `build.py` 和翻译文件生成。
 - 其他语言的 Python 接入指南、Go/Java/Node.js SDK 指南和 cURL 调试指南从 `translations/*.json` 生成。
-- SDK 功能以 Python 为准。四种 SDK 统一按接入前提、安装配置、首次取密、托管事件、接口参考、验收排障分组；Agent 单独按安装、交付方式、业务规则、本地查询与确认分组。SDK 文档不要混入 Agent 安装配置。
+- SDK 功能以 Python 为准。四种 SDK 统一按接入前提、安装配置、首次取密、托管事件、接口参考、验收排障分组；PAM Agent 单独按安装、交付方式、业务规则、本地查询与确认分组。SDK 文档不要混入 PAM Agent 安装配置。
 - 方法映射、运行命令、配置字段在 `build.py` 中统一维护；原生 SDK 的取密与事件示例直接读取各语言的可编译示例源码，翻译仅修改正文。
 - 事件处理、最新凭据保留及重连说明也由 `build.py` 和翻译文件生成；新增钩子示例同时维护 `HOOK_EXAMPLES`，强制实时取密与本地来源标记维护在 `LATEST_CREDENTIAL_APIS`。
 - 文档中心读取各目录的 `README.<locale>.md`，不在请求过程中生成或翻译文档。
+- PAM Agent 接入文档面向部署使用者，采用二进制下载、校验、安装和配置流程。Go 环境准备、源码编译、测试与调试说明只放在仓库根 README 和开发文档中；前台运行仍作为正常部署方式保留。
 
 从仓库根目录生成并检查：
 
@@ -31,6 +32,6 @@ python3 tests/run.py
 
 需要 Go、Java、Maven、Node.js，以及已安装 Python SDK 的 Python 环境；可用 `JMS_MAVEN` 指定 Maven 路径。测试使用本地协议服务，实际应用连接切换和 Core 联调需在目标环境另行验证。
 
-## Go Agent
+## PAM Agent
 
-独立 Agent 入口为 `agent/cmd/jms-pam-agent`，配置和交付说明位于 `agent/README.*.md`。Python 包只提供 SDK，运行 Agent 不需要 Python。服务名称固定为 `jms-pam-agent`；生成文档不得拼接 configuration ID 作为服务名。Agent 文档通过翻译键 `agent_setup`、`agent_rules`、`native_agent` 等维护。
+独立 PAM Agent 入口为 `agent/cmd/pam-agent`，配置和交付说明位于 `agent/README.*.md`。Python 包只提供 SDK，运行 PAM Agent 不需要 Python。服务名称固定为 `pam-agent`；生成文档不得拼接 configuration ID 作为服务名。PAM Agent 文档通过翻译键 `agent_setup`、`agent_rules`、`native_agent` 等维护。

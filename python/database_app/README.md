@@ -1,6 +1,6 @@
 # PostgreSQL + Redis 实际连接 Demo
 
-一个 Python 应用，两种接入方式：SDK 直接访问 Core；Agent 应用仅访问本机 Unix Socket，不持有 JumpServer 应用密钥。两份应用使用不同实例身份，默认分别运行在 `http://127.0.0.1:8098` 和 `http://127.0.0.1:8099`。
+一个 Python 应用，两种接入方式：SDK 直接访问 Core；PAM Agent 应用仅访问本机 Unix Socket，不持有 JumpServer 应用密钥。两份应用使用不同实例身份，默认分别运行在 `http://127.0.0.1:8098` 和 `http://127.0.0.1:8099`。
 
 每两秒使用长期连接更新、读取 PostgreSQL 专用计数表，并对 Redis 专用计数器执行 `INCRBY` / `GET`。每个实例只占一行和一个 Redis 键，避免长期运行不断积累记录。页面显示数据库返回的真实身份、账号版本、成功读写次数与切换历史，不显示密码。新凭据先建立连接并验证读写，再替换旧连接并关闭旧会话，最后确认事件。相同账号、版本和密码不会反复重建连接；数据库连接断开后会重新建立。
 
@@ -31,13 +31,13 @@ curl --fail http://127.0.0.1:8099/health
 
 已有 Core virtualenv 同时安装了 `psycopg2`、`redis`、SDK 依赖时，可以用它运行 demo，无需另建环境。SDK 从当前源码目录导入，不需要应用侧 `jms_pam_config.py`。
 
-生成文件：`resources.json` 保存专用数据库账号；`manifest.json` 保存 Core 对象 ID；`sdk.json` / `agent-app.json` 是业务应用配置；`agent.json` 是 Agent 配置；`agent/state.json` 保存 Agent 进度。含明文凭据的配置使用 `0600`，目录使用 `0700`。Redis ACL 文件只包含密码摘要，供容器内 Redis 用户读取。新 Redis 使用自己的 AOF volume，A/B ACL 用户仅能操作 `pam-demo:*` 键。
+生成文件：`resources.json` 保存专用数据库账号；`manifest.json` 保存 Core 对象 ID；`sdk.json` / `agent-app.json` 是业务应用配置；`agent.json` 是 PAM Agent 配置；`agent/state.json` 保存 PAM Agent 进度。含明文凭据的配置使用 `0600`，目录使用 `0700`。Redis ACL 文件只包含密码摘要，供容器内 Redis 用户读取。新 Redis 使用自己的 AOF volume，A/B ACL 用户仅能操作 `pam-demo:*` 键。
 
 ## 凭据切换验证
 
 准备的应用只授权四个专用测试账号，绑定 PostgreSQL、Redis 各一个 A/B 策略。可在 JumpServer 中查看 `PAM Database Demo <随机后缀>` 的连接实例、取密、应用状态和确认记录。
 
-开发验收可以使用下面的受控发布工具：它先真实连接备用账号，再调用 Core 发布切换，SDK / Agent 通过真实 Core API、事件及本地 Socket 完成切换与确认。
+开发验收可以使用下面的受控发布工具：它先真实连接备用账号，再调用 Core 发布切换，SDK / PAM Agent 通过真实 Core API、事件及本地 Socket 完成切换与确认。
 
 ```bash
 /Users/guang/projects/jumpserver/.venv/bin/python -m database_app.core \
@@ -72,7 +72,7 @@ core_python=/Users/guang/projects/jumpserver/.venv/bin/python
 
 ## 同账号密码变更订阅
 
-在已有专用 PG/Redis 资源上增加另一个应用，只授权当前两个测试账号，并建立明确选择账号的订阅策略。原 A/B 配置保持不变。订阅 SDK / Agent 分别使用 `8108` / `8109`，运行配置位于 `demo_root/subscription`。
+在已有专用 PG/Redis 资源上增加另一个应用，只授权当前两个测试账号，并建立明确选择账号的订阅策略。原 A/B 配置保持不变。订阅 SDK / PAM Agent 分别使用 `8108` / `8109`，运行配置位于 `demo_root/subscription`。
 
 ```bash
 # 以下命令仍在 clients/python 目录执行。
@@ -97,9 +97,9 @@ SDK 页面的 `recent_events` 可以观察三个阶段，共用一个 operation_
 ```bash
 /tmp/pam-demo-venv/bin/python -m database_app.run stop --root "$demo_root"
 # 更新源码/SDK 后使用同一运行目录重新启动，配置及实例身份不变。
-# 更新 Agent 时，停止进程后从 clients/agent 目录重新编译：
+# 更新 PAM Agent 时，停止进程后从 clients/agent 目录重新编译：
 cd /Users/guang/projects/jumpserver/apps/accounts/clients/agent
-go build -o "$demo_root/jms-pam-agent" ./cmd/jms-pam-agent
+go build -o "$demo_root/pam-agent" ./cmd/pam-agent
 ```
 
 停止应用会关闭数据库连接；专用 Redis 和专用 PostgreSQL 数据保留以便继续开发。容器、volume、数据库和角色的名称都在私有 `resources.json` 中，需要清理时只删除其中列出的 demo 资源。

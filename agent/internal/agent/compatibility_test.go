@@ -2,14 +2,78 @@ package agent
 
 import (
 	"encoding/json"
+	"os/user"
 	"reflect"
 	"strings"
 	"testing"
 )
 
+func TestConfigurationFieldAliases(t *testing.T) {
+	current, err := decodeConfig([]byte(`{"version":1,"socket":{"path":"/run/app/agent.sock","owner":"appuser"},"services":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		`{"version":1,"socket":{"socket_path":"/run/app/agent.sock","owner":"appuser"},"services":[]}`,
+		`{"config_version":1,"local_api":{"socket_path":"/run/app/agent.sock","owner":"appuser"},"services":[]}`,
+		`{"version":1,"local_api":{"socket_path":"/run/app/agent.sock","owner":"appuser"},"services":[]}`,
+		`{"config_version":1,"socket":{"socket_path":"/run/app/agent.sock","owner":"appuser"},"services":[]}`,
+	} {
+		legacy, err := decodeConfig([]byte(raw))
+		if err != nil || !reflect.DeepEqual(current, legacy) {
+			t.Fatalf("renaming fields changed the configuration: %v", err)
+		}
+		encoded, err := json.Marshal(legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &object); err != nil {
+			t.Fatal(err)
+		}
+		if object["version"] == nil || object["socket"] == nil || object["config_version"] != nil || object["local_api"] != nil {
+			t.Fatal("new configuration did not use the canonical field names")
+		}
+		var socket map[string]json.RawMessage
+		if err := json.Unmarshal(object["socket"], &socket); err != nil || socket["path"] == nil || socket["socket_path"] != nil {
+			t.Fatal("new socket configuration did not use path")
+		}
+	}
+	for _, raw := range []string{
+		`{"version":1,"config_version":1}`,
+		`{"socket":{},"local_api":{}}`,
+		`{"config_version":2}`, `{"config_version":null}`,
+		`{"CONFIG_VERSION":2}`, `{"VERSION":2}`,
+		`{"Socket":{}}`, `{"LOCAL_API":{}}`, `{"api":{}}`,
+		`{"socket":{"path":"/run/app/agent.sock","socket_path":"/run/app/agent.sock"}}`,
+		`{"socket":{"Path":"/run/app/agent.sock"}}`,
+		`{"socket":{"SOCKET_PATH":"/run/app/agent.sock"}}`,
+		`{"socket":{"unexpected":true}}`, `{"socket":[]}`,
+	} {
+		if _, err := decodeConfig([]byte(raw)); err == nil {
+			t.Fatalf("invalid or ambiguous configuration was accepted: %s", raw)
+		}
+	}
+}
+
+func TestOmittedOwnersDefaultToCurrentUser(t *testing.T) {
+	current, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := (Config{Store: &StoreConfiguration{Accounts: []string{"all"}}}).normalized()
+	if config.Socket.Owner != current.Username || config.Store.Owner != current.Username || config.Delivery.User != current.Username {
+		t.Fatal("omitted owners did not use the current user")
+	}
+	config = (Config{Store: &StoreConfiguration{Owner: "appuser"}}).normalized()
+	if config.Socket.Owner != "appuser" || config.Store.Owner != "appuser" {
+		t.Fatal("explicit application owner was not retained")
+	}
+}
+
 func TestLocalFormatVersionValidation(t *testing.T) {
 	for _, format := range []struct{ kind, field string }{
-		{"configuration", "config_version"}, {"state", "state_version"},
+		{"configuration", "version"}, {"state", "state_version"},
 	} {
 		for _, test := range []struct {
 			name, value, wantError string
@@ -70,7 +134,7 @@ func TestConfigCompatibilityDiagnostics(t *testing.T) {
 	}
 	config, err := decodeConfig([]byte(`{"instance_id":"stable-instance"}`))
 	if err != nil || config.ConfigVersion != 1 {
-		t.Fatalf("missing config_version was not normalized in memory: %v", err)
+		t.Fatalf("missing version was not normalized in memory: %v", err)
 	}
 	// Programmatic legacy configurations are still valid as version zero, but
 	// an explicit JSON zero is covered by the version validation above.
@@ -82,7 +146,7 @@ func TestConfigCompatibilityDiagnostics(t *testing.T) {
 		t.Fatal("newly written legacy configuration has no format version")
 	}
 	config.ConfigVersion = 3
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "config_version") {
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "version") {
 		t.Fatal("programmatic unsupported configuration version was accepted")
 	}
 }

@@ -32,7 +32,7 @@ func securePath(path string) error {
 	}
 	rel, err := filepath.Rel(home, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errors.New("Windows Agent paths must stay below the current user's home directory")
+		return errors.New("Windows PAM Agent paths must stay below the current user's home directory")
 	}
 	for current := path; ; current = filepath.Dir(current) {
 		info, statErr := os.Lstat(current)
@@ -49,7 +49,7 @@ func securePath(path string) error {
 				return err
 			}
 			if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || info.Mode()&os.ModeSymlink != 0 {
-				return errors.New("Agent paths cannot contain links or reparse points")
+				return errors.New("PAM Agent paths cannot contain links or reparse points")
 			}
 			if current != path && !info.IsDir() {
 				return errors.New("path ancestor is not a directory")
@@ -64,7 +64,7 @@ func securePath(path string) error {
 			return nil
 		}
 		if filepath.Dir(current) == current {
-			return errors.New("Agent path is outside the current user's home directory")
+			return errors.New("PAM Agent path is outside the current user's home directory")
 		}
 	}
 }
@@ -81,11 +81,11 @@ func trustedACL(path string) error {
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !trustedSID(owner, current) {
-		return errors.New("Agent path must have trusted Windows ownership")
+		return errors.New("PAM Agent path must have trusted Windows ownership")
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {
-		return errors.New("Agent path must have a private Windows ACL")
+		return errors.New("PAM Agent path must have a private Windows ACL")
 	}
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -96,7 +96,7 @@ func trustedACL(path string) error {
 			continue
 		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !trustedSID((*windows.SID)(unsafe.Pointer(&ace.SidStart)), current) {
-			return errors.New("Agent path must have a private Windows ACL")
+			return errors.New("PAM Agent path must have a private Windows ACL")
 		}
 	}
 	return nil
@@ -199,7 +199,7 @@ func preparePrivateDirectory(path string, mode os.FileMode) error {
 		}
 		info, err := os.Lstat(current)
 		if err != nil || !info.IsDir() {
-			return errors.New("Agent directory path is not a private directory")
+			return errors.New("PAM Agent directory path is not a private directory")
 		}
 		if err := securePath(current); err != nil {
 			return err
@@ -224,7 +224,7 @@ func privateBackupDirectory(path string) error {
 
 func atomicWrite(path string, data []byte, mode os.FileMode, uid, gid int) error {
 	if uid >= 0 || gid >= 0 {
-		return errors.New("Windows Agent delivery can only use the current user")
+		return errors.New("Windows PAM Agent delivery can only use the current user")
 	}
 	if err := secureTarget(path); err != nil {
 		return err
@@ -276,7 +276,7 @@ func ownerIDs(username string) (int, int, error) {
 		return 0, 0, err
 	}
 	if account.Uid != current.Uid {
-		return 0, 0, errors.New("Windows Agent delivery requires the current user")
+		return 0, 0, errors.New("Windows PAM Agent delivery requires the current user")
 	}
 	return -1, -1, nil
 }

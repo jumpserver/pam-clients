@@ -90,15 +90,15 @@ def provision(root, endpoint):
                                "credential_key": services["postgresql"]["credential_key"]},
                "redis": {"host": "127.0.0.1", "port": resources["redis_port"],
                          "credential_key": services["redis"]["credential_key"]}}
-    private_json(root / "sdk.json", {"config_version": 1, "mode": "sdk", "instance_id": f"pam-demo-sdk-{tag}",
+    private_json(root / "sdk.json", {"version": 1, "mode": "sdk", "instance_id": f"pam-demo-sdk-{tag}",
                                      "http_port": 8098, "pam": pam, **targets})
     agent_root = root / "agent"
     socket_path = str(agent_root / "run/agent.sock")
-    private_json(root / "agent-app.json", {"config_version": 1, "mode": "agent",
+    private_json(root / "agent-app.json", {"version": 1, "mode": "agent",
                                            "instance_id": f"pam-demo-agent-app-{tag}", "http_port": 8099,
                                            "agent_socket": socket_path, **targets})
     agent_pam = {key: value for key, value in pam.items() if key != "timeout"}
-    private_json(root / "agent.json", {"config_version": 1, **agent_pam,
+    private_json(root / "agent.json", {"version": 1, **agent_pam,
                                        "instance_id": f"pam-demo-agent-{tag}", "pull_interval": 2,
                                        "state_file": str(agent_root / "state.json"),
                                        "event_file": str(agent_root / "events.jsonl"),

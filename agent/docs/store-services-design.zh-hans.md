@@ -1,6 +1,6 @@
 # PAM Agent store / services 配置
 
-Core 与 Agent 统一使用协议版本 1 和 `config_version: 1`。完整样例见 [store-services.json](../examples/store-services.json)，接入说明由 [docs/build.py](../../docs/build.py) 统一生成。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。
+Core 与 PAM Agent 统一使用协议版本 1 和 `version: 1`。完整样例见 [store-services.json](../examples/store-services.json)，接入说明由 [docs/build.py](../../docs/build.py) 统一生成。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。
 
 迁移配置时核对旧 delivery 输出位置，按需调整业务读取路径；旧版输出文件不在新版 store 的文件记录中，不会自动删除。新版只清理自身记录的标准存储文件，不删除业务配置文件。
 
@@ -12,9 +12,9 @@ Core 与 Agent 统一使用协议版本 1 和 `config_version: 1`。完整样例
 - 内部缓存共享凭据获取和版本管理。没有 store 不代表不保存私有运行状态。
 - 订阅提供通知，加快更新，不决定本地存储范围；未订阅的账号通过定时同步更新。
 
-同步需求是 store 声明与 services 引用账号的并集，受服务端授权约束。all 包含后续新增授权账号，撤销授权后清理 Agent 管理的标准文件。收到明确撤销通知时，先撤销本地访问并清理对应文件，再尝试刷新；Core 暂时不可达也不能保留已撤销的标准文件。
+同步需求是 store 声明与 services 引用账号的并集，受服务端授权约束。all 包含后续新增授权账号，撤销授权后清理 PAM Agent 管理的标准文件。收到明确撤销通知时，先撤销本地访问并清理对应文件，再尝试刷新；Core 暂时不可达也不能保留已撤销的标准文件。
 
-store 按实际 account_id 生成单独的 `.json` 或 `.env` 文件，A/B 账号也分别保存。`local_api.owner` 控制 Socket 访问及业务输出的默认属主，默认使用 store.owner，再回退至 Agent 运行用户。配置、状态和事件日志继续使用默认私有路径；本机初始化会改为当前用户目录。
+store 按实际 account_id 生成单独的 `.json` 或 `.env` 文件，A/B 账号也分别保存。`socket.owner` 控制 Socket 访问及业务输出的默认属主，默认使用 store.owner，再回退至 PAM Agent 运行用户。配置、状态和事件日志继续使用默认私有路径；本机初始化会改为当前用户目录。
 
 ## 定时拉取
 
@@ -27,13 +27,13 @@ store 按实际 account_id 生成单独的 `.json` 或 `.env` 文件，A/B 账�
 两个行为开关均放在 service 层：
 
 - `allow_account_switch` 默认 false。true 表示：有明确 A/B 策略关联时跟随当前生效账号，只需声明 A；没有关联时固定使用声明的账号。关联有歧义或授权不足时，该业务失败，不能静默回退到 A。
-- `update_on_notification` 默认 true。true 在通知到来、凭据取得后立即执行该业务的更新流程；false 等下一次定时同步，默认周期 300 秒。它不关闭 Agent 通知、store 更新或授权撤销，也不代表手动模式。
+- `update_on_notification` 默认 true。true 在通知到来、凭据取得后立即执行该业务的更新流程；false 等下一次定时同步，默认周期 300 秒。它不关闭 PAM Agent 通知、store 更新或授权撤销，也不代表手动模式。
 
 启动及定时同步会处理所有有待更新的业务。连续通知不会重置定时同步的截止时间。相同账号可以用于多个业务，各业务独立记录已执行版本，避免即时业务反复执行或定时业务被错误跳过。
 
 ## 业务执行步骤
 
-业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
+业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 PAM Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
 
 ## 多账号映射
 
@@ -68,3 +68,5 @@ store 写入、通知接收或成功取密均不表示业务切换成功。所�
 ## 验证范围
 
 自动测试覆盖旧配置兼容、新结构导出、仅 store、仅 services、all 与指定账号范围、多账号 alias 映射、通知即时与定时更新、连续通知下的定时执行、A/B 共同确认、重启去重、授权撤销及离线撤销清理。Core 测试在独立测试数据库中执行。
+
+`owner` 为可选项。非 root 运行可省略 `store.owner` 和 `socket.owner`，使用当前用户；`init-local` 会自动设置。root 运行时按业务用户的文件和 Socket 访问需求指定，字段不改变 PAM Agent 进程的运行用户。

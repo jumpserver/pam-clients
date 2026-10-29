@@ -12,7 +12,7 @@ import (
 
 func validateExecutable(path string, info os.FileInfo) error {
 	if !info.Mode().IsRegular() || !strings.EqualFold(filepath.Ext(path), ".exe") {
-		return errors.New("Windows Agent actions require a trusted .exe file")
+		return errors.New("Windows PAM Agent actions require a trusted .exe file")
 	}
 	return nil
 }

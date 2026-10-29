@@ -1,8 +1,8 @@
-# JumpServer PAM Python SDK 与 Go Agent
+# JumpServer PAM Python SDK 与 PAM Agent
 
-实际连接 PostgreSQL 和 Redis、验证 SDK / Agent 凭据切换，可运行 [数据库应用 Demo](database_app/README.md)。
+实际连接 PostgreSQL 和 Redis、验证 SDK / PAM Agent 凭据切换，可运行 [数据库应用 Demo](database_app/README.md)。
 
-应用可以使用 Python SDK 直接连接 JumpServer，也可以在应用主机运行 Go Agent。Agent 可在 Linux、macOS 和 Windows 前台运行；内置 systemd 安装仅支持 Linux。客户端启动时获取轮换凭据，并通过签名认证的凭据事件流 WebSocket 接收订阅账号快照和后续更新；`credential.updated`、重连快照中的新版本以及管理员手动发送的账号切换请求会触发取密。
+应用可以使用 Python SDK 直接连接 JumpServer，也可以在应用主机运行 PAM Agent。PAM Agent 可在 Linux、macOS 和 Windows 前台运行；内置 systemd 安装仅支持 Linux。客户端启动时获取轮换凭据，并通过签名认证的凭据事件流 WebSocket 接收订阅账号快照和后续更新；`credential.updated`、重连快照中的新版本以及管理员手动发送的账号切换请求会触发取密。
 
 ## Python 接口风格
 
@@ -33,7 +33,7 @@ with Client(instance_id=instance_id, **client_options) as client:
 
 在凭据策略详情的“基本设置”或“事件接收”中点击“发起新周期”。发起后会打开新周期的时间线：
 
-- 凭据变更订阅：为当前有应用授权的订阅账号重新发布 `credential.updated`，共用一个新的 `operation_id`。密码和版本不变，不生成改密开始、成功或失败事件。SDK 按事件账号 ID 获取凭据；Agent 收到更新通知后也会重新取密，同版本不重复交付或重启服务。回执仅表示收到通知。离线客户端重连时通过快照获取当前凭据。
+- 凭据变更订阅：为当前有应用授权的订阅账号重新发布 `credential.updated`，共用一个新的 `operation_id`。密码和版本不变，不生成改密开始、成功或失败事件。SDK 按事件账号 ID 获取凭据；PAM Agent 收到更新通知后也会重新取密，同版本不重复交付或重启服务。回执仅表示收到通知。离线客户端重连时通过快照获取当前凭据。
 - 账号轮换：上一周期完成或取消后发起新周期。JumpServer 先验证备用账号能登录，再发布切换事件。客户端实际应用备用账号并确认；近期通过旧取密 API 使用过原主账号的应用，还需在切换后取得备用账号。与此同时，从切换时刻起观察原主账号的 JumpServer 取密记录；原主账号连续无成功取密达到配置时长（默认 7 天）才允许改密。期间再次取密会重置窗口。校验、切换、观察与改密共用一个周期。
 
 管理 API：`POST /api/v1/accounts/application-credentials/<policy-id>/start-cycle/`，账号轮换需要策略修改和账号验证权限，返回 `credential` 和 `cycle_id`。策略停用、轮换未结束时不能发起新周期；订阅账号正在改密时须等待改密结束再重新发布。
@@ -43,9 +43,9 @@ with Client(instance_id=instance_id, **client_options) as client:
 在应用列表的“更多 > 发送事件”，或应用详情的“事件处理 > 发送事件”中，选择事件类型、目标连接实例和有效期。
 
 - `credential.switch.requested`：要求应用切换到策略当前发布的账号和版本。该请求不会更换策略的发布账号；更换发布账号应在轮换策略中操作。应用取密后必须校验请求中的账号和版本，完成连接切换后通过 `confirm_event(event_id=...)` 回报成功。
-- `application.restart.requested`：SDK 应用调用自己实现的重启处理函数，并在健康检查成功后回报结果。Agent 仅支持接入时配置为 EnvironmentFile + restart 的 systemd 服务，先重启，再检查服务状态。
+- `application.restart.requested`：SDK 应用调用自己实现的重启处理函数，并在健康检查成功后回报结果。PAM Agent 仅支持接入时配置为 EnvironmentFile + restart 的 systemd 服务，先重启，再检查服务状态。
 
-WebSocket 的 `received` 回执表示收到请求，不表示执行成功。SDK 的 `execute_application_command(event, handler)` 会先向 Core 申请执行，只有 `accepted: true` 才调用处理函数；重复投递不会再次执行。处理函数正常返回后报告成功，异常则报告失败。应用自行负责处理函数中的业务幂等和健康检查。Agent 的账号切换请求在应用按事件确认成功切换后才报告成功。
+WebSocket 的 `received` 回执表示收到请求，不表示执行成功。SDK 的 `execute_application_command(event, handler)` 会先向 Core 申请执行，只有 `accepted: true` 才调用处理函数；重复投递不会再次执行。处理函数正常返回后报告成功，异常则报告失败。应用自行负责处理函数中的业务幂等和健康检查。PAM Agent 的账号切换请求在应用按事件确认成功切换后才报告成功。
 
 离线实例可在有效期内重新连接接收请求。无法使用 WebSocket 的 API 应用也可通过 AK/SK 签名轮询，使用固定的 `instance_id`；首次轮询会登记实例，之后管理员便可选择该实例发送事件：
 
@@ -60,79 +60,78 @@ WebSocket 的 `received` 回执表示收到请求，不表示执行成功。SDK 
 | 方式 | 适用场景 | 应用需要完成的工作 |
 | --- | --- | --- |
 | Python SDK | 应用可以修改 Python 代码并直接访问 JumpServer | 监听事件、拉取变化的凭据、切换连接并上报事件应用结果 |
-| Go Agent | 不希望应用保存 JumpServer 密钥，或需要文件、EnvironmentFile、本地 Socket 交付 | 加载并验证 Agent 交付的凭据，成功应用后按事件 ID 确认 |
+| PAM Agent | 不希望应用保存 JumpServer 密钥，或需要文件、EnvironmentFile、本地 Socket 交付 | 加载并验证 PAM Agent 交付的凭据，成功应用后按事件 ID 确认 |
 
 <!-- agent-doc:start -->
 
-# Go Agent 接入
+# JumpServer PAM Agent 接入
 
-在应用主机上运行独立 Go Agent，无需安装 Python。按以下顺序完成安装、选择交付方式、配置业务动作和接入验收。
+在应用主机上运行独立 PAM Agent，无需安装 Python。按以下顺序完成安装、选择交付方式、配置业务动作和接入验收。
 
 ## 1. 接入前提与流程
 
 1. 创建应用，授权允许按需获取的账号。下文账号 ID 指 JumpServer 账号 ID。
 2. 在 store/services 中声明使用的账号。需要及时更新时，在应用中开启“账号凭据变更通知”，覆盖全部授权账号；需要 A/B 账号切换时再绑定独立轮换策略。
-3. 在应用接入向导下载身份配置。每个副本使用稳定、唯一的实例 ID，AK/SK 保存在受保护的配置中。
+3. 在应用接入向导下载身份配置并保护 AK/SK，`instance_id` 可省略。
 
 ## 2. 安装与启动
 
 ### Linux / systemd
 
-Core 与 Agent 的协议版本和 `config_version` 统一为 1。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。Core 只同步账号范围和版本元数据，不下发本机脚本路径；修改私有配置后重启 Agent。
-
-Go 1.23+; `pam-clients/agent` + `pam-clients/go`.
+[Linux x86_64 (amd64)](/download/pam/pam-agent-linux-amd64) · [Linux ARM64](/download/pam/pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
 
 ```bash
-cd /path/to/pam-clients/agent
-go build -trimpath -o ./jms-pam-agent ./cmd/jms-pam-agent
-sudo install -m 0755 ./jms-pam-agent /usr/local/bin/jms-pam-agent
+# 在下载的 PAM Agent 和 SHA256SUMS 所在目录执行。
+case "$(uname -m)" in
+  x86_64) agent_arch=amd64 ;;
+  aarch64|arm64) agent_arch=arm64 ;;
+  *) echo "Unsupported CPU architecture"; exit 1 ;;
+esac
+sha256sum --ignore-missing --check SHA256SUMS && \
+sudo install -m 0755 "./pam-agent-linux-${agent_arch}" /usr/local/bin/pam-agent
 ```
 
-在下载的 `jms_pam_agent.json` 所在目录执行。下方 Linux 服务命令需要 root 和 systemd；每个副本替换为自己的实例 ID。前台模式需使用对应系统的二进制，macOS / Windows 可能需要从源码构建。
+在下载的 `pam-agent.json` 所在目录执行。下方 Linux 服务命令需要 root 和 systemd。前台运行时使用与主机系统和架构匹配的可执行文件。
 
 ```bash
-chmod 0600 ./jms_pam_agent.json
-sudo /usr/local/bin/jms-pam-agent install \
-  --bootstrap ./jms_pam_agent.json --instance-id app-node-1
-sudo systemctl status jms-pam-agent --no-pager
+chmod 0600 ./pam-agent.json
+sudo /usr/local/bin/pam-agent install \
+  --bootstrap ./pam-agent.json
+sudo systemctl status pam-agent --no-pager
 ```
 
 ### 前台运行（Linux / macOS / Windows）
 
 macOS、Windows 或非 root Linux 先执行一次 `init-local`，后续通过 `run --local` 复用生成的私有配置。支持标准 JSON 和环境变量文件；systemd 动作仅适用于 Linux 服务模式。
 
-前台模式先将对应系统的二进制保存为 `jms-pam-agent`（Windows 为 `jms-pam-agent.exe`）；Linux/macOS 执行 `chmod 0755 ./jms-pam-agent` 赋予执行权限。
+前台模式先将对应系统的二进制保存为 `pam-agent`（Windows 为 `pam-agent.exe`）；Linux/macOS 执行 `chmod 0755 ./pam-agent` 赋予执行权限。
 
 ```bash
-chmod 0600 ./jms_pam_agent.json
-./jms-pam-agent init-local \
-  --bootstrap ./jms_pam_agent.json \
-  --directory "$HOME/.jms-pam-agent/sample-app" --instance-id app-node-1
-./jms-pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
+chmod 0600 ./pam-agent.json
+./pam-agent init-local \
+  --bootstrap ./pam-agent.json \
+  --directory "$HOME/.jms-pam-agent/sample-app"
+./pam-agent run --local --config "$HOME/.jms-pam-agent/sample-app/agent.json"
 ```
 
 ```powershell
 $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
-.\jms-pam-agent.exe init-local --bootstrap (Join-Path $PWD 'jms_pam_agent.json') --directory $agentDir --instance-id app-node-1
-.\jms-pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
+.\pam-agent.exe init-local --bootstrap (Join-Path $PWD 'pam-agent.json') --directory $agentDir
+.\pam-agent.exe run --local --config (Join-Path $agentDir 'agent.json')
 ```
 
-## 3. store / local_api
+## 3. 配置样例
 
-`store` 与 `services` 独立生效。`store.accounts` 是字符串数组：`["all"]` 保存应用全部授权账号，也可指定账号 ID。应用开启通知后覆盖全部授权账号，本地声明决定存储哪些账号及执行哪些业务动作；关闭通知仍可按需取密和定时同步。省略 `store` 可仅执行业务更新，空数组表示不生成标准凭据文件。`all` 不能与 ID 混用。
+下面是一份 Linux/systemd 完整配置样例，包含应用身份、拉取周期、标准凭据文件、本地 API 和业务服务。请替换应用身份、账号 ID、系统用户、文件路径、服务名和检查脚本，并提前部署检查脚本。仅需文件交付或本地 API 时，将 `services` 设为 `[]`。后续章节分别说明各配置块，它们均属于同一份配置文件。
 
 ```json
 {
-  "config_version": 1,
+  "version": 1,
   "endpoint": "https://jumpserver.example.com",
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
   "org_id": "<org-id>",
-  "instance_id": "app-node-1",
   "pull_interval": 300,
-  "local_api": {
-    "owner": "appuser"
-  },
   "store": {
     "accounts": [
       "all"
@@ -141,11 +140,63 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
     "format": "json",
     "owner": "appuser"
   },
-  "services": []
+  "socket": {
+    "path": "/run/jms-pam-agent/agent.sock",
+    "owner": "appuser"
+  },
+  "services": [
+    {
+      "name": "sample-app",
+      "allow_account_switch": true,
+      "update_on_notification": true,
+      "accounts": [
+        {
+          "id": "<primary-account-id>"
+        }
+      ],
+      "update_config": {
+        "file": "/etc/sample-app/config.yml",
+        "format": "yaml",
+        "fields_map": {
+          "DB_USER": "username",
+          "DB_PASSWORD": "secret"
+        }
+      },
+      "reload_service": {
+        "unit": "sample-app.service",
+        "operation": "restart"
+      },
+      "app_check": {
+        "path": "/usr/local/libexec/jms-pam/check-running-db",
+        "confirm_on_success": true
+      }
+    }
+  ]
 }
 ```
 
-`pull_interval` 是全局拉取周期，单位为秒，必须为正整数，省略时默认 300。Agent 启动时立即同步，之后按周期核对账号和凭据版本，仅在版本或当前账号变化时取密。`update_on_notification: false` 的业务在下一次定时拉取时更新；通知不会推迟该周期。
+`instance_id` 可省略或留空，PAM Agent 会生成 `<hostname>-<4 位随机十六进制字符>`，例如 `orders-pod-a1b2`。显式配置或传入 `--instance-id` 时优先使用指定值。安装和 `init-local` 会将生成的 ID 保存到输出配置；直接运行时保存到私有状态文件，重启后复用，不改写输入配置。K8s 多副本可共用省略该字段的配置，每个副本须使用独立、可写的状态目录；没有保留状态的新副本会生成新 ID。
+
+`pull_interval` 是全局拉取周期，单位为秒，必须为正整数，省略时默认 300。PAM Agent 启动时立即同步，之后按周期核对账号和凭据版本，仅在版本或当前账号变化时取密。`update_on_notification: false` 的业务在下一次定时拉取时更新；通知不会推迟该周期。
+
+## 4. store
+
+`store` 用于将凭据保存为标准 JSON 或环境变量文件，供通过文件读取凭据的应用使用。它决定保存哪些账号、输出目录、文件格式和属主。修改已有业务配置文件或重载服务，应在 `services` 中配置。
+
+`store` 与 `services` 独立生效。`store.accounts` 是字符串数组：`["all"]` 保存应用全部授权账号，也可指定账号 ID。应用开启通知后覆盖全部授权账号，本地声明决定存储哪些账号及执行哪些业务动作；关闭通知仍可按需取密和定时同步。省略 `store` 可仅执行业务更新，空数组表示不生成标准凭据文件。`all` 不能与 ID 混用。
+
+```json
+{
+  "store": {
+    "accounts": [
+      "all"
+    ],
+    "root": "/opt/jumpserver-pam/credentials",
+    "format": "json",
+    "owner": "appuser"
+  }
+}
+```
 
 | 配置与运行 | store |
 | --- | --- |
@@ -153,9 +204,268 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 | `store.accounts: ["<account-id>"]` | 只保存显式声明的账号 ID。 |
 | `store.format: json` | `<store.root>/<account-id>.json` |
 | `store.format: environment` | `<store.root>/<account-id>.env` |
-| `local_api.socket_path` | `/run/jms-pam-agent/agent.sock` |
 
-每个账号按真实 account_id 单独生成文件，A/B 也分别存储；文件包含明文凭据，权限为 0600。正在改密的 A/B 非当前账号暂不可用。成功核对授权后清理撤销账号的文件。`local_api.owner` 控制 Socket 访问及业务输出文件的默认属主，默认使用 `store.owner`，再回退到 Agent 运行用户。Socket 与文件存储独立；私有状态和事件路径沿用默认值。版本未变化时定时对账只读取元数据，不重复取密；实际取密仍保留审计，并计入轮换访问观察。
+每个账号按真实 account_id 单独生成文件，A/B 也分别存储；文件包含明文凭据，权限为 0600。正在改密的 A/B 非当前账号暂不可用。成功核对授权后清理撤销账号的文件。版本未变化时定时对账只读取元数据，不重复取密；实际取密仍保留审计，并计入轮换访问观察。
+
+## 5. socket
+
+`socket` 用于配置本机 Unix Socket 接口，供应用查询健康状态、列出账号、按需获取凭据、上报账号使用情况和确认业务处理结果。不配置 `store` 也可以通过 Socket 查询。取密权限由 Core 中的应用授权决定；`store.accounts` 只选择文件输出账号，不是本地 API 的账号访问范围。
+
+`path` 默认是 `/run/jms-pam-agent/agent.sock`。`owner` 控制 Socket 访问及业务输出文件的默认属主，省略时先使用 `store.owner`，再回退到 PAM Agent 运行用户。省略整个 `socket` 块会采用默认配置，不会关闭接口。前台模式通过 `init-local` 将 Socket 设置为 `<directory>/run/agent.sock`，属主设置为当前用户。
+
+非 root 运行时，可以省略 `store.owner` 和 `socket.owner`，默认使用当前用户；`init-local` 会自动将两者设置为当前用户。root 运行且需要业务用户读取文件或访问 Socket 时，再指定该业务用户。`owner` 只控制输出和访问属主，不会切换 PAM Agent 进程的运行用户。
+
+```json
+{
+  "socket": {
+    "path": "/run/jms-pam-agent/agent.sock",
+    "owner": "appuser"
+  }
+}
+```
+
+### 查询账号与凭据
+
+CLI 和 Socket 请求应以配置的应用用户执行。`get_accounts` 只列出授权账号元数据；`get_secret` 按需取密，也适用于未订阅 push 的账号。取密命令会把密码写到标准输出，请只在私有终端中调试。前台模式请替换为实际 Socket 路径。
+
+```bash
+pam-agent get_accounts
+pam-agent get_secret '<account-id>'
+
+curl --fail --silent --show-error \
+  --unix-socket '/run/jms-pam-agent/agent.sock' \
+  http://localhost/v1/health
+
+curl --fail --silent --show-error \
+  --unix-socket '/run/jms-pam-agent/agent.sock' \
+  'http://localhost/v1/credential?account_id=<account-id>'
+```
+
+### 确认业务生效
+
+业务验证真实连接、完成切换后再确认事件。可选择 `app_check` 验证成功后通过 `confirm_on_success: true` 自动确认，或由业务在验证后显式确认；同步执行的检查脚本不要反向调用确认接口。本地结果先持久化，`confirmed` 表示 Core 已接受，`pending` 表示稍后重试。
+
+```bash
+pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
+```
+
+## 6. services
+
+将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本；所有相关业务验证成功，且配置 `app_check.confirm_on_success: true`，才自动确认轮换成功。
+
+业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 PAM Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
+
+| 配置与运行 | 更新业务配置与 A/B 轮换 |
+| --- | --- |
+| `credential_check` | 可选：修改文件前，用新账号验证目标连接。 |
+| `update_config` | 通过字段映射、模板或脚本更新业务文件。 |
+| `reload_service` | 对固定服务执行 reload/restart，或运行固定脚本。 |
+| `app_check` | 验证运行中的业务已使用新连接，再确认生效。 |
+
+`services`:
+
+```json
+[
+  {
+    "name": "sample-app",
+    "allow_account_switch": true,
+    "update_on_notification": true,
+    "accounts": [
+      {
+        "id": "<primary-account-id>"
+      }
+    ],
+    "update_config": {
+      "file": "/etc/sample-app/config.yml",
+      "format": "yaml",
+      "fields_map": {
+        "DB_USER": "username",
+        "DB_PASSWORD": "secret"
+      }
+    },
+    "reload_service": {
+      "unit": "sample-app.service",
+      "operation": "restart"
+    },
+    "app_check": {
+      "path": "/usr/local/libexec/jms-pam/check-running-db",
+      "confirm_on_success": true
+    }
+  }
+]
+```
+
+### accounts
+
+`services.accounts` 用 `id` 指定账号。单账号可直接映射 `username` / `secret`；多账号必须使用唯一 alias，以 `database.username`、`cache.secret` 等限定字段来源。alias 在 A/B 切换后保持不变。账号声明中的可选 `username` 只供阅读，真实值始终取自 Core。所需账号全部就绪后再修改文件，业务动作只执行一次；缺少账号或映射有歧义时，在写入前报错。
+
+```json
+{
+  "name": "sample-app",
+  "allow_account_switch": true,
+  "update_on_notification": true,
+  "accounts": [
+    {
+      "id": "<primary-account-id>",
+      "alias": "database"
+    },
+    {
+      "id": "<cache-account-id>",
+      "alias": "cache"
+    }
+  ],
+  "update_config": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "database.username",
+      "DB_PASSWORD": "database.secret",
+      "CACHE_USER": "cache.username",
+      "CACHE_PASSWORD": "cache.secret"
+    }
+  },
+  "reload_service": {
+    "unit": "sample-app.service",
+    "operation": "restart"
+  },
+  "app_check": {
+    "path": "/usr/local/libexec/jms-pam/check-running-db",
+    "confirm_on_success": true
+  }
+}
+```
+
+### update_config
+
+`services` 中的每个对象表示一个业务服务。`update_config` 支持三种互斥方式：`file + fields_map` 修改已有字段，`files + template_file` 按模板生成完整文件，`script` 执行自定义更新。下面的配置片段替换对应业务的 `update_config`，每个业务只选一种。
+
+#### file + fields_map
+
+`update_config.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
+
+```json
+{
+  "update_config": {
+    "file": "/etc/sample-app/config.yml",
+    "format": "yaml",
+    "fields_map": {
+      "DB_USER": "username",
+      "DB_PASSWORD": "secret"
+    }
+  }
+}
+```
+
+#### files + template_file
+
+模板方式用于嵌套 JSON、INI 等需要完整生成的配置。通过 `files` 指定输出文件，`format` 为 `template`，`template_file` 为本机模板的绝对路径。模板先渲染，再原子替换目标文件，权限为 0600；`owner` 可省略，默认使用 `socket.owner`。`json` 函数负责 JSON 字符串的引号与转义。
+
+```json
+{
+  "update_config": {
+    "files": [
+      {
+        "path": "/etc/sample-app/credentials.json",
+        "format": "template",
+        "template_file": "/etc/pam-agent/templates/credentials.json.tmpl",
+        "owner": "appuser"
+      }
+    ]
+  }
+}
+```
+
+`/etc/pam-agent/templates/credentials.json.tmpl`:
+
+```gotemplate
+{
+  "database": {
+    "username": {{json (index .Credentials "<primary-account-id>").Username}},
+    "password": {{json (index .Credentials "<primary-account-id>").Secret}}
+  }
+}
+```
+
+模板中的 `.Credentials` 和脚本输入的 `credentials` 均以 `services.accounts[].id` 声明的账号 ID 为键，不能使用 alias。请将示例中的 `<primary-account-id>` 替换为实际 ID。A/B 切换后，该键仍是声明的 A 账号 ID，值中的 `AccountID`（脚本中为 `account_id`）是当前生效账号。
+
+#### script
+
+脚本方式必须用 `target` 声明一个输出路径，或用 `targets` 声明多个路径，供 PAM Agent 在修改前备份。`script.path` 是提前部署的本机可执行文件；`args` 仅放固定参数，凭据通过标准输入传入 JSON。`timeout_seconds` 为 1–300 秒，省略时默认 120 秒。脚本以 PAM Agent 的运行用户执行；退出码 0 表示更新成功，非 0 或超时会失败并重试，因此脚本应可重复执行。
+
+```json
+{
+  "update_config": {
+    "target": "/etc/sample-app/credentials.json",
+    "script": {
+      "path": "/usr/local/libexec/pam-agent/update-credentials",
+      "args": [
+        "/etc/sample-app/credentials.json"
+      ],
+      "timeout_seconds": 30
+    }
+  }
+}
+```
+
+脚本标准输入示例（节选）：
+
+```json
+{
+  "event": "credentials.updated",
+  "credentials": {
+    "<primary-account-id>": {
+      "account_id": "<active-account-id>",
+      "username": "db_app",
+      "secret": "<password>",
+      "event_id": "<event-id>"
+    }
+  }
+}
+```
+
+下面是适用于 Linux/macOS 的 Python 3 示例，更新已有 JSON 文件中的 database 字段，保留其他配置与文件属主，按 0600 权限原子替换。提前创建目标目录和初始 JSON 文件，部署脚本并赋予执行权限；自定义脚本需自行处理输出格式、权限与属主。
+
+`/usr/local/libexec/pam-agent/update-credentials`:
+
+```python
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+payload = json.load(sys.stdin)
+credential = payload["credentials"]["<primary-account-id>"]
+target = Path(sys.argv[1])
+original = target.stat()
+with target.open(encoding="utf-8") as source:
+    config = json.load(source)
+config.setdefault("database", {}).update(
+    username=credential["username"], password=credential["secret"]
+)
+
+fd, temporary = tempfile.mkstemp(prefix=".pam-agent-", dir=target.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        os.fchmod(output.fileno(), 0o600)
+        os.fchown(output.fileno(), original.st_uid, original.st_gid)
+        json.dump(config, output, ensure_ascii=False)
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, target)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+```
+
+模板或脚本成功只代表配置更新完成。需要重载服务或验证业务时，继续在同一个 service 中配置 `reload_service`、`app_check`。修改配置后先检查，再重启 PAM Agent：
+
+```bash
+sudo pam-agent check-config --config /etc/jms-pam-agent/agent.json
+sudo systemctl restart pam-agent
+```
+
 
 ### EnvironmentFile / systemd
 
@@ -202,130 +512,7 @@ JMS_PAM_SECRET="<password>"
 EnvironmentFile=/etc/sample-app/database.env
 ```
 
-## 4. 更新业务配置与 A/B 轮换
-
-将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本；所有相关业务验证成功，且配置 `app_check.confirm_on_success: true`，才自动确认轮换成功。
-
-业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
-
-| 配置与运行 | 更新业务配置与 A/B 轮换 |
-| --- | --- |
-| `credential_check` | 可选：修改文件前，用新账号验证目标连接。 |
-| `update_config` | 通过字段映射、模板或脚本更新业务文件。 |
-| `reload_service` | 对固定服务执行 reload/restart，或运行固定脚本。 |
-| `app_check` | 验证运行中的业务已使用新连接，再确认生效。 |
-
-`services`:
-
-```json
-[
-  {
-    "name": "sample-app",
-    "allow_account_switch": true,
-    "update_on_notification": true,
-    "accounts": [
-      {
-        "id": "<primary-account-id>"
-      }
-    ],
-    "update_config": {
-      "file": "/etc/sample-app/config.yml",
-      "format": "yaml",
-      "fields_map": {
-        "DB_USER": "username",
-        "DB_PASSWORD": "secret"
-      }
-    },
-    "reload_service": {
-      "unit": "sample-app.service",
-      "operation": "restart"
-    },
-    "app_check": {
-      "path": "/usr/local/libexec/jms-pam/check-running-db",
-      "confirm_on_success": true
-    }
-  }
-]
-```
-
-`services.accounts` 用 `id` 指定账号。单账号可直接映射 `username` / `secret`；多账号必须使用唯一 alias，以 `database.username`、`cache.secret` 等限定字段来源。alias 在 A/B 切换后保持不变。账号声明中的可选 `username` 只供阅读，真实值始终取自 Core。所需账号全部就绪后再修改文件，业务动作只执行一次；缺少账号或映射有歧义时，在写入前报错。
-
-```json
-{
-  "name": "sample-app",
-  "allow_account_switch": true,
-  "update_on_notification": true,
-  "accounts": [
-    {
-      "id": "<primary-account-id>",
-      "alias": "database"
-    },
-    {
-      "id": "<cache-account-id>",
-      "alias": "cache"
-    }
-  ],
-  "update_config": {
-    "file": "/etc/sample-app/config.yml",
-    "format": "yaml",
-    "fields_map": {
-      "DB_USER": "database.username",
-      "DB_PASSWORD": "database.secret",
-      "CACHE_USER": "cache.username",
-      "CACHE_PASSWORD": "cache.secret"
-    }
-  },
-  "reload_service": {
-    "unit": "sample-app.service",
-    "operation": "restart"
-  },
-  "app_check": {
-    "path": "/usr/local/libexec/jms-pam/check-running-db",
-    "confirm_on_success": true
-  }
-}
-```
-
-### 配置文件格式
-
-`update_config.format` 默认为 `auto`，省略与显式填写的效果相同。按文件扩展名识别：`.txt`、`.env`、`.properties` 使用 `env`，替换 `KEY=value`；`.yml`、`.yaml` 使用 `yaml`，替换顶层 `KEY: value`，新值写为带引号的字符串。其他扩展名需显式指定 `env` 或 `yaml`。映射字段必须已存在且只出现一次，其他配置项保留。INI section、嵌套 YAML 等复杂格式使用 `files` + `template_file` 完整生成，或用 `script` 自定义替换。环境变量文件更新后，业务仍需重新读取文件或重启才能生效。
-
-Core 与 Agent 的协议版本和 `config_version` 统一为 1。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。Core 只同步账号范围和版本元数据，不下发本机脚本路径；修改私有配置后重启 Agent。
-
-```bash
-sudo jms-pam-agent check-config --config /etc/jms-pam-agent/agent.json
-sudo systemctl restart jms-pam-agent
-```
-
-
-## 5. 本地 API 与确认
-
-### 查询账号与凭据
-
-CLI 和 Socket 请求应以配置的应用用户执行。`get_accounts` 只列出授权账号元数据；`get_secret` 按需取密，也适用于未订阅 push 的账号。取密命令会把密码写到标准输出，请只在私有终端中调试。前台模式请替换为实际 Socket 路径。
-
-```bash
-jms-pam-agent get_accounts
-jms-pam-agent get_secret '<account-id>'
-
-curl --fail --silent --show-error \
-  --unix-socket '/run/jms-pam-agent/agent.sock' \
-  http://localhost/v1/health
-
-curl --fail --silent --show-error \
-  --unix-socket '/run/jms-pam-agent/agent.sock' \
-  'http://localhost/v1/credential?account_id=<account-id>'
-```
-
-### 确认业务生效
-
-业务验证真实连接、完成切换后再确认事件。可选择 `app_check` 验证成功后通过 `confirm_on_success: true` 自动确认，或由业务在验证后显式确认；同步执行的检查脚本不要反向调用确认接口。本地结果先持久化，`confirmed` 表示 Core 已接受，`pending` 表示稍后重试。
-
-```bash
-jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
-```
-
-## 6. 接入验收
+## 7. 接入验收
 
 1. 确认实例在线，且账号授权范围符合预期。
 2. 在应用开启通知，修改授权账号凭据后核对交付文件或 Socket 中的版本，并在应用事件中查看各实例回执及处理结果。
@@ -334,11 +521,11 @@ jms-pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ### 排查问题
 
 ```bash
-sudo systemctl status jms-pam-agent --no-pager
-sudo journalctl -u jms-pam-agent -n 100 --no-pager
+sudo systemctl status pam-agent --no-pager
+sudo journalctl -u pam-agent -n 100 --no-pager
 ```
 
-Agent 在启动、相关通知及定时周期进行同步，默认 300 秒。临时网络故障保留仍获授权的凭据；明确撤销或应用禁用会阻断本地取密并删除对应标准存储文件，后续刷新失败也不例外。业务配置文件由应用管理员管理。连续通知不会推迟定时业务更新。SIGINT/SIGTERM 会关闭本地服务和事件读取线程。
+PAM Agent 在启动、相关通知及定时周期进行同步，默认 300 秒。临时网络故障保留仍获授权的凭据；明确撤销或应用禁用会阻断本地取密并删除对应标准存储文件，后续刷新失败也不例外。业务配置文件由应用管理员管理。连续通知不会推迟定时业务更新。SIGINT/SIGTERM 会关闭本地服务和事件读取线程。
 
 
 <!-- agent-doc:end -->
@@ -455,12 +642,12 @@ watch_events 等待停止；start_events 返回不代表初始同步完成，依
 
 ### 最新凭据与后端不可用
 
-SDK 取密先请求 API，成功后替换保留值，不允许旧版本覆盖新版本。仅超时、网络错误或 HTTP 5xx 可回退到相同选择条件下已获取的值，并标记本地来源；保留值不按时间过期。SDK 使用客户端私有内存，clone 和重启从空状态开始。HTTP 401/403/404 或 credential_not_found（HTTP 400）清空保留凭据并报错；HTTP 426、成功响应格式错误均不使用回退，可选元数据接口缺失不会清空凭据。Agent 在受保护的状态中保留 store/services 声明的账号，未声明的按需查询不会自动持久化。明确撤销在 HTTP 刷新前生效，离线也不例外；push 快照不代表已存储账号的完整授权范围，成功对账会核对当前应用授权。
+SDK 取密先请求 API，成功后替换保留值，不允许旧版本覆盖新版本。仅超时、网络错误或 HTTP 5xx 可回退到相同选择条件下已获取的值，并标记本地来源；保留值不按时间过期。SDK 使用客户端私有内存，clone 和重启从空状态开始。HTTP 401/403/404 或 credential_not_found（HTTP 400）清空保留凭据并报错；HTTP 426、成功响应格式错误均不使用回退，可选元数据接口缺失不会清空凭据。PAM Agent 在受保护的状态中保留 store/services 声明的账号，未声明的按需查询不会自动持久化。明确撤销在 HTTP 刷新前生效，离线也不例外；push 快照不代表已存储账号的完整授权范围，成功对账会核对当前应用授权。
 
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`
 
-启用高层事件监听后，snapshot、credential.updated 会自动获取当前凭据并替换本地保留值，再调用业务处理函数。刷新失败时保留上一份凭据并重试。Agent 同样在更新通知后主动取密，后端故障期间保留已有凭据。事件刷新和手动切换使用下方必须实时获取的调用；保留的密码不能被当成刚获取的新版本，也不会自动确认轮换。
+启用高层事件监听后，snapshot、credential.updated 会自动获取当前凭据并替换本地保留值，再调用业务处理函数。刷新失败时保留上一份凭据并重试。PAM Agent 同样在更新通知后主动取密，后端故障期间保留已有凭据。事件刷新和手动切换使用下方必须实时获取的调用；保留的密码不能被当成刚获取的新版本，也不会自动确认轮换。
 
 事件连接空闲时每 10 秒发送应用层 ping，约 30 秒收不到消息则重连。重连采用 1–30 秒指数退避并重新签名。重连快照恢复当前状态，不重放历史事件。
 
@@ -555,6 +742,6 @@ list_application_commands 轮询待处理请求，execute_application_command(ev
 
 with 或 close 关闭 HTTP 会话和事件流，clone 创建独立会话。HTTP、网络、认证和解码错误抛出 PAMError，包含 code、status_code、detail 和 original_error。在应用边界重试临时故障，明确处理授权拒绝，不记录凭据。
 
-各 SDK 使用版本 1 协议，Agent 配置格式为版本 1。收到 client_upgrade_required（HTTP 426）时检查兼容性并升级。允许未知可选字段及通知事件，未实现的策略类型不得应用或确认。事件接收回执由 SDK 自动发送，不能作为凭据已经生效的证明。 实例信息可包含 server_capabilities；缺失或 null 表示未知，未知名称可保留。能力列表描述服务端功能，不授予权限。
+各 SDK 使用版本 1 协议，PAM Agent 配置格式为版本 1。收到 client_upgrade_required（HTTP 426）时检查兼容性并升级。允许未知可选字段及通知事件，未实现的策略类型不得应用或确认。事件接收回执由 SDK 自动发送，不能作为凭据已经生效的证明。 实例信息可包含 server_capabilities；缺失或 null 表示未知，未知名称可保留。能力列表描述服务端功能，不授予权限。
 
 <!-- sdk-doc:end -->

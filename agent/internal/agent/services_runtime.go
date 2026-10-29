@@ -180,7 +180,7 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		return a.failure(err, false)
 	}
 	if response.ConfigSchemaVersion != pam.ConfigSchemaVersion || !contains(response.ServerCapabilities, "agent_store_services") {
-		return a.failure(errors.New("Core does not support Agent store/services synchronization in v1"), false)
+		return a.failure(errors.New("Core does not support PAM Agent store/services synchronization in v1"), false)
 	}
 	metadata := map[string]pam.CredentialRevision{}
 	for _, item := range response.Credentials {

@@ -154,12 +154,12 @@ WatchEvents chờ trong goroutine gọi; StartEvents không đảm bảo đồng
 
 ### Thông tin xác thực mới nhất và lỗi máy chủ
 
-SDK gọi API trước và cập nhật giá trị giữ lại, không quay về phiên bản cũ. Chỉ timeout, lỗi mạng hoặc HTTP 5xx mới cho phép dùng giá trị đã lấy cho cùng bộ chọn, đánh dấu nguồn cục bộ và không hết hạn theo thời gian. Clone và khởi động lại SDK bắt đầu với bộ nhớ rỗng. HTTP 401/403/404 hoặc credential_not_found (400) xóa giá trị; 426 và phản hồi thành công sai định dạng không dùng dự phòng. API siêu dữ liệu tùy chọn bị thiếu không xóa bộ nhớ. Agent lưu tài khoản khai báo trong store/services; truy vấn tức thời chưa khai báo không tự lưu bền. Thu hồi rõ ràng có hiệu lực trước khi làm mới HTTP, cả khi ngoại tuyến. Snapshot push không xác định toàn bộ quyền lưu trữ; đối soát thành công kiểm tra quyền ứng dụng hiện tại.
+SDK gọi API trước và cập nhật giá trị giữ lại, không quay về phiên bản cũ. Chỉ timeout, lỗi mạng hoặc HTTP 5xx mới cho phép dùng giá trị đã lấy cho cùng bộ chọn, đánh dấu nguồn cục bộ và không hết hạn theo thời gian. Clone và khởi động lại SDK bắt đầu với bộ nhớ rỗng. HTTP 401/403/404 hoặc credential_not_found (400) xóa giá trị; 426 và phản hồi thành công sai định dạng không dùng dự phòng. API siêu dữ liệu tùy chọn bị thiếu không xóa bộ nhớ. PAM Agent lưu tài khoản khai báo trong store/services; truy vấn tức thời chưa khai báo không tự lưu bền. Thu hồi rõ ràng có hiệu lực trước khi làm mới HTTP, cả khi ngoại tuyến. Snapshot push không xác định toàn bộ quyền lưu trữ; đối soát thành công kiểm tra quyền ứng dụng hiện tại.
 
 - `account.FromLocal`
 - `GetAccountFresh(ctx, accountID)`
 
-Khi bật lắng nghe được quản lý, snapshot và credential.updated tự lấy dữ liệu, thay thế giá trị và gọi hàm nghiệp vụ. Lỗi cập nhật giữ bản trước và thử lại. Agent cũng lấy lại theo thông báo, giữ dữ liệu khi máy chủ lỗi. Dùng lời gọi bắt buộc API bên dưới để cập nhật hay chuyển kết nối; giá trị đang giữ không phải phiên bản vừa lấy và không tự xác nhận luân chuyển.
+Khi bật lắng nghe được quản lý, snapshot và credential.updated tự lấy dữ liệu, thay thế giá trị và gọi hàm nghiệp vụ. Lỗi cập nhật giữ bản trước và thử lại. PAM Agent cũng lấy lại theo thông báo, giữ dữ liệu khi máy chủ lỗi. Dùng lời gọi bắt buộc API bên dưới để cập nhật hay chuyển kết nối; giá trị đang giữ không phải phiên bản vừa lấy và không tự xác nhận luân chuyển.
 
 Khi nhàn rỗi gửi ping mỗi 10 giây; khoảng 30 giây không có tin nhắn sẽ kết nối lại, chờ tăng theo hàm mũ 1–30 giây và ký mới. snapshot khôi phục trạng thái hiện tại, không phát lại lịch sử.
 
@@ -313,6 +313,6 @@ Lỗi HTTP, mạng, xác thực và giải mã dùng kiểu lỗi SDK với mã 
 
 `PAMError`
 
-Mọi SDK dùng giao thức phiên bản 1; Agent dùng lược đồ cấu hình phiên bản 1. Khi nhận client_upgrade_required (HTTP 426), kiểm tra tương thích và nâng cấp. Cho phép trường tùy chọn và thông báo chưa biết; không áp dụng hay xác nhận chính sách chưa hỗ trợ. Biên nhận được gửi tự động và không chứng minh đã áp dụng thông tin xác thực. Thông tin máy khách có thể chứa server_capabilities. Thiếu hoặc null nghĩa là chưa biết; tên mới được chấp nhận. Danh sách mô tả tính năng máy chủ, không cấp quyền.
+Mọi SDK dùng giao thức phiên bản 1; PAM Agent dùng lược đồ cấu hình phiên bản 1. Khi nhận client_upgrade_required (HTTP 426), kiểm tra tương thích và nâng cấp. Cho phép trường tùy chọn và thông báo chưa biết; không áp dụng hay xác nhận chính sách chưa hỗ trợ. Biên nhận được gửi tự động và không chứng minh đã áp dụng thông tin xác thực. Thông tin máy khách có thể chứa server_capabilities. Thiếu hoặc null nghĩa là chưa biết; tên mới được chấp nhận. Danh sách mô tả tính năng máy chủ, không cấp quyền.
 
 <!-- sdk-doc:end -->

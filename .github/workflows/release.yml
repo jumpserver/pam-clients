@@ -29,14 +29,14 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
           git show-ref --verify "refs/tags/$RELEASE_TAG"
-      - name: Test and build Agent
+      - name: Test and build PAM Agent
         working-directory: agent
         run: |
           go test -race ./...
           mkdir -p ../dist
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
-              -o "../dist/jms-pam-agent-linux-$arch" ./cmd/jms-pam-agent
+              -o "../dist/pam-agent-linux-$arch" ./cmd/pam-agent
           done
       - name: Package SDK sources
         run: |
@@ -44,7 +44,7 @@ jobs:
             git archive --format=tar.gz --output="dist/jms-pam-$sdk.tar.gz" HEAD "$sdk"
           done
           cd dist
-          sha256sum jms-pam-agent-linux-* > SHA256SUMS
+          sha256sum pam-agent-linux-* > SHA256SUMS
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -184,6 +184,6 @@ func (a *Agent) reportAccountUsage(ctx context.Context) {
 	if err := a.remote.ReportStatus(bounded, a.AccountUsageSnapshot()); err != nil {
 		// Old Core versions and telemetry failures do not deny local access or
 		// retry delivery actions. The next synchronization retries reporting.
-		log.Printf("Agent account usage report failed: %T", err)
+		log.Printf("PAM Agent account usage report failed: %T", err)
 	}
 }

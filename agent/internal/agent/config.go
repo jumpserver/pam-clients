@@ -16,7 +16,7 @@ import (
 )
 
 const DefaultConfig = "/etc/jms-pam-agent/agent.json"
-const ServiceName = "jms-pam-agent.service"
+const ServiceName = "pam-agent.service"
 const DefaultState = "/var/lib/jms-pam-agent/state.json"
 const DefaultEvent = "/var/lib/jms-pam-agent/events.jsonl"
 const DefaultSocket = "/run/jms-pam-agent/agent.sock"
@@ -144,28 +144,32 @@ type Rule struct {
 }
 
 type Config struct {
+	instanceIDGenerated bool
 	// Local is chosen by the CLI for current-user foreground runs, never by Core.
-	Local               bool                   `json:"-"`
-	ConfigVersion       int                    `json:"config_version,omitempty"`
-	Endpoint            string                 `json:"endpoint"`
-	AppID               string                 `json:"app_id"`
-	AppSecret           string                 `json:"app_secret"`
-	OrgID               string                 `json:"org_id"`
-	InstanceID          string                 `json:"instance_id"`
-	StateFile           string                 `json:"state_file,omitempty"`
-	EventFile           string                 `json:"event_file,omitempty"`
-	PullIntervalSeconds int                    `json:"pull_interval,omitempty"`
-	Delivery            DeliveryConfiguration  `json:"delivery"`
-	Rules               []Rule                 `json:"rules,omitempty"`
-	Store               *StoreConfiguration    `json:"store,omitempty"`
-	Services            []Rule                 `json:"services,omitempty"`
-	LocalAPI            *LocalAPIConfiguration `json:"local_api,omitempty"`
+	Local               bool                  `json:"-"`
+	ConfigVersion       int                   `json:"version,omitempty"`
+	Endpoint            string                `json:"endpoint"`
+	AppID               string                `json:"app_id"`
+	AppSecret           string                `json:"app_secret"`
+	OrgID               string                `json:"org_id"`
+	InstanceID          string                `json:"instance_id,omitempty"`
+	StateFile           string                `json:"state_file,omitempty"`
+	EventFile           string                `json:"event_file,omitempty"`
+	PullIntervalSeconds int                   `json:"pull_interval,omitempty"`
+	Delivery            DeliveryConfiguration `json:"delivery"`
+	Rules               []Rule                `json:"rules,omitempty"`
+	Store               *StoreConfiguration   `json:"store,omitempty"`
+	Services            []Rule                `json:"services,omitempty"`
+	Socket              *SocketConfiguration  `json:"socket,omitempty"`
 }
 
 func LoadConfig(path string) (Config, error) {
 	var config Config
 	config, err := loadBootstrapConfig(path)
 	if err != nil {
+		return config, err
+	}
+	if err := config.ensureInstanceID(); err != nil {
 		return config, err
 	}
 	return config, config.Validate()
@@ -177,7 +181,7 @@ func loadBootstrapConfig(path string) (Config, error) {
 	var config Config
 	resolved, err := filepath.Abs(path)
 	if err != nil {
-		return config, errors.New("cannot resolve Agent configuration path")
+		return config, errors.New("cannot resolve PAM Agent configuration path")
 	}
 	if err := privateFile(resolved); err != nil {
 		return config, err
@@ -251,7 +255,7 @@ func (c Config) Validate() (err error) {
 	// Zero is the legacy value for configurations constructed in Go. An explicit
 	// zero in JSON is rejected by decodeConfig, rather than treated as omitted.
 	if c.ConfigVersion != 0 && c.ConfigVersion != 1 && c.ConfigVersion != CurrentConfigVersion {
-		return unsupportedVersion("configuration", "config_version", c.ConfigVersion, CurrentConfigVersion)
+		return unsupportedVersion("configuration", "version", c.ConfigVersion, CurrentConfigVersion)
 	}
 	if c.Endpoint == "" || c.AppID == "" || c.AppSecret == "" || c.InstanceID == "" || !absolute(c.StateFile) || c.PullIntervalSeconds < 1 {
 		return errors.New("identity, stable instance ID, state path and positive pull interval are required")
@@ -513,7 +517,7 @@ func (a Action) timeout() time.Duration {
 
 func decodeConfig(raw []byte) (Config, error) {
 	var config Config
-	version, err := readFormatVersion(raw, "configuration", "config_version", CurrentConfigVersion)
+	version, err := readFormatVersion(raw, "configuration", "version", CurrentConfigVersion)
 	if err != nil {
 		return config, err
 	}
@@ -522,8 +526,58 @@ func decodeConfig(raw []byte) (Config, error) {
 		return config, formatJSONError("configuration", err)
 	}
 	for field := range fields {
+		if (field != "socket" && strings.EqualFold(field, "socket")) || (field != "local_api" && strings.EqualFold(field, "local_api")) {
+			return config, errors.New("PAM Agent configuration field must be named socket")
+		}
+		if field != "config_version" && strings.EqualFold(field, "config_version") {
+			return config, errors.New("PAM Agent configuration field must be named version")
+		}
 		if field != "services" && strings.EqualFold(field, "services") {
-			return config, errors.New("Agent configuration field must be named services")
+			return config, errors.New("PAM Agent configuration field must be named services")
+		}
+	}
+	// Read existing configurations without rewriting them; new output uses version.
+	legacyVersion, hasLegacyVersion := fields["config_version"]
+	if hasLegacyVersion {
+		if _, exists := fields["version"]; exists {
+			return config, errors.New("use only version; do not combine version and config_version")
+		}
+		version, err = readFormatVersion(raw, "configuration", "config_version", CurrentConfigVersion)
+		if err != nil {
+			return config, err
+		}
+		fields["version"] = legacyVersion
+		delete(fields, "config_version")
+	}
+	legacyAPI, hasLegacyAPI := fields["local_api"]
+	if hasLegacyAPI {
+		if _, exists := fields["socket"]; exists {
+			return config, errors.New("use only socket; do not combine socket and local_api")
+		}
+		fields["socket"] = legacyAPI
+		delete(fields, "local_api")
+	}
+	socket, hasSocket := fields["socket"]
+	if hasSocket && !bytes.Equal(bytes.TrimSpace(socket), []byte("null")) {
+		var options map[string]json.RawMessage
+		if err := json.Unmarshal(socket, &options); err != nil {
+			return config, formatJSONError("socket configuration", err)
+		}
+		for name := range options {
+			if (name != "path" && strings.EqualFold(name, "path")) || (name != "socket_path" && strings.EqualFold(name, "socket_path")) {
+				return config, errors.New("PAM Agent socket configuration field must be named path")
+			}
+		}
+		if legacyPath, exists := options["socket_path"]; exists {
+			if _, exists := options["path"]; exists {
+				return config, errors.New("use only socket.path; do not combine path and socket_path")
+			}
+			options["path"] = legacyPath
+			delete(options, "socket_path")
+		}
+		fields["socket"], err = json.Marshal(options)
+		if err != nil {
+			return config, formatJSONError("socket configuration", err)
 		}
 	}
 	_, hasServices := fields["services"]
@@ -532,6 +586,8 @@ func decodeConfig(raw []byte) (Config, error) {
 		if err != nil {
 			return config, err
 		}
+	}
+	if hasServices || hasLegacyVersion || hasLegacyAPI || hasSocket {
 		raw, err = json.Marshal(fields)
 		if err != nil {
 			return config, formatJSONError("configuration", err)

@@ -36,7 +36,7 @@ func (a *Agent) startServer() (*localServer, error) {
 		connection, dialErr := net.DialTimeout("unix", path, time.Second)
 		if dialErr == nil {
 			_ = connection.Close()
-			return nil, errors.New("an Agent already owns the socket")
+			return nil, errors.New("a PAM Agent already owns the socket")
 		}
 		if err = os.Remove(path); err != nil {
 			return nil, err

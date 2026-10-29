@@ -29,7 +29,7 @@ func backupTargets(stateFile string, targets []string) error {
 		}
 		seen[target] = true
 		if target == root || strings.HasPrefix(target, root+string(filepath.Separator)) {
-			return errors.New("business configuration cannot be inside the Agent backup directory")
+			return errors.New("business configuration cannot be inside the PAM Agent backup directory")
 		}
 		if err := backupTarget(root, target); err != nil {
 			return err

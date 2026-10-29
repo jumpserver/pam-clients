@@ -1,4 +1,4 @@
-// jms-pam-agent is the standalone Go service; Python is not required.
+// pam-agent is the standalone Go service; Python is not required.
 package main
 
 import (
@@ -25,7 +25,7 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, flag.ErrHelp) {
-		log.Printf("jms-pam-agent failed: %s", diagnostic(err))
+		log.Printf("pam-agent failed: %s", diagnostic(err))
 		os.Exit(1)
 	}
 }
@@ -53,11 +53,11 @@ func currentUserMode(requested bool, platform string, euid int) bool {
 
 func run(args []string) error {
 	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
-		fmt.Print(`jms-pam-agent commands:
-  run [--local] --config PATH                Run the Agent; non-root/other OS uses local mode
-  init-local --bootstrap PATH --directory PATH --instance-id ID
+		fmt.Print(`pam-agent commands:
+  run [--local] --config PATH                Run the PAM Agent; non-root/other OS uses local mode
+  init-local --bootstrap PATH --directory PATH [--instance-id ID]
                                             Prepare local foreground configuration
-  install --bootstrap PATH --instance-id ID  Install the fixed Linux service
+  install --bootstrap PATH [--instance-id ID] Install the fixed Linux service
   get_accounts [--config PATH | --socket PATH]
                                             List authorized account metadata
   get_secret ACCOUNT_ID [--config PATH | --socket PATH]
@@ -77,11 +77,11 @@ func run(args []string) error {
 		command, args = args[0], args[1:]
 	}
 	if command == "version" {
-		fmt.Println("jms-pam-agent", pam.Version, runtime.GOOS, runtime.GOARCH)
+		fmt.Println("pam-agent", pam.Version, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
-	flags := flag.NewFlagSet("jms-pam-agent "+command, flag.ContinueOnError)
-	config := flags.String("config", agent.DefaultConfig, "local Agent configuration")
+	flags := flag.NewFlagSet("pam-agent "+command, flag.ContinueOnError)
+	config := flags.String("config", agent.DefaultConfig, "local PAM Agent configuration")
 	switch command {
 	case "run", "check-config":
 		local := flags.Bool("local", false, "foreground local development with current user and local delivery paths")
@@ -90,14 +90,14 @@ func run(args []string) error {
 		}
 		settings, err := agent.LoadConfig(*config)
 		if err != nil {
-			return fmt.Errorf("cannot load Agent configuration: %w", err)
+			return fmt.Errorf("cannot load PAM Agent configuration: %w", err)
 		}
 		settings.Local = currentUserMode(*local, runtime.GOOS, os.Geteuid())
 		if err = settings.Validate(); err != nil {
 			return err
 		}
 		if command == "check-config" {
-			fmt.Println("Agent configuration is valid")
+			fmt.Println("PAM Agent configuration is valid")
 			return nil
 		}
 		remote, err := settings.Client()
@@ -109,12 +109,12 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("Agent started: instance=%s local=%t", settings.InstanceID, settings.Local)
+		log.Printf("PAM Agent started: instance=%s local=%t", settings.InstanceID, settings.Local)
 		return service.Run(ctx)
 	case "init-local":
 		bootstrap := flags.String("bootstrap", "", "private application access bootstrap JSON")
 		directory := flags.String("directory", "", "absolute private local output directory")
-		instance := flags.String("instance-id", "", "stable local instance ID")
+		instance := flags.String("instance-id", "", "optional instance ID; defaults to hostname plus four random characters")
 		if err := flags.Parse(args); err != nil {
 			return err
 		}
@@ -122,7 +122,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("Local Agent configuration:", path)
+		fmt.Println("Local PAM Agent configuration:", path)
 		return nil
 	case "get_accounts", "get-accounts", "get_secret", "get-secret", "get_credential", "get-credential":
 		path := "/v1/accounts"
@@ -133,7 +133,7 @@ func run(args []string) error {
 			path = "/v1/credential?account_id=" + url.QueryEscape(args[0])
 			args = args[1:]
 		}
-		socket := flags.String("socket", "", "running Agent socket; otherwise read --config")
+		socket := flags.String("socket", "", "running PAM Agent socket; otherwise read --config")
 		if err := flags.Parse(args); err != nil {
 			return err
 		}
@@ -143,7 +143,7 @@ func run(args []string) error {
 		if *socket == "" {
 			settings, err := agent.LoadConfig(*config)
 			if err != nil {
-				return fmt.Errorf("cannot load Agent configuration: %w", err)
+				return fmt.Errorf("cannot load PAM Agent configuration: %w", err)
 			}
 			*socket = settings.Delivery.Socket
 		}
@@ -151,13 +151,13 @@ func run(args []string) error {
 	case "install":
 		options := agent.InstallOptions{}
 		flags.StringVar(&options.Bootstrap, "bootstrap", "", "application access bootstrap JSON")
-		flags.StringVar(&options.InstanceID, "instance-id", "", "stable instance ID")
+		flags.StringVar(&options.InstanceID, "instance-id", "", "optional instance ID; defaults to hostname plus four random characters")
 		if err := flags.Parse(args); err != nil {
 			return err
 		}
 		options.ConfigFile = *config
 		if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-			return errors.New("Agent installation requires Linux and root")
+			return errors.New("PAM Agent installation requires Linux and root")
 		}
 		return agent.Install(ctx, options)
 	case "report_accounts", "report-accounts":
@@ -166,7 +166,7 @@ func run(args []string) error {
 			ids = append(ids, args[0])
 			args = args[1:]
 		}
-		socket := flags.String("socket", "", "running Agent socket; otherwise read --config")
+		socket := flags.String("socket", "", "running PAM Agent socket; otherwise read --config")
 		if err := flags.Parse(args); err != nil {
 			return err
 		}
@@ -176,7 +176,7 @@ func run(args []string) error {
 		if *socket == "" {
 			settings, err := agent.LoadConfig(*config)
 			if err != nil {
-				return fmt.Errorf("cannot load Agent configuration: %w", err)
+				return fmt.Errorf("cannot load PAM Agent configuration: %w", err)
 			}
 			*socket = settings.Delivery.Socket
 		}
@@ -205,7 +205,7 @@ func run(args []string) error {
 		key := args[0]
 		args = args[1:]
 		revision := flags.Int64("revision", -1, "exact applied revision")
-		socket := flags.String("socket", "", "local Agent socket")
+		socket := flags.String("socket", "", "local PAM Agent socket")
 		if err := flags.Parse(args); err != nil {
 			return err
 		}
@@ -252,23 +252,23 @@ func query(ctx context.Context, socket, path string) error {
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
-			return fmt.Errorf("cannot reach Agent socket %q; start the Agent with run --config or check the service", socket)
+			return fmt.Errorf("cannot reach PAM Agent socket %q; start the PAM Agent with run --config or check the service", socket)
 		}
 		if errors.Is(err, os.ErrPermission) {
-			return fmt.Errorf("permission denied for Agent socket %q; use its application user or root", socket)
+			return fmt.Errorf("permission denied for PAM Agent socket %q; use its application user or root", socket)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return errors.New("Agent query timed out; check Agent and backend availability")
+			return errors.New("PAM Agent query timed out; check PAM Agent and backend availability")
 		}
-		return fmt.Errorf("cannot reach Agent socket %q; check the running Agent", socket)
+		return fmt.Errorf("cannot reach PAM Agent socket %q; check the running PAM Agent", socket)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return fmt.Errorf("Agent query rejected (HTTP %d); check authorization and backend availability", response.StatusCode)
+		return fmt.Errorf("PAM Agent query rejected (HTTP %d); check authorization and backend availability", response.StatusCode)
 	}
 	var payload json.RawMessage
 	if err = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&payload); err != nil {
-		return errors.New("invalid Agent query response")
+		return errors.New("invalid PAM Agent query response")
 	}
 	var output bytes.Buffer
 	if err = json.Indent(&output, payload, "", "  "); err != nil {

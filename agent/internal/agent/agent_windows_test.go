@@ -55,7 +55,7 @@ func TestWindowsForegroundRunKeepsCredentialsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory, err := os.MkdirTemp(home, ".jms-pam-agent-test-")
+	directory, err := os.MkdirTemp(home, ".pam-agent-test-")
 	if err != nil {
 		t.Fatal(err)
 	}

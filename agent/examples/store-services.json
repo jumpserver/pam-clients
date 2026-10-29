@@ -3,7 +3,6 @@
   "app_id": "<application-id>",
   "app_secret": "<application-secret>",
   "org_id": "<org-id>",
-  "instance_id": "app-node-1",
   "pull_interval": 300,
   "store": {
     "accounts": [
@@ -68,8 +67,8 @@
       }
     }
   ],
-  "config_version": 1,
-  "local_api": {
+  "version": 1,
+  "socket": {
     "owner": "appuser"
   }
 }
