@@ -77,7 +77,7 @@ def handle_event(client, output, event):
                     del current["credentials"][account_id]
                 save_local(output, current)
                 LOG.info("Removed %s revoked credentials", len(stale))
-    return event.get("event") == "application.scope.updated"
+    return event.get("event") == "app.scope.updated"
 
 
 def main():

@@ -134,3 +134,59 @@ func TestNotificationDisablePreservesAuthorizedAccount(t *testing.T) {
 		t.Fatal("actual authorization revocation did not release the account")
 	}
 }
+
+func TestPolicyUnbindingPreservesAuthorizedConnectionUntilActualRevocation(t *testing.T) {
+	applied, revoked := 0, 0
+	w := managedWatcher(t, "managed-go-policy-detach", func(context.Context, Account) error { applied++; return nil })
+	w.handlers.OnAccountRevoked = func(context.Context, string) error { revoked++; return nil }
+	update := managedUpdate()
+	w.dispatch(Event{Event: "snapshot", Credentials: []Event{update}, AuthorizedAccountIDs: []string{"account"}})
+	w.dispatch(Event{Event: "app.scope.updated", AuthorizedAccountIDs: []string{"account"}})
+	w.dispatch(Event{Event: "snapshot", AuthorizedAccountIDs: []string{"account"}})
+	if revoked != 0 || applied != 1 || w.usedAccounts[CredentialSelector{Key: "policy:database"}] != "account" || len(w.usedAccounts) != 1 {
+		t.Fatal("policy detach released an authorized account or restored its notification scope", w.usedAccounts)
+	}
+	update.EventID = "obsolete-policy-event"
+	w.dispatch(update)
+	if applied != 1 {
+		t.Fatal("detached policy update reached the business callback")
+	}
+	w.dispatch(Event{Event: "app.scope.updated", AuthorizedAccountIDs: []string{}})
+	if revoked != 1 || len(w.usedAccounts) != 0 {
+		t.Fatal("actual authorization reduction did not release the account")
+	}
+}
+
+func TestAuthoritativeScopeEvictsAllUnauthorizedCredentialCacheAliases(t *testing.T) {
+	for _, name := range []string{"snapshot", "app.scope.updated", "application.scope.updated"} {
+		instance := "go-authorization-cache-" + name
+		client := contractClient(t, instance, "jms-pam")
+		ctx := context.Background()
+		if _, err := client.GetAccount(ctx, "account"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.GetCredential(ctx, CredentialSelector{Key: "db"}); err != nil {
+			t.Fatal(err)
+		}
+		client.reconcileLatestCredentials(Event{Event: name, Credentials: []Event{{Key: "db"}}, AuthorizedAccountIDs: []string{}})
+		controlBackend(t, instance, url.Values{"fault": {"503"}})
+		if _, err := client.GetAccount(ctx, "account"); err == nil {
+			t.Fatal("unauthorized account cache survived")
+		}
+		if _, err := client.GetCredential(ctx, CredentialSelector{Key: "db"}); err == nil {
+			t.Fatal("unauthorized policy cache survived")
+		}
+	}
+}
+
+func TestLegacyRestartNameRunsTheCurrentCommandHandler(t *testing.T) {
+	calls := 0
+	w := managedWatcher(t, "managed-go-legacy-restart", func(context.Context, Account) error { t.Error("restart fetched credentials"); return nil })
+	w.handlers.OnApplicationRestart = func(context.Context) error { calls++; return nil }
+	event := Event{Event: "application.restart.requested", CommandID: "legacy-command", EventID: "legacy-restart"}
+	w.dispatch(event)
+	w.dispatch(event)
+	if calls != 1 {
+		t.Fatal("legacy restart was ignored or repeated", calls)
+	}
+}

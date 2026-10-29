@@ -125,6 +125,22 @@ func (a *Agent) AccountUsageSnapshot() pam.ApplicationStatus {
 	for id := range used {
 		report.AccountIDs = append(report.AccountIDs, id)
 	}
+	for _, state := range a.state.SocketServices {
+		if state == nil {
+			continue
+		}
+		switch state.Status {
+		case "degraded", "error":
+			report.Status = "degraded"
+			if report.ErrorCode == "" {
+				report.ErrorCode = "application_failed"
+			}
+		case "starting", "stopping", "stopped":
+			if report.Status == "running" {
+				report.Status = "starting"
+			}
+		}
+	}
 	sort.Strings(report.AccountIDs)
 	return report
 }

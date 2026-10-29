@@ -168,3 +168,46 @@ test('disabling notifications preserves authorized connections until actual revo
     assert.equal(sdk.applied.length, 1)
   } finally { sdk.close() }
 })
+
+
+test('policy unbinding preserves an authorized account until actual authorization removal', async () => {
+  const sdk = client('managed-node-policy-detach')
+  const revoked = []
+  const update = { event: 'credential.updated', eventId: 'detach-event', key: 'database',
+    credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
+  let authorized = true
+  sdk.onEvent = event => {
+    if (event.authorizedAccountIds) authorized = event.authorizedAccountIds.includes('account')
+  }
+  sdk.onAccountRevoked = id => { assert.equal(authorized, false); revoked.push(id) }
+  sdk.watchCredentialEvents = async function* () {
+    yield { event: 'snapshot', credentials: [update], authorizedAccountIds: ['account'] }
+    yield { event: 'app.scope.updated', authorizedAccountIds: ['account'] }
+    yield { event: 'snapshot', credentials: [], authorizedAccountIds: ['account'] }
+    await until(async () => (await sdk.getClientInfo()).applicationStatus?.accountIds.includes('account'))
+    yield { ...update, eventId: 'obsolete-policy-event' }
+    yield { event: 'app.scope.updated', authorizedAccountIds: [] }
+  }
+  try {
+    await sdk.watchEvents()
+    assert.deepEqual(revoked, ['account'])
+    assert.equal(sdk.applied.length, 1)
+  } finally { sdk.close() }
+})
+
+
+test('the legacy restart name reaches the current handler only once', async () => {
+  const sdk = client('managed-node-legacy-restart')
+  let restarts = 0
+  sdk.onApplicationRestart = () => { restarts++ }
+  sdk.watchCredentialEvents = async function* () {
+    const event = { event: 'application.restart.requested', eventId: 'legacy-restart', commandId: 'legacy-command' }
+    yield event
+    yield event
+  }
+  try {
+    await sdk.watchEvents()
+    assert.equal(restarts, 1)
+    assert.deepEqual(sdk.applied, [])
+  } finally { sdk.close() }
+})

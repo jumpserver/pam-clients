@@ -14,7 +14,7 @@ def restart_application():
 
 class ApplicationClient(Client):
     def apply_event(self, event):
-        if event.get("event") == "application.restart.requested":
+        if event.get("event") == "app.restart.requested":
             restart_application()
             return
         account = self.get_account(

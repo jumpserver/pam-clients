@@ -6,7 +6,7 @@ async function applyAccount(account) {
   throw new Error('Implement application account switching')
 }
 async function applyEvent(client, event) {
-  if (event.event === 'application.restart.requested')
+  if (event.event === 'app.restart.requested')
     throw new Error('Implement application restart and health check')
   const account = await client.getAccount({ accountId: event.accountId, allowLocalFallback: false })
   if (account.revision !== event.accountRevision) throw new Error('Event account version is superseded')

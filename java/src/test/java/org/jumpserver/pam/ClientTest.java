@@ -321,7 +321,7 @@ class ClientTest {
       Event duplicate =
           new Event(
               mapper.valueToTree(
-                  Map.of("event", "application.restart.requested", "command_id", "duplicate")));
+                  Map.of("event", "app.restart.requested", "command_id", "duplicate")));
       assertFalse(sdk.executeApplicationCommand(duplicate, command -> executed[0]++).isAccepted());
       assertEquals(1, executed[0]);
       RuntimeException failure = new RuntimeException("business failure");
@@ -329,7 +329,7 @@ class ClientTest {
           new Event(
               mapper.valueToTree(
                   Map.of(
-                      "event", "application.restart.requested", "command_id", "report-failure")));
+                      "event", "app.restart.requested", "command_id", "report-failure")));
       assertSame(
           failure,
           assertThrows(

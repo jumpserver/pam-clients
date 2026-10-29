@@ -175,7 +175,8 @@ func (w *EventWatcher) refresh(update, event Event, delay time.Duration) {
 }
 
 func (w *EventWatcher) dispatch(event Event) {
-	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "application.scope.updated" || event.Event == "configuration.updated" {
+	event.Event = canonicalEventName(event.Event)
+	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
 		clear(w.pending)
 	}
 	if w.handlers.OnEvent != nil {
@@ -207,6 +208,24 @@ func (w *EventWatcher) dispatch(event Event) {
 		for _, update := range event.Credentials {
 			w.refresh(update, event, 0)
 		}
+	case "app.scope.updated", "configuration.updated":
+		if w.handlers.OnAccountChanged != nil {
+			w.accountScope = make(map[CredentialSelector]bool)
+			if event.AuthorizedAccountIDs != nil {
+				allowed := make(map[string]bool)
+				retained := make(map[CredentialSelector]bool)
+				for _, id := range event.AuthorizedAccountIDs {
+					allowed[id] = true
+					retained[CredentialSelector{AccountID: id}] = true
+				}
+				for selector, id := range w.usedAccounts {
+					if allowed[id] {
+						retained[selector] = true
+					}
+				}
+				w.revokeAccounts(retained, event)
+			}
+		}
 	case "credential.updated":
 		if event.CommandID == "" || w.handlers.OnAccountChanged != nil {
 			w.refresh(event, event, 0)
@@ -232,7 +251,7 @@ func (w *EventWatcher) dispatch(event Event) {
 				w.report(err, &event)
 			}
 		}
-	case "credential.switch.requested", "application.restart.requested":
+	case "credential.switch.requested", "app.restart.requested":
 		if w.handlers.OnAccountChanged != nil && event.CommandID != "" {
 			w.refresh(event, event, 0)
 		}

@@ -313,6 +313,7 @@ func (e *Event) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	*e = Event(value)
+	e.Event = canonicalEventName(e.Event)
 	e.Data = data
 	return nil
 }

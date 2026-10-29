@@ -117,6 +117,10 @@ func (a *Agent) retainedAccount(accountID string) (CredentialResult, error) {
 // AccountCredential requires live authorization and a current API value first.
 // Only a temporary backend failure permits the retained, still-authorized value.
 func (a *Agent) AccountCredential(ctx context.Context, accountID string) (CredentialResult, error) {
+	return a.accountCredential(ctx, accountID, true)
+}
+
+func (a *Agent) accountCredential(ctx context.Context, accountID string, allowLocalFallback bool) (CredentialResult, error) {
 	a.syncMu.Lock()
 	defer a.syncMu.Unlock()
 	if accountID == "" {
@@ -124,7 +128,7 @@ func (a *Agent) AccountCredential(ctx context.Context, accountID string) (Creden
 	}
 	value, err := a.remote.GetCredentialFresh(ctx, pam.CredentialSelector{AccountID: accountID})
 	if err != nil {
-		if temporary(ctx, err) {
+		if temporary(ctx, err) && allowLocalFallback {
 			return a.retainedAccount(accountID)
 		}
 		var failure *pam.PAMError

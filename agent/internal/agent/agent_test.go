@@ -536,6 +536,9 @@ func TestFileTemplateAndScriptDelivery(t *testing.T) {
 	if json.Unmarshal(raw, &payload) != nil || payload.Credentials["db"].Secret != value.Secret {
 		t.Fatal("script did not receive JSON on stdin")
 	}
+	if payload.Event != "credential.updated" {
+		t.Fatalf("unexpected script event: %q", payload.Event)
+	}
 	info, _ := os.Stat(target)
 	if info.Mode().Perm() != 0600 {
 		t.Fatal("credentials must be private")
@@ -654,6 +657,9 @@ func TestStagedScriptUpdateDeclaresTargetsAndParsesJSON(t *testing.T) {
 	var payload Payload
 	if json.Unmarshal(raw, &payload) != nil || len(payload.Credentials) != 2 {
 		t.Fatal("script did not receive the complete multi-account snapshot")
+	}
+	if payload.Event != "credential.updated" {
+		t.Fatalf("unexpected script event: %q", payload.Event)
 	}
 	link := filepath.Join(root, "business-link.json")
 	if err := os.Symlink(target, link); err != nil {

@@ -201,6 +201,15 @@ func (c Config) validateServices() error {
 			return errors.New("services require unique stable names")
 		}
 		names[service.Name] = true
+		if service.Delivery != "" && service.Delivery != "socket" {
+			return errors.New("service delivery must be socket or omitted")
+		}
+		if service.Delivery == "socket" && (service.ConfigUpdate != nil || service.CredentialCheck != nil || service.ServiceAction != nil || service.ApplicationCheck != nil) {
+			return errors.New("socket services receive results from the application and cannot execute local actions")
+		}
+		if service.RestartSupported && service.Delivery != "socket" {
+			return errors.New("restart_supported requires socket delivery")
+		}
 		if len(service.Keys) > 0 || len(service.Accounts) == 0 || len(service.Files) > 0 || service.Action != nil {
 			return errors.New("services require account selectors and staged actions")
 		}

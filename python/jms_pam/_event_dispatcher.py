@@ -8,6 +8,8 @@ from time import monotonic
 from typing import Any, Optional
 
 
+from ._event_names import canonical_event_name
+
 @dataclass
 class PendingCredential:
     update: dict[str, Any]
@@ -164,7 +166,7 @@ class EventDispatcher:
     @staticmethod
     def _account_selector(update):
         if update.get('command_id'):
-            if update.get('event') in ('credential.updated', 'credential.switch.requested', 'application.restart.requested'):
+            if update.get('event') in ('credential.updated', 'credential.switch.requested', 'app.restart.requested'):
                 return 'command', update['command_id']
             return None
         if update.get('credential_mode') == 'alternating_rotation':
@@ -193,7 +195,7 @@ class EventDispatcher:
         if selector is None or not isinstance(event_id, str) or not event_id:
             return
         usage_selector = self._account_selector({**update, 'command_id': None})
-        if update.get('event') != 'application.restart.requested' and self.account_scope is not None and usage_selector not in self.account_scope:
+        if update.get('event') != 'app.restart.requested' and self.account_scope is not None and usage_selector not in self.account_scope:
             return
         previous = self.pending.get(selector)
         if previous and previous.update.get('revision', 0) > update.get('revision', 0):
@@ -209,7 +211,7 @@ class EventDispatcher:
                         self.pending.pop(selector, None)
                         return
                 try:
-                    if update.get('event') == 'application.restart.requested':
+                    if update.get('event') == 'app.restart.requested':
                         self.client.on_application_restart()
                     else:
                         if update.get('credential_mode') not in ('subscription', 'alternating_rotation'):
@@ -263,6 +265,11 @@ class EventDispatcher:
             self._report_usage()
 
     def _revoke_accounts(self, retained, event):
+        # Notification membership and business use are separate. Retain the last
+        # business account until it loses authorization; account_scope already
+        # prevents detached policies from driving new callbacks.
+        retained = retained | {selector for selector, account_id in self.used_accounts.items()
+                               if ('account', account_id) in retained}
         for selector in list(self.pending_revocations):
             if selector in retained:
                 del self.pending_revocations[selector]
@@ -273,8 +280,9 @@ class EventDispatcher:
         self._report_usage()
 
     def _dispatch(self, event) -> None:
+        event = {**event, 'event': canonical_event_name(event.get('event'))}
         name = event.get("event")
-        if name in {"snapshot", "credential.revoked", "application.scope.updated", "configuration.updated"}:
+        if name in {"snapshot", "credential.revoked", "app.scope.updated", "configuration.updated"}:
             # The following snapshot supplies the currently authorized scope.
             self.pending.clear()
         self._call(self.client.on_event, event, event)
@@ -293,6 +301,14 @@ class EventDispatcher:
                     self._refresh(update, event)
                 except Exception as error:
                     self._report_error(error, event)
+        elif name in {'app.scope.updated', 'configuration.updated'} and self.account_events:
+            self.account_scope = set()
+            if event.get('authorized_account_ids') is not None:
+                allowed = set(event['authorized_account_ids'])
+                retained = {selector for selector, account_id in self.used_accounts.items()
+                            if account_id in allowed}
+                retained |= {('account', account_id) for account_id in allowed}
+                self._revoke_accounts(retained, event)
         elif self.account_events and event.get('command_id'):
             self._refresh(event, event)
         elif name == "credential.updated" and not event.get("command_id"):

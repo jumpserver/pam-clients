@@ -49,7 +49,7 @@ type Payload struct {
 // Rule payload keys are the administrator's selectors. For an account rule the
 // selector stays A even when the server selects B as the current account.
 func resolveRule(rule Rule, latest map[string]Credential) (Payload, []string, bool, error) {
-	payload := Payload{Event: "credentials.updated", Credentials: map[string]Credential{}}
+	payload := Payload{Event: "credential.updated", Credentials: map[string]Credential{}}
 	matched := []string{}
 	complete := true
 	selectors := make([]AccountSelector, 0, len(rule.Keys)+len(rule.Accounts))

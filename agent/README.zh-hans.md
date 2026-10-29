@@ -113,7 +113,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 `pull_interval` 是全局拉取周期，单位为秒，必须为正整数，省略时默认 300。PAM Agent 启动时立即同步，之后按周期核对账号和凭据版本，仅在版本或当前账号变化时取密。`update_on_notification: false` 的业务在下一次定时拉取时更新；通知不会推迟该周期。
 
-## 4. store
+## 4. 账号存储 store
 
 `store` 用于将凭据保存为标准 JSON 或环境变量文件，供通过文件读取凭据的应用使用。它决定保存哪些账号、输出目录、文件格式和属主。修改已有业务配置文件或重载服务，应在 `services` 中配置。
 
@@ -141,7 +141,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 每个账号按真实 account_id 单独生成文件，A/B 也分别存储；文件包含明文凭据，权限为 0600。正在改密的 A/B 非当前账号暂不可用。成功核对授权后清理撤销账号的文件。版本未变化时定时对账只读取元数据，不重复取密；实际取密仍保留审计，并计入轮换访问观察。
 
-## 5. socket
+## 5. 本地接口 socket
 
 `socket` 用于配置本机 Unix Socket 接口，供应用查询健康状态、列出账号、按需获取凭据、上报账号使用情况和确认业务处理结果。不配置 `store` 也可以通过 Socket 查询。取密权限由 Core 中的应用授权决定；`store.accounts` 只选择文件输出账号，不是本地 API 的账号访问范围。
 
@@ -183,7 +183,7 @@ curl --fail --silent --show-error \
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ```
 
-## 6. services
+## 6. 业务更新 service
 
 将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本；所有相关业务验证成功，且配置 `app_check.confirm_on_success: true`，才自动确认轮换成功。
 
@@ -345,7 +345,7 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ```json
 {
-  "event": "credentials.updated",
+  "event": "credential.updated",
   "credentials": {
     "<primary-account-id>": {
       "account_id": "<active-account-id>",

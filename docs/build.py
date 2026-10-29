@@ -202,7 +202,6 @@ def latest_credentials_section(language, texts):
 
 {texts["live_refresh"]}
 
-{texts["event_liveness"]}
 """
 
 
@@ -409,6 +408,175 @@ def native_example_section(language, example, snippet):
     return f"`{filename}`\n\n{snippet}\n\n```bash\n{command}\n```"
 
 
+def overview_guide(texts):
+    return f"""<!-- overview-doc:start -->
+
+# {texts['overview_title']}
+
+## {texts['overview_relationships_title']}
+
+{texts['overview_relationships']}
+
+## {texts['overview_choices_title']}
+
+{texts['overview_choices']}
+
+## {texts['overview_flow_title']}
+
+{texts['overview_flow']}
+
+## {texts['overview_reading_title']}
+
+{texts['overview_reading']}
+
+<!-- overview-doc:end -->
+"""
+
+
+PROTOCOL_EVENT_GROUPS = [
+    (
+        'accounts',
+        [
+            'credential.updated',
+            'app.scope.updated',
+        ],
+    ),
+    (
+        'changes',
+        [
+            'credential.change.started',
+            'credential.change.completed',
+            'credential.change.failed',
+        ],
+    ),
+    (
+        'rotation',
+        [
+            'rotation.verify.started',
+            'rotation.verify.skipped',
+            'rotation.verify.failed',
+            'rotation.verify.cancelled',
+            'rotation.started',
+            'rotation.waiting_for_app',
+            'rotation.source.waiting',
+            'rotation.source.ready',
+            'rotation.completed',
+            'rotation.failed',
+            'rotation.force_stopped',
+        ],
+    ),
+    (
+        'commands',
+        [
+            'credential.switch.requested',
+            'app.restart.requested',
+        ],
+    ),
+    (
+        'connection',
+        [
+            'snapshot',
+            'ping',
+            'pong',
+            'received',
+        ],
+    ),
+    (
+        'legacy',
+        [
+            'credential.revoked',
+            'configuration.updated',
+            'rotation.preparation.started',
+            'rotation.accounts.aligned',
+            'rotation.standby.waiting',
+            'rotation.preparation.ready',
+            'rotation.preparation.cancelled',
+            'rotation.verification.started',
+            'rotation.verification.failed',
+            'rotation.verification.cancelled',
+            'application.scope.updated',
+            'application.restart.requested',
+            'rotation.waiting_for_application',
+            'rotation.verification.skipped',
+        ],
+    ),
+]
+
+
+def protocol_event_catalog(texts):
+    sections = [f"## {texts['protocol_catalog_title']}\n\n{texts['protocol_catalog_intro']}"]
+    for group, events in PROTOCOL_EVENT_GROUPS:
+        rows = "\n".join(
+            f"| `{event}` | {texts['protocol_event_' + event.replace('.', '_')]} |"
+            for event in events
+        )
+        sections.append(
+            f"### {texts['protocol_catalog_' + group + '_title']}\n\n"
+            f"{texts['protocol_catalog_' + group + '_help']}\n\n"
+            f"| {texts['protocol_event_name']} | {texts['protocol_event_meaning']} |\n| --- | --- |\n{rows}"
+        )
+    return "\n\n".join(sections)
+
+
+def protocol_guide(texts):
+    return f"""<!-- protocol-doc:start -->
+
+# {texts['protocol_title']}
+
+{texts['protocol_intro']}
+
+## {texts['protocol_events_title']}
+
+{texts['protocol_events']}
+
+{protocol_event_catalog(texts)}
+
+## {texts['protocol_fields_title']}
+
+{texts['protocol_fields']}
+
+## {texts['protocol_snapshot_title']}
+
+{texts['protocol_snapshot']}
+
+```json
+{{
+  "event": "snapshot",
+  "authorized_account_ids": ["<account-id>"],
+  "credentials": [{{
+    "event_id": "<event-id>", "key": "account:<account-id>",
+    "credential_mode": "subscription", "account_id": "<account-id>",
+    "revision": 1, "account_revision": 1
+  }}]
+}}
+```
+
+## {texts['protocol_results_title']}
+
+{texts['sdk_receipts']}
+
+```json
+{{"event": "received", "event_id": "<event-id>"}}
+```
+
+{texts['event_results']}
+
+## {texts['protocol_commands_title']}
+
+{texts['protocol_commands']}
+
+## {texts['protocol_connection_title']}
+
+{texts['event_liveness']}
+
+{texts['protocol_scope_legacy']}
+
+{texts['event_compatibility']}
+
+<!-- protocol-doc:end -->
+"""
+
+
 def native_guide(language, texts):
     label, _, runtime, _ = EXAMPLES[language]
     syntax, quickstart, _ = NATIVE_EXAMPLES[language]
@@ -457,12 +625,6 @@ def native_guide(language, texts):
 
 {status_reporting_section(language, texts)}
 
-### {texts["low_level_title"]}
-
-{texts["event_results"]}
-
-{texts["event_compatibility"]}
-
 ### API
 
 {methods}
@@ -480,6 +642,12 @@ def native_guide(language, texts):
 {texts["native_compatibility"]}
 
 <!-- sdk-doc:end -->
+
+{overview_guide(texts)}
+
+{protocol_guide(texts)}
+
+{socket_guide(texts)}
 """
 
 
@@ -545,7 +713,7 @@ AGENT_UPDATE_SCRIPT = {
     },
 }
 AGENT_SCRIPT_PAYLOAD = {
-    'event': 'credentials.updated',
+    'event': 'credential.updated',
     'credentials': {
         '<primary-account-id>': {
             'account_id': '<active-account-id>', 'username': 'db_app',
@@ -670,6 +838,144 @@ sudo systemctl restart pam-agent
 """
 
 
+def socket_guide(texts):
+    config = {
+        **AGENT_BASE,
+        'socket': {'path': '/run/jms-pam-agent/agent.sock', 'owner': 'appuser'},
+        'services': [{
+            'name': 'orders', 'delivery': 'socket', 'allow_account_switch': True,
+            'restart_supported': False, 'accounts': [{'id': '<primary-account-id>'}],
+        }],
+    }
+    return f'''<!-- socket-doc:start -->
+# {texts['socket_title']}
+
+{texts['socket_intro']}
+
+## 1. Unix Socket / HTTP / WebSocket
+
+{texts['socket_transport']}
+
+## 2. Agent / services
+
+{texts['socket_config']}
+
+```json
+{json.dumps(config, indent=2)}
+```
+
+## 3. Events / A/B
+
+{texts['socket_workflow']}
+
+{texts['socket_snapshots']}
+
+```text
+GET /v1/events?service_id=orders
+Upgrade: websocket
+```
+
+```json
+{{
+  "event": "snapshot",
+  "service_id": "orders",
+  "result": "pending",
+  "retry_ready": true,
+  "received": false,
+  "credentials_read": false,
+  "core_status": "pending",
+  "delivery": {{
+    "delivery_id": "<delivery-id>",
+    "event": "credential.updated",
+    "service_id": "orders",
+    "credentials": {{
+      "<primary-account-id>": {{
+        "key": "<rotation-key>",
+        "account_id": "<active-account-id>",
+        "revision": 7,
+        "account_revision": 3,
+        "event_id": "<core-event-id>"
+      }}
+    }},
+    "revoked_account_ids": []
+  }},
+  "commands": []
+}}
+```
+
+```json
+{{"request_id":"1","operation":"credentials","delivery_id":"<delivery-id>"}}
+```
+
+```json
+{{"request_id":"2","operation":"result","delivery_id":"<delivery-id>","status":"success"}}
+```
+
+```json
+{{"request_id":"3","operation":"result","delivery_id":"<delivery-id>","status":"failed","error_code":"database_probe_failed"}}
+```
+
+{texts['socket_results']}
+
+## 4. Commands / status
+
+{texts['socket_commands']}
+
+```json
+{{"request_id":"4","operation":"command.result","command_id":"<command-id>","status":"success"}}
+```
+
+{texts['socket_status']}
+
+```json
+{{"request_id":"5","operation":"status","status":"degraded","error_code":"database_unavailable"}}
+```
+
+## 5. API
+
+| HTTP | API |
+| --- | --- |
+| GET | `/v1/health`, `/v1/services` |
+| GET | `/v1/accounts`, `/v1/usage` |
+| GET | `/v1/credential?account_id=<id>&allow_local_fallback=false` |
+| GET | `/v1/application`, `/v1/instance`, `/v1/policies?search=...` |
+| GET | `/v1/policy?key=<key>` or `/v1/policy?policy_id=<id>` |
+| GET | `/v1/services/<service_id>` |
+| GET | `/v1/services/<service_id>/credentials?delivery_id=<delivery_id>` |
+| POST | `/v1/services/<service_id>/received`, `/v1/services/<service_id>/results` |
+| POST | `/v1/services/<service_id>/status` |
+| POST | `/v1/services/<service_id>/commands/<command_id>/result` |
+| POST | `/v1/usage`, `/v1/confirm` |
+
+WebSocket operations: `ping`, `received`, `accounts`, `credential`, `application`, `instance`, `policies`, `policy`, `credentials`, `result`, `command.result`, `status`, `usage`.
+`usage` without `account_ids` reads the aggregate; with `account_ids` (including `[]`) it replaces the instance-wide explicit usage declaration, just like HTTP POST `/v1/usage`.
+Every request includes `request_id`; responses contain the same ID and `result` or `error: {{code, status}}`. Snapshots can arrive between responses. `{{"event":"ping"}}` is a heartbeat. HTTP result/status bodies use the same fields without `request_id` and `operation`.
+
+```bash
+curl --fail --unix-socket /run/jms-pam-agent/agent.sock \\
+  http://localhost/v1/services/orders
+```
+
+{texts['socket_boundary']}
+
+## 6. Python
+
+{texts['socket_example']}
+
+```bash
+python3 -m pip install 'websockets>=11'
+{source_archive('socket')}
+cd ./jms-pam-clients/socket
+python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders
+```
+
+```python
+{(CLIENTS / 'socket' / 'python_example.py').read_text().rstrip()}
+```
+<!-- socket-doc:end -->
+'''
+
+
 def agent_guide(texts):
     return f"""# {texts['agent_title']}
 
@@ -726,7 +1032,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\\sample-app'
 
 {texts['pull_interval']}
 
-## 4. store
+## 4. {texts['agent_store_title']}
 
 {texts['store_purpose']}
 
@@ -745,7 +1051,7 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\\sample-app'
 
 {texts['store_layout']}
 
-## 5. socket
+## 5. {texts['agent_socket_title']}
 
 {texts['socket_purpose']}
 
@@ -780,7 +1086,7 @@ curl --fail --silent --show-error \\
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ```
 
-## 6. services
+## 6. {texts['agent_service_title']}
 
 {agent_configuration_section(texts)}
 
@@ -884,14 +1190,6 @@ python3
 
 {status_reporting_section("python", texts)}
 
-### {texts["low_level_title"]}
-
-{texts["event_results"]}
-
-{texts["command_processing"]}
-
-{texts["event_compatibility"]}
-
 ### API
 
 - `list_accounts(search="")` / `list_accounts_page(limit=200, offset=0, search="")`
@@ -918,6 +1216,12 @@ python3
 {texts["native_compatibility"]}
 
 <!-- sdk-doc:end -->
+
+{overview_guide(texts)}
+
+{protocol_guide(texts)}
+
+{socket_guide(texts)}
 """
 
 
@@ -942,6 +1246,7 @@ def main():
         }
         if locale in ("en", "zh-hans"):
             documents[CLIENTS / "agent" / f"README.{locale}.md"] = agent_guide(texts)
+        documents[CLIENTS / "socket" / f"README.{locale}.md"] = socket_guide(texts)
         # The complete English and Simplified Chinese Python references are maintained directly.
         if locale not in ("en", "zh-hans"):
             documents[CLIENTS / "python" / f"README.{locale}.md"] = python_guide(texts)
@@ -949,10 +1254,12 @@ def main():
             path = CLIENTS / "python" / f"README.{locale}.md"
             content = path.read_text(encoding="utf-8")
             guide = python_guide(texts)
-            for tab in ("agent", "sdk"):
+            for tab in ("agent", "sdk", "overview", "protocol", "socket"):
                 start = f"<!-- {tab}-doc:start -->"
                 end = f"<!-- {tab}-doc:end -->"
                 block = guide.split(start, 1)[1].split(end, 1)[0]
+                if tab in ("overview", "protocol", "socket") and start not in content:
+                    content = content.rstrip() + "\n\n" + start + block + end + "\n"
                 content, count = re.subn(
                     re.escape(start) + r".*?" + re.escape(end),
                     lambda _: start + block + end, content, flags=re.S,

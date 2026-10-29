@@ -41,7 +41,11 @@ func (a *Agent) restoreServiceUsage() error {
 		for _, account := range service.Accounts {
 			key := "service:" + service.Name + ":" + account.AccountID
 			usage := AccountUsage{AccountID: account.AccountID}
-			if old, ok := previous[key]; ok && service.AllowAccountSwitch {
+			old, retained := previous[key]
+			if service.Delivery == "socket" && !retained {
+				continue
+			}
+			if retained && (service.AllowAccountSwitch || service.Delivery == "socket") {
 				if !validKey(old.AccountID) || old.Revision < 0 || validateAccountSwitch(old.AccountSwitch, old.AccountID) != nil {
 					return errors.New("invalid retained service account usage")
 				}
@@ -158,7 +162,7 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		a.reportAccountUsage(ctx)
 	}()
 	a.mu.Lock()
-	options := pam.AgentSyncOptions{ConfigDigest: a.state.Digest, SyncStatus: a.state.Status, SyncError: a.state.SyncError, DeliveryScope: a.Config.serviceScope()}
+	options := pam.AgentSyncOptions{ConfigDigest: a.state.Digest, SyncStatus: a.state.Status, SyncError: a.state.SyncError, DeliveryScope: a.Config.serviceScope(), RestartSupported: a.Config.restartSupported()}
 	for key, value := range a.state.Latest {
 		options.Credentials = append(options.Credentials, pam.KnownRevision{Key: key, Revision: value.Revision})
 	}
@@ -385,6 +389,17 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 			problems = append(problems, errors.New("service references an unavailable credential"))
 			continue
 		}
+		if service.Delivery == "socket" {
+			if !notification || service.UpdateOnNotification == nil || *service.UpdateOnNotification {
+				a.mu.Lock()
+				err = a.queueSocketServiceLocked(service, payload)
+				a.mu.Unlock()
+				if err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if notification && service.UpdateOnNotification != nil && !*service.UpdateOnNotification {
 			continue
 		}
@@ -444,7 +459,7 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 					ready = false
 				}
 			}
-			if service.ApplicationCheck == nil || !service.ApplicationCheck.ConfirmOnSuccess {
+			if service.Delivery != "socket" && (service.ApplicationCheck == nil || !service.ApplicationCheck.ConfirmOnSuccess) {
 				verified = false
 			}
 		}

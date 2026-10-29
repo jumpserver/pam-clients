@@ -91,6 +91,74 @@ class EventHandlerTest {
     }
   }
 
+  @Test
+  void policyUnbindingKeepsTheAccountUntilAuthorizationIsRevoked() throws Exception {
+    String instance = "managed-java-policy-detach";
+    CountDownLatch ready = new CountDownLatch(2), detached = new CountDownLatch(1), revoked = new CountDownLatch(1);
+    AtomicInteger applied = new AtomicInteger(), cleanups = new AtomicInteger();
+    try (Client sdk = new Client(options(instance));
+        EventSubscription subscription = sdk.startEvents(new AccountEventListener() {
+          public void onAccountChanged(Account account) { applied.incrementAndGet(); }
+          public void onAccountRevoked(String id) { cleanups.incrementAndGet(); revoked.countDown(); }
+          public void onEvent(Event event) {
+            if (event.getEvent().equals("snapshot")) ready.countDown();
+            if (event.getEventId().equals("scope-barrier")) detached.countDown();
+          }
+          public void onEventError(Exception error, Event event) {}
+        })) {
+      assertTrue(ready.await(5, TimeUnit.SECONDS));
+      sendPayload(instance, "{\"event\":\"app.scope.updated\",\"authorized_account_ids\":[\"account\"]}");
+      sendPayload(instance, "{\"event\":\"snapshot\",\"credentials\":[],\"authorized_account_ids\":[\"account\"]}");
+      sendPayload(instance, "{\"event\":\"rotation.started\",\"event_id\":\"scope-barrier\"}");
+      assertTrue(detached.await(5, TimeUnit.SECONDS));
+      assertEquals(0, cleanups.get());
+      assertEquals(1, applied.get());
+      assertEquals(List.of("account"), sdk.getClientInfo().getApplicationStatus().getAccountIds());
+      sendPayload(instance, "{\"event\":\"app.scope.updated\",\"authorized_account_ids\":[]}");
+      assertTrue(revoked.await(5, TimeUnit.SECONDS));
+      assertEquals(1, cleanups.get());
+    }
+  }
+
+  @Test
+  void authoritativeSnapshotsAndScopeEventsEvictEveryUnauthorizedCacheAlias() throws Exception {
+    ObjectMapper json = new ObjectMapper();
+    for (String event : List.of("snapshot", "app.scope.updated", "application.scope.updated")) {
+      String instance = "java-authorization-cache-" + event;
+      try (Client sdk = new Client(options(instance))) {
+        sdk.getAccount("account");
+        sdk.getCredential("db");
+        sdk.reconcileLatestCredentials(new Event(json.readTree(
+            "{\"event\":\"" + event + "\",\"credentials\":[{\"key\":\"db\"}],\"authorized_account_ids\":[]}")));
+        control(instance, "fault=503");
+        assertThrows(PAMException.class, () -> sdk.getAccount("account"));
+        assertThrows(PAMException.class, () -> sdk.getCredential("db"));
+      }
+    }
+  }
+
+  @Test
+  void legacyEventNamesAreNormalizedWithoutChangingIdentity() throws Exception {
+    ObjectMapper json = new ObjectMapper();
+    java.util.Map<String, String> aliases = java.util.Map.of(
+        "rotation.verification.started", "rotation.verify.started",
+        "rotation.verification.failed", "rotation.verify.failed",
+        "rotation.verification.cancelled", "rotation.verify.cancelled",
+        "rotation.verification.skipped", "rotation.verify.skipped",
+        "rotation.waiting_for_application", "rotation.waiting_for_app",
+        "application.scope.updated", "app.scope.updated",
+        "application.restart.requested", "app.restart.requested");
+    for (java.util.Map.Entry<String, String> alias : aliases.entrySet()) {
+      Event event = new Event(json.readTree("{\"event\":\"" + alias.getKey() + "\",\"event_id\":\"stable-id\"}"));
+      assertEquals(alias.getValue(), event.getEvent());
+      assertEquals("stable-id", event.getEventId());
+    }
+  }
+
+  private void sendPayload(String instance, String payload) throws Exception {
+    control(instance, "payload=" + java.net.URLEncoder.encode(payload, java.nio.charset.StandardCharsets.UTF_8));
+  }
+
   private void control(String instance, String query) throws Exception {
     URI uri =
         URI.create(
@@ -175,7 +243,7 @@ class EventHandlerTest {
                           "{\"event\":\""
                               + (change.equals("revoked")
                                   ? "credential.revoked"
-                                  : "application.scope.updated")
+                                  : "app.scope.updated")
                               + "\"}")));
         if (change.equals("retain") || change.equals("configuration")) {
           assertTrue(sdk.getCredential("cache-503").isFromLocal());

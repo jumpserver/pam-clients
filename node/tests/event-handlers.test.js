@@ -203,3 +203,25 @@ test('latest credentials survive elapsed time and are refreshed automatically by
     assert.equal((await sdk.getCredential({key: 'db'})).revision, 4)
   } finally {sdk.close(); await sub.stop()}
 })
+
+
+test('authoritative scope events evict unauthorized account and policy cache aliases', async () => {
+  for (const event of ['snapshot', 'app.scope.updated', 'application.scope.updated']) {
+    const id = `node-authority-cache-${event}`
+    const sdk = client(id)
+    const abort = new AbortController()
+    const stream = sdk.watchCredentialEvents({ signal: abort.signal })
+    const events = stream[Symbol.asyncIterator]()
+    try {
+      await sdk.getAccount({ accountId: 'account' })
+      await sdk.getCredential({ key: 'db' })
+      assert.equal((await events.next()).value.event, 'snapshot')
+      await control(id, { payload: JSON.stringify({ event, event_id: 'authority-event', credentials: [{ key: 'db' }], authorized_account_ids: [] }) })
+      let received
+      do { received = (await events.next()).value } while (received.eventId !== 'authority-event')
+      await control(id, { fault: 503 })
+      await assert.rejects(sdk.getAccount({ accountId: 'account' }), PAMError)
+      await assert.rejects(sdk.getCredential({ key: 'db' }), PAMError)
+    } finally { abort.abort(); await events.return(); sdk.close() }
+  }
+})

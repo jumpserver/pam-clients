@@ -9,6 +9,7 @@
 | `java/` | 完整 SDK；Java 11+ | [中文](java/README.zh-hans.md) / [English](java/README.en.md) |
 | `node/` | 完整 SDK、TypeScript 类型声明；Node.js 20.3+ | [中文](node/README.zh-hans.md) / [English](node/README.en.md) |
 | `agent/` | 独立 PAM Agent；Linux amd64 / arm64 发行包 | [中文](agent/README.zh-hans.md) / [English](agent/README.en.md) |
+| `socket/` | Unix Socket HTTP / WebSocket；无 SDK 的业务接入 | [中文](socket/README.zh-hans.md) / [English](socket/README.en.md) |
 | `curl/` | 旧账号取密接口的协议调试脚本 | [中文](curl/README.zh-hans.md) / [English](curl/README.en.md) |
 
 四种语言的 SDK 以 Python 为功能基准，封装同一套凭据客户端协议。应用只传入服务端地址、应用 AK/SK、组织及实例配置，调用客户端方法即可；API 路径、查询编码、HMAC 签名、Digest、UTC 时间、请求 ID 和版本头由 SDK 自动生成。HTTP 请求和 WebSocket 重连都会重新签名。

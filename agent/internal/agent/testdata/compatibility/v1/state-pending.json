@@ -18,7 +18,7 @@
     "db": {"event": "credential.updated", "event_id": "pending-event-1", "credential_key": "db", "revision": 3, "account_id": "account", "account_revision": 1}
   },
   "pending_commands": {
-    "command-1": {"event": "application.restart.requested", "command_id": "command-1", "event_id": "command-event-1"}
+    "command-1": {"event": "app.restart.requested", "command_id": "command-1", "event_id": "command-event-1"}
   },
   "scope": {"credential_keys": ["db"], "confirmation_keys": ["db"]},
   "config_digest": "retained-snapshot-digest",

@@ -15,7 +15,7 @@ func applyAccount(account pam.Account) error {
 	return fmt.Errorf("implement connection validation, pool switching and old connection cleanup")
 }
 func applyEvent(ctx context.Context, client *pam.Client, event pam.Event) error {
-	if event.Event == "application.restart.requested" {
+	if event.Event == "app.restart.requested" {
 		return fmt.Errorf("implement restart and health check")
 	}
 	account, err := client.GetAccountFresh(ctx, event.AccountID)

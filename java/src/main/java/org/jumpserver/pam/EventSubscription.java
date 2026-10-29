@@ -153,7 +153,7 @@ public final class EventSubscription implements AutoCloseable {
     if (!event.getCommandId().isEmpty()) {
       String name = event.getEvent();
       return name.equals("credential.updated") || name.equals("credential.switch.requested")
-              || name.equals("application.restart.requested")
+              || name.equals("app.restart.requested")
           ? "command:" + event.getCommandId() : null;
     }
     return usageSelector(event);
@@ -180,7 +180,7 @@ public final class EventSubscription implements AutoCloseable {
   private void refreshAccount(Event update, Event event, long delay) {
     String target = accountSelector(update);
     if (target == null || update.getEventId().isEmpty() || stopped.get()) return;
-    if (!update.getEvent().equals("application.restart.requested")
+    if (!update.getEvent().equals("app.restart.requested")
         && accountScope != null && !accountScope.contains(usageSelector(update))) return;
     PendingCredential previous = pending.get(target);
     if (previous != null && previous.update.getRevision() > update.getRevision()) return;
@@ -194,7 +194,7 @@ public final class EventSubscription implements AutoCloseable {
         }
         try {
           AccountEventListener accounts = (AccountEventListener) listener;
-          if (update.getEvent().equals("application.restart.requested")) accounts.onApplicationRestart();
+          if (update.getEvent().equals("app.restart.requested")) accounts.onApplicationRestart();
           else {
             if (!update.getCredentialMode().equals("subscription")
                 && !update.getCredentialMode().equals("alternating_rotation"))
@@ -247,6 +247,10 @@ public final class EventSubscription implements AutoCloseable {
   }
 
   private void revokeAccounts(Set<String> retained, Event event) {
+    // Notification scope is separate from the last successfully applied account.
+    retained = new HashSet<>(retained);
+    for (Map.Entry<String, String> item : usedAccounts.entrySet())
+      if (retained.contains("account:" + item.getValue())) retained.add(item.getKey());
     pendingRevocations.keySet().removeAll(retained);
     for (String target : new ArrayList<>(usedAccounts.keySet())) {
       if (retained.contains(target) || pendingRevocations.containsKey(target)) continue;
@@ -259,7 +263,7 @@ public final class EventSubscription implements AutoCloseable {
     String name = event.getEvent();
     if (name.equals("snapshot")
         || name.equals("credential.revoked")
-        || name.equals("application.scope.updated") || name.equals("configuration.updated")) pending.clear();
+        || name.equals("app.scope.updated") || name.equals("configuration.updated")) pending.clear();
     try {
       listener.onEvent(event);
     } catch (Exception error) {
@@ -276,6 +280,17 @@ public final class EventSubscription implements AutoCloseable {
           revokeAccounts(retained, event);
         }
         for (Event update : event.getCredentials()) refresh(update, event, 0);
+      } else if (listener instanceof AccountEventListener
+          && (name.equals("app.scope.updated") || name.equals("configuration.updated"))) {
+        accountScope = new HashSet<>();
+        if (event.getData().has("authorized_account_ids")) {
+          Set<String> allowed = new HashSet<>(event.getAuthorizedAccountIds());
+          Set<String> retained = new HashSet<>();
+          for (Map.Entry<String, String> item : usedAccounts.entrySet())
+            if (allowed.contains(item.getValue())) retained.add(item.getKey());
+          for (String id : allowed) retained.add("account:" + id);
+          revokeAccounts(retained, event);
+        }
       } else if (listener instanceof AccountEventListener && !event.getCommandId().isEmpty()) {
         refresh(event, event, 0);
       } else if (name.equals("credential.updated") && event.getCommandId().isEmpty()) {

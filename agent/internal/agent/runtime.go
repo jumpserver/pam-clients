@@ -39,38 +39,44 @@ type Applied struct {
 }
 
 type State struct {
-	StateVersion        int                          `json:"state_version"`
-	Events              map[string]pam.Event         `json:"pending_events"`
-	Identity            string                       `json:"identity"`
-	InstanceID          string                       `json:"instance_id,omitempty"`
-	LocalDeliveryHash   string                       `json:"local_delivery_hash"`
-	Latest              map[string]Credential        `json:"credentials"`
-	Delivered           map[string]int64             `json:"delivered"`
-	Applied             map[string]Applied           `json:"applied"`
-	AccountUsage        map[string]AccountUsage      `json:"account_usage"`
-	ReportedAccounts    []string                     `json:"reported_accounts,omitempty"`
-	Authorized          map[string]bool              `json:"authorized"`
-	Wanted              map[string]int64             `json:"wanted_revisions"`
-	Commands            map[string]pam.Event         `json:"pending_commands"`
-	Scope               pam.AgentScope               `json:"scope"`
-	Digest              string                       `json:"config_digest"`
-	Denied              bool                         `json:"access_denied"`
-	Status              string                       `json:"sync_status"`
-	SyncError           string                       `json:"sync_error,omitempty"`
-	ServiceVersions     map[string]map[string]string `json:"service_versions,omitempty"`
-	StoreVersions       map[string]string            `json:"store_versions,omitempty"`
-	StoreFiles          map[string]string            `json:"store_files,omitempty"`
-	ServiceConfigHashes map[string]string            `json:"service_config_hashes,omitempty"`
-	StoreConfigHash     string                       `json:"store_config_hash,omitempty"`
+	StateVersion            int                            `json:"state_version"`
+	Events                  map[string]pam.Event           `json:"pending_events"`
+	Identity                string                         `json:"identity"`
+	InstanceID              string                         `json:"instance_id,omitempty"`
+	LocalDeliveryHash       string                         `json:"local_delivery_hash"`
+	Latest                  map[string]Credential          `json:"credentials"`
+	Delivered               map[string]int64               `json:"delivered"`
+	Applied                 map[string]Applied             `json:"applied"`
+	AccountUsage            map[string]AccountUsage        `json:"account_usage"`
+	ReportedAccounts        []string                       `json:"reported_accounts,omitempty"`
+	Authorized              map[string]bool                `json:"authorized"`
+	Wanted                  map[string]int64               `json:"wanted_revisions"`
+	Commands                map[string]pam.Event           `json:"pending_commands"`
+	Scope                   pam.AgentScope                 `json:"scope"`
+	Digest                  string                         `json:"config_digest"`
+	Denied                  bool                           `json:"access_denied"`
+	Status                  string                         `json:"sync_status"`
+	SyncError               string                         `json:"sync_error,omitempty"`
+	ServiceVersions         map[string]map[string]string   `json:"service_versions,omitempty"`
+	StoreVersions           map[string]string              `json:"store_versions,omitempty"`
+	StoreFiles              map[string]string              `json:"store_files,omitempty"`
+	ServiceConfigHashes     map[string]string              `json:"service_config_hashes,omitempty"`
+	StoreConfigHash         string                         `json:"store_config_hash,omitempty"`
+	SocketServices          map[string]*SocketServiceState `json:"socket_services,omitempty"`
+	SocketCommands          map[string]map[string]string   `json:"socket_commands,omitempty"`
+	CompletedSocketCommands []string                       `json:"completed_socket_commands,omitempty"`
+	SocketCommandDeadlines  map[string]time.Time           `json:"socket_command_deadlines,omitempty"`
 }
 
 type Agent struct {
-	Config  Config
-	remote  Remote
-	mu      sync.Mutex
-	syncMu  sync.Mutex
-	state   State
-	deliver func(context.Context, Config, map[string]Credential, map[string]bool) error
+	Config          Config
+	remote          Remote
+	mu              sync.Mutex
+	syncMu          sync.Mutex
+	state           State
+	deliver         func(context.Context, Config, map[string]Credential, map[string]bool) error
+	changed         chan struct{}
+	socketConsumers map[string]bool
 }
 
 func New(config Config, remote Remote) (*Agent, error) {
@@ -164,7 +170,8 @@ func New(config Config, remote Remote) (*Agent, error) {
 	if err := validateScope(state.Scope); err != nil {
 		return nil, err
 	}
-	service := &Agent{Config: config, remote: remote, state: state, deliver: Deliver}
+	service := &Agent{Config: config, remote: remote, state: state, deliver: Deliver, changed: make(chan struct{})}
+	service.restoreSocketServices()
 	if config.modern() {
 		if err := service.pruneServiceState(); err != nil {
 			return nil, err
@@ -181,7 +188,19 @@ func New(config Config, remote Remote) (*Agent, error) {
 	return service, nil
 }
 
-func (a *Agent) persist() error { return writeJSON(a.Config.StateFile, a.state) }
+// Call with mu held once the Agent is shared. Wake local consumers only after
+// the atomic state write succeeds, so a receipt never outruns persistence.
+func (a *Agent) persist() error {
+	a.revokeSocketServicesLocked()
+	if err := writeJSON(a.Config.StateFile, a.state); err != nil {
+		return err
+	}
+	if a.changed != nil {
+		close(a.changed)
+	}
+	a.changed = make(chan struct{})
+	return nil
+}
 
 func denied(err error) bool {
 	var failure *pam.PAMError
@@ -261,11 +280,14 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 		return errors.Join(a.recordEvent("received", event), a.command(ctx, event))
 	}
 	switch event.Event {
-	case "snapshot", "credential.revoked", "credential.updated", "application.scope.updated", "configuration.updated":
+	case "snapshot", "credential.revoked", "credential.updated", "app.scope.updated", "configuration.updated":
 	default:
 		return a.recordEvent("received", event)
 	}
 	a.mu.Lock()
+	if event.Event == "snapshot" || event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
+		a.applyAccountAuthorizationLocked(event.AuthorizedAccountIDs)
+	}
 	switch event.Event {
 	case "snapshot":
 		scope := map[string]bool{}
@@ -308,7 +330,7 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 		return err
 	}
 	if a.Config.modern() {
-		if event.Event == "credential.revoked" {
+		if event.Event == "credential.revoked" || event.Event == "snapshot" || event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
 			if err := a.removeRevokedStoreFiles(); err != nil {
 				return err
 			}
@@ -317,6 +339,46 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 	}
 	return errors.Join(a.recordEvent("received", event), a.synchronize(ctx))
 }
+
+// Push membership describes notifications and rotation following. Only the
+// explicit account authorization list can revoke an otherwise usable account.
+// Apply reductions before HTTP synchronization so an outage cannot retain access.
+func (a *Agent) applyAccountAuthorizationLocked(ids []string) {
+	if ids == nil {
+		return // Older snapshots do not describe the complete pull authorization.
+	}
+	allowed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		allowed[id] = true
+	}
+	for key := range a.state.Authorized {
+		id := a.state.Latest[key].AccountID
+		if id == "" && strings.HasPrefix(key, "account:") {
+			id = strings.TrimPrefix(key, "account:")
+		}
+		if id != "" && !allowed[id] {
+			delete(a.state.Authorized, key)
+			delete(a.state.Latest, key)
+			delete(a.state.Wanted, key)
+			delete(a.state.Delivered, key)
+			delete(a.state.Applied, key)
+			delete(a.state.Events, key)
+		}
+	}
+	for selector, usage := range a.state.AccountUsage {
+		if !allowed[usage.AccountID] {
+			delete(a.state.AccountUsage, selector)
+		}
+	}
+	reported := a.state.ReportedAccounts[:0]
+	for _, id := range a.state.ReportedAccounts {
+		if allowed[id] {
+			reported = append(reported, id)
+		}
+	}
+	a.state.ReportedAccounts = reported
+}
+
 func eventKey(event pam.Event) string {
 	key := event.Key
 	if event.CredentialKey != "" {
@@ -746,6 +808,9 @@ func (a *Agent) confirm(ctx context.Context, key string, revision int64) (Applie
 }
 
 func (a *Agent) reportPending(ctx context.Context) error {
+	if err := a.reportSocketFailures(ctx); err != nil {
+		return err
+	}
 	a.mu.Lock()
 	var applied []Applied
 	for key, value := range a.state.Applied {
@@ -801,6 +866,9 @@ func (a *Agent) reportPending(ctx context.Context) error {
 }
 
 func (a *Agent) finishSwitch(ctx context.Context, event pam.Event) error {
+	if event.Event == "app.restart.requested" {
+		return a.finishSocketRestart(ctx, event)
+	}
 	key := eventKey(event)
 	a.mu.Lock()
 	applied := a.state.Applied[key]
@@ -832,13 +900,21 @@ func (a *Agent) command(ctx context.Context, event pam.Event) error {
 		return a.failure(err, true)
 	}
 	if !claim.Accepted {
-		if claim.Status == "running" && event.Event == "credential.switch.requested" {
+		if claim.Status == "running" && event.Event == "app.restart.requested" {
+			if queued, err := a.queueSocketRestart(event); queued || err != nil {
+				return err
+			}
+		}
+		if claim.Status == "running" && (event.Event == "credential.switch.requested" || event.Event == "app.restart.requested") {
 			return a.finishSwitch(ctx, event)
 		}
 		return nil
 	}
 	switch event.Event {
-	case "application.restart.requested":
+	case "app.restart.requested":
+		if queued, err := a.queueSocketRestart(event); queued || err != nil {
+			return err
+		}
 		d := a.Config.Delivery
 		if d.Mode != "environment" || d.Operation != "restart" {
 			err = errors.New("application restart is not locally configured")

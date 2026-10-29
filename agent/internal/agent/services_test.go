@@ -419,3 +419,64 @@ func TestIdentityDeniedDuringFetchClearsAllStoredCredentials(t *testing.T) {
 		t.Fatal("global identity denial retained credentials or files")
 	}
 }
+
+func TestScopeAuthorizationReductionPersistsBeforeFailedHTTPRefresh(t *testing.T) {
+	config, remote := servicesFixture(t)
+	service, err := New(config, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err = service.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	remote.fault = &pam.PAMError{Code: "NetworkError"}
+	event := pam.Event{Event: "app.scope.updated", AuthorizedAccountIDs: []string{testB, testC}}
+	if service.HandleEvent(ctx, event) == nil {
+		t.Fatal("expected synchronization outage")
+	}
+	if _, err = service.LocalCredential("account:" + testA); err == nil {
+		t.Fatal("revoked account remained readable")
+	}
+	if _, err = os.Stat(filepath.Join(config.Store.Root, testA+".json")); !os.IsNotExist(err) {
+		t.Fatal("revoked standard file survived", err)
+	}
+	if _, err = service.LocalCredential("account:" + testB); err != nil {
+		t.Fatal("authorized account was discarded", err)
+	}
+	restarted, err := New(config, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = restarted.LocalCredential("account:" + testA); err == nil {
+		t.Fatal("restart restored revoked access")
+	}
+	if _, err = restarted.LocalCredential("account:" + testB); err != nil {
+		t.Fatal("restart lost authorized credentials", err)
+	}
+}
+
+func TestPushScopeRemovalPreservesAuthorizedAgentStoreDuringOutage(t *testing.T) {
+	config, remote := servicesFixture(t)
+	service, err := New(config, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err = service.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	remote.fault = &pam.PAMError{Code: "NetworkError"}
+	event := pam.Event{Event: "snapshot", AuthorizedAccountIDs: []string{testA, testB, testC}}
+	if service.HandleEvent(ctx, event) == nil {
+		t.Fatal("expected synchronization outage")
+	}
+	for _, id := range []string{testA, testB, testC} {
+		if _, err = service.LocalCredential("account:" + id); err != nil {
+			t.Fatal("empty notification scope revoked an authorized account", err)
+		}
+		if _, err = os.Stat(filepath.Join(config.Store.Root, id+".json")); err != nil {
+			t.Fatal("authorized standard file disappeared", err)
+		}
+	}
+}

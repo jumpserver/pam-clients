@@ -5,19 +5,20 @@ import "strings"
 // Retain the latest successfully fetched credentials until authorization changes.
 
 func (c *Client) reconcileLatestCredentials(event Event) {
-	if event.Event != "snapshot" && event.Event != "credential.revoked" && event.Event != "application.scope.updated" && event.Event != "configuration.updated" {
+	event.Event = canonicalEventName(event.Event)
+	if event.Event != "snapshot" && event.Event != "credential.revoked" && event.Event != "app.scope.updated" && event.Event != "configuration.updated" {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.credentialGeneration++
-	if event.Event == "application.scope.updated" || event.Event == "configuration.updated" {
+	if event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
 		authorized := make(map[string]bool)
 		for _, id := range event.AuthorizedAccountIDs {
 			authorized[id] = true
 		}
-		for selector := range c.latestCredentials {
-			if selector.AccountID != "" && !authorized[selector.AccountID] {
+		for selector, credential := range c.latestCredentials {
+			if event.AuthorizedAccountIDs != nil && !authorized[credential.Account.ID] || event.AuthorizedAccountIDs == nil && selector.AccountID != "" {
 				delete(c.latestCredentials, selector)
 			}
 		}
@@ -48,9 +49,13 @@ func (c *Client) reconcileLatestCredentials(event Event) {
 		}
 		keys[key] = true
 	}
-	for selector := range c.latestCredentials {
-		// A push snapshot does not describe application pull authorization.
-		if selector.Key != "" && !keys[selector.Key] {
+	authorized := make(map[string]bool)
+	for _, id := range event.AuthorizedAccountIDs {
+		authorized[id] = true
+	}
+	for selector, credential := range c.latestCredentials {
+		// Push membership and explicit account authorization are separate scopes.
+		if selector.Key != "" && !keys[selector.Key] || event.AuthorizedAccountIDs != nil && !authorized[credential.Account.ID] {
 			delete(c.latestCredentials, selector)
 		}
 	}

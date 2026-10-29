@@ -8,6 +8,7 @@
     "index.js",
     "index.d.ts",
     "event-dispatcher.js",
+    "event-names.js",
     "demo.js",
     "accounts.js",
     "application-info.js",

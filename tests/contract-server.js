@@ -85,7 +85,8 @@ async function startServer() {
         if (url.searchParams.has(field)) control[field] = url.searchParams.get(field);
       controls.set(instance, control);
       const event = url.searchParams.get("event");
-      if (event) for (const socket of instanceSockets.get(instance) || []) socket.send(JSON.stringify({
+      const payload = url.searchParams.has("payload") ? JSON.parse(url.searchParams.get("payload")) : null;
+      if (event || payload) for (const socket of instanceSockets.get(instance) || []) socket.send(JSON.stringify(payload || {
         event, event_id: "controlled-" + control.revision, credential_mode: "alternating_rotation",
         credential_key: "db", revision: control.revision, account_id: control.accountId || "account",
         account_revision: control.revision,
@@ -364,7 +365,7 @@ async function startServer() {
         result = {
           commands: [
             {
-              event: "application.restart.requested",
+              event: "app.restart.requested",
               command_id: "command",
               event_id: "command-event",
             },

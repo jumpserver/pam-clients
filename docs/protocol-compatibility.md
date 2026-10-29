@@ -8,6 +8,10 @@ Core、SDK 和 PAM Agent 可以独立发布。程序版本、本地 `version`、
 
 小版本新增可选字段和通知事件，保留旧字段、默认值和取密/确认语义。旧客户端可以忽略可选字段；未知策略和执行指令不能应用或确认成功。若以后必须改变协议语义，应先实现新旧版本并存及升级路径，再启用新版本。
 
+## 范围变更与旧撤销事件
+
+当前 Core 统一发送 `app.scope.updated` 并随后发送 `snapshot`，不再发送 `credential.revoked`，Webhook 新规则也不再默认选择旧事件。旧名称、客户端入口和历史记录保留兼容。账号授权由 `authorized_account_ids` 判断，策略绑定和通知范围由快照中的 `credentials` 判断；解绑只停止跟随策略，不能据此关闭仍获授权账号的连接。SDK 保留实际使用账号并清理策略关联，真实授权撤销时才清理缓存与业务连接。Agent 在后续 HTTP 同步前持久化明确的账号授权减少，刷新失败或重启不会恢复访问。
+
 ## 服务端能力
 
 已有 `/client/` 接口增加可选 `server_capabilities`，SDK 调用方式如下：
@@ -37,3 +41,7 @@ Core、SDK 和 PAM Agent 可以独立发布。程序版本、本地 `version`、
 共享契约测试覆盖四种 SDK 的旧响应缺字段、新响应增加字段、未知能力、可选接口缺失、426 后缓存保留、后续 401 撤销，以及 426 正文错误/超时。PAM Agent 测试覆盖同步和取密阶段的兼容失败、重启恢复及已拒绝身份不被恢复。Core 测试覆盖程序版本独立、HTTP 错误支持范围、WebSocket 与管理页面一致性。
 
 运行方法见 [文档维护](README.md) 和 [PAM Agent 开发](agent-development.md)。这些测试使用隔离数据库或合成协议服务；真实数据库连接切换和服务部署需要目标环境验证。
+
+## 事件名称
+
+当前统一使用 `rotation.verify.started/failed/cancelled`、`rotation.waiting_for_app`、`app.scope.updated` 和 `app.restart.requested`。SDK 接收旧 `rotation.verification.*`、`rotation.waiting_for_application`、`application.scope.updated` 和 `application.restart.requested` 时映射到新名称；事件 ID、回执和结果接口不变。Webhook 保留已有订阅承诺的事件名称，同时选择新旧名称时只投递一次，并优先使用新名称。旧轮换历史仍可按原记录展示，模型、API 路径及实例字段不因事件缩写改变。

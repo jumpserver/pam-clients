@@ -43,7 +43,7 @@ python3 -m file_apps.rotation \
   --confirm-file-only
 ```
 
-启动后 WebSocket 的首次快照会拉取当前版本并生成本地文件。订阅应用在 `credential.updated` 时更新对应账号；轮换应用在收到 `credential.updated` 后写入并读回文件。示例命令使用 `--confirm-file-only`，读回成功后上报轮换确认；不加此参数则只更新文件，不上报确认。`application.scope.updated` 会触发重连并用新快照对账；快照中消失的账号或策略会从本地文件移除。
+启动后 WebSocket 的首次快照会拉取当前版本并生成本地文件。订阅应用在 `credential.updated` 时更新对应账号；轮换应用在收到 `credential.updated` 后写入并读回文件。示例命令使用 `--confirm-file-only`，读回成功后上报轮换确认；不加此参数则只更新文件，不上报确认。`app.scope.updated` 会触发重连并用新快照对账；快照中消失的账号或策略会从本地文件移除。
 
 轮换 Demo 的“生效”仅指这个示例的文件内容已更新。真实应用必须先使用新账号验证业务连接并切换连接池，再调用 `confirm_credential`。不要把文件写入确认当作数据库连接成功的证明。
 

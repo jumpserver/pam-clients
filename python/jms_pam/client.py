@@ -15,6 +15,7 @@ from ._auth import HTTPSignatureAuth
 from ._commands import execute_command
 from ._event_dispatcher import EventDispatcher
 from ._events import EventStream
+from ._event_names import canonical_event_name
 from ._transport import Transport
 from ._version import CONFIG_SCHEMA_VERSION, PROTOCOL_VERSION, __version__
 from .exceptions import PAMError
@@ -230,17 +231,18 @@ class Client:
         return credential
 
     def _reconcile_latest_credentials(self, event):
-        name = event.get("event")
-        if name not in {"snapshot", "credential.revoked", "application.scope.updated", "configuration.updated"}:
+        name = canonical_event_name(event.get("event"))
+        if name not in {"snapshot", "credential.revoked", "app.scope.updated", "configuration.updated"}:
             return
         with self._credentials_lock:
             self._credential_generation += 1
-            if name in {"application.scope.updated", "configuration.updated"}:
+            if name in {"app.scope.updated", "configuration.updated"}:
                 # Push snapshots cannot prove the full pull authorization scope.
                 authorized = event.get('authorized_account_ids')
                 self._latest_credentials = {
                     selector: value for selector, value in self._latest_credentials.items()
-                    if selector[0] != "account_id" or authorized is not None and selector[1] in authorized
+                    if (value.account.id in authorized if authorized is not None
+                        else selector[0] != "account_id")
                 }
                 return
             if name != "snapshot":
@@ -288,7 +290,9 @@ class Client:
             self._latest_credentials = {
                 selector: credential
                 for selector, credential in self._latest_credentials.items()
-                if selector[0] != "key" or selector[1] in keys
+                if (selector[0] != "key" or selector[1] in keys)
+                and (event.get('authorized_account_ids') is None
+                     or credential.account.id in event['authorized_account_ids'])
             }
 
     def get_application(self) -> ApplicationInfo:
@@ -491,7 +495,7 @@ class Client:
                 isinstance(command, dict) for command in commands
             ):
                 raise TypeError("commands must be a list of objects")
-            return commands
+            return [{**command, 'event': canonical_event_name(command.get('event'))} for command in commands]
 
         return self._request(
             "GET",
@@ -670,6 +674,7 @@ class Client:
             self._streams.add(stream)
         try:
             for event in stream.watch(stop_event):
+                event = {**event, 'event': canonical_event_name(event.get('event'))}
                 self._reconcile_latest_credentials(event)
                 yield event
         finally:

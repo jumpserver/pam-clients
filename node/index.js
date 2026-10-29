@@ -7,6 +7,8 @@ const { setTimeout: wait } = require('node:timers/promises')
 const { WebSocket, createWebSocketStream } = require('ws')
 const { EventSubscription } = require('./event-dispatcher')
 
+const canonicalEventName = require('./event-names')
+
 const VERSION = '1.0.2'
 const PROTOCOL_VERSION = 1
 const CONFIG_SCHEMA_VERSION = 1
@@ -491,12 +493,12 @@ class Client {
   }
 
   #reconcileLatestCredentials(event) {
-    if (!['snapshot', 'credential.revoked', 'application.scope.updated', 'configuration.updated'].includes(event.event)) return
+    if (!['snapshot', 'credential.revoked', 'app.scope.updated', 'configuration.updated'].includes(event.event)) return
     this.#credentialGeneration++
-    if (['application.scope.updated', 'configuration.updated'].includes(event.event)) {
+    if (['app.scope.updated', 'configuration.updated'].includes(event.event)) {
       const authorized = new Set(event.authorizedAccountIds || [])
-      for (const selector of this.#latestCredentials.keys())
-        if (selector.startsWith('account:') && !authorized.has(selector.slice(8))) this.#latestCredentials.delete(selector)
+      for (const [selector, credential] of this.#latestCredentials)
+        if (event.authorizedAccountIds != null ? !authorized.has(credential.account.id) : selector.startsWith('account:')) this.#latestCredentials.delete(selector)
       return
     }
     if (event.event !== 'snapshot') {
@@ -516,8 +518,10 @@ class Client {
       return
     }
     const keys = new Set(event.credentials.map((item) => item?.credentialKey || item?.key))
-    for (const selector of this.#latestCredentials.keys())
-      if (selector.startsWith('key:') && !keys.has(selector.slice(4)))
+    const authorized = event.authorizedAccountIds == null ? null : new Set(event.authorizedAccountIds)
+    for (const [selector, credential] of this.#latestCredentials)
+      if ((selector.startsWith('key:') && !keys.has(selector.slice(4)))
+        || (authorized && !authorized.has(credential.account.id)))
         this.#latestCredentials.delete(selector)
   }
 
@@ -611,7 +615,7 @@ class Client {
       (data) => {
         if (!Array.isArray(data.commands)) throw new TypeError('commands must be an array')
         data.commands.forEach(object)
-        return camelize(data.commands)
+        return camelize(data.commands.map(command => ({ ...command, event: canonicalEventName(command.event) })))
       },
       { signal },
     )
@@ -729,6 +733,7 @@ class Client {
             if (combined.aborted) break
             const event = object(JSON.parse(frame.toString()))
             requiredString(event.event, 'event')
+            event.event = canonicalEventName(event.event)
             delay = 1000
             if (event.event === 'pong') continue
             if (

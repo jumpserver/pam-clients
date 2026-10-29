@@ -92,6 +92,47 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [], 'authorized_account_ids': []})
         self.client.on_account_revoked.assert_called_once_with('account-a')
 
+    def test_policy_unbinding_keeps_authorized_connection_until_real_revocation(self):
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [self.update],
+                                   'authorized_account_ids': ['account-a']})
+        self.dispatcher._dispatch({'event': 'app.scope.updated',
+                                   'authorized_account_ids': ['account-a']})
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [],
+                                   'authorized_account_ids': ['account-a']})
+        self.client.on_account_revoked.assert_not_called()
+        self.client.on_account_changed.assert_called_once()
+        self.assertEqual(list(self.dispatcher.used_accounts.values()), ['account-a'])
+        self.dispatcher._dispatch({**self.update, 'event_id': 'obsolete-policy-event'})
+        self.client.on_account_changed.assert_called_once()
+        self.dispatcher._dispatch({'event': 'app.scope.updated', 'authorized_account_ids': []})
+        self.client.on_account_revoked.assert_called_once_with('account-a')
+        self.client.report_accounts.assert_called_with([])
+
+    def test_rebinding_after_detach_replaces_usage_on_the_next_switch(self):
+        snapshot = {'event': 'snapshot', 'credentials': [self.update],
+                    'authorized_account_ids': ['account-a', 'account-b']}
+        self.dispatcher._dispatch(snapshot)
+        self.dispatcher._dispatch({**snapshot, 'credentials': []})
+        self.dispatcher._dispatch(snapshot)
+        self.client.get_account.return_value = SimpleNamespace(id='account-b', revision=4)
+        self.dispatcher._dispatch({**self.update, 'event_id': 'next-switch',
+                                   'account_id': 'account-b', 'account_revision': 4, 'revision': 4})
+        self.client.report_accounts.assert_called_with(['account-b'])
+        self.assertEqual(self.client.on_account_changed.call_count, 2)
+        self.client.on_account_revoked.assert_not_called()
+
+    def test_unbinding_cancels_pending_cleanup_of_an_authorized_account(self):
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [self.update]})
+        self.client.on_account_revoked.side_effect = OSError('cleanup unavailable')
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': []})
+        self.assertTrue(self.dispatcher.pending_revocations)
+        self.dispatcher._dispatch({'event': 'snapshot', 'credentials': [],
+                                   'authorized_account_ids': ['account-a']})
+        self.assertFalse(self.dispatcher.pending_revocations)
+        self.dispatcher._retry()
+        self.client.on_account_revoked.assert_called_once()
+        self.assertEqual(list(self.dispatcher.used_accounts.values()), ['account-a'])
+
     def test_usage_failure_does_not_repeat_successful_application(self):
         self.client.report_accounts.side_effect = OSError('telemetry unavailable')
         self.dispatcher._dispatch(self.update)
@@ -127,6 +168,17 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.dispatcher._retry()
         self.client.on_account_revoked.assert_called_once_with('account-a')
         self.assertEqual(list(self.dispatcher.used_accounts.values()), ['account-a'])
+
+    def test_legacy_restart_event_executes_the_current_command_handler(self):
+        self.client.on_application_restart = Mock()
+        self.dispatcher._dispatch({'event': 'application.restart.requested',
+                                   'event_id': 'legacy-restart', 'command_id': 'legacy-command'})
+        self.client.on_application_restart.assert_called_once()
+        self.client.on_account_changed.assert_not_called()
+        self.client.report_application_command_result.assert_called_once_with(
+            command_id='legacy-command', status='running')
+        self.client.confirm_event.assert_called_once_with(
+            event_id='legacy-restart', status='success', error_code='')
 
     def test_rejected_or_unknown_commands_do_not_execute(self):
         self.client.report_application_command_result.return_value.accepted = False

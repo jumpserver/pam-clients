@@ -509,13 +509,14 @@ public final class Client implements AutoCloseable {
     String name = event.getEvent();
     if (!name.equals("snapshot")
         && !name.equals("credential.revoked")
-        && !name.equals("application.scope.updated") && !name.equals("configuration.updated")) return;
+        && !name.equals("app.scope.updated") && !name.equals("configuration.updated")) return;
     synchronized (credentialsLock) {
       credentialGeneration++;
-      if (name.equals("application.scope.updated") || name.equals("configuration.updated")) {
+      if (name.equals("app.scope.updated") || name.equals("configuration.updated")) {
         java.util.Set<String> authorized = new java.util.HashSet<>(event.getAuthorizedAccountIds());
-        latestCredentials.keySet().removeIf(selector -> selector.startsWith("account_id:")
-            && !authorized.contains(selector.substring("account_id:".length())));
+        latestCredentials.entrySet().removeIf(item -> event.getData().has("authorized_account_ids")
+            ? !authorized.contains(item.getValue().getAccount().getId())
+            : item.getKey().startsWith("account_id:"));
         return;
       }
       if (!name.equals("snapshot")) {
@@ -545,11 +546,11 @@ public final class Client implements AutoCloseable {
         latestCredentials.clear();
         return;
       }
-      latestCredentials
-          .keySet()
-          .removeIf(
-              selector ->
-                  selector.startsWith("key:") && !keys.contains(selector.substring(4)));
+      java.util.Set<String> authorized = new java.util.HashSet<>(event.getAuthorizedAccountIds());
+      latestCredentials.entrySet().removeIf(item ->
+          (item.getKey().startsWith("key:") && !keys.contains(item.getKey().substring(4)))
+          || (event.getData().has("authorized_account_ids")
+              && !authorized.contains(item.getValue().getAccount().getId())));
     }
   }
 

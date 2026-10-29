@@ -23,7 +23,20 @@ SDK 处理首次与重连快照，按事件账号实时取密，检查账号 ID 
 
 账号撤销或从快照移除时调用账号清理回调。清理失败按 1–30 秒指数退避重试，不阻塞其他账号的清理；重新授权的快照取消对应待清理任务。账号清理回调必须幂等。已处理账号自动按完整快照上报，A/B 切换替换当前账号。使用账号声明独立于授权、事件回执和业务确认。手动指令先认领再执行；失败的指令动作不自动重做，重启需要显式实现可选的业务重启回调。
 
-`application.scope.updated` 与旧名称 `configuration.updated` 均可触发范围对账。已有 Webhook 只订阅旧名称时，继续接收旧名称的请求体与投递记录；同时订阅两个名称只发送一次。新规则默认使用新名称。
+`app.scope.updated` 与旧名称 `configuration.updated` 均可触发范围对账。已有 Webhook 只订阅旧名称时，继续接收旧名称的请求体与投递记录；同时订阅两个名称只发送一次。新规则默认使用新名称。
+
+## 当前事件职责
+
+| 事件 | 客户端处理 |
+| --- | --- |
+| `credential.updated`、`snapshot` 条目 | 按 `account_id` 实时取密，校验 `account_revision`，完成业务切换后按 `event_id` 上报结果。 |
+| `app.scope.updated`、后续 `snapshot` | 分别对账账号授权与轮换绑定。解绑时停止跟随策略，保留仍获授权账号的连接；实际授权撤销时才清理账号凭据和连接。 |
+| `credential.switch.requested`、`app.restart.requested` | 管理员手动指令；以 `running` 认领后执行，再通过指令结果接口上报。 |
+| `rotation.*`（如 `rotation.started`、`rotation.completed` 等）、`credential.change.*`（如 `credential.change.started`、`credential.change.completed` 等） | 记录进度或告警，不再次取密、切换业务或确认应用成功。 |
+
+应用级“账号凭据变更通知”覆盖全部授权账号，A/B 切换另行绑定轮换策略。`snapshot.credentials` 合并这两种通知范围，`authorized_account_ids` 表示账号授权范围，二者不能混用。协议中的 `credential_mode: subscription` 表示账号通知，不要求创建订阅策略。旧准备阶段事件只用于历史记录；当前周期在验证备用账号后直接发布切换，从发布时刻开始观察原主账号成功取密，与客户端确认并行等待。
+
+当前 Core 已停止发送 `credential.revoked`，旧接入的处理入口与历史记录保留兼容。范围变化统一通过 `app.scope.updated` 和 `snapshot` 通知，不要求业务确认范围事件。
 
 以下旧凭据钩子和原始事件流继续兼容，其确认仍由调用方显式完成。
 
@@ -50,7 +63,7 @@ SDK 处理首次与重连快照，按事件账号实时取密，检查账号 ID 
 
 SDK 在当前客户端进程内存中保留最新值，关闭后释放；clone 和进程重启从空状态开始。PAM Agent 使用已有受保护的本地状态保存凭据，收到更新通知后主动获取最新值，后端故障期间保留已有值。
 
-PAM Agent 收到明确撤销或授权范围缩小的快照时，先停用相应本地取密并持久化授权范围，再尝试 HTTP 同步；后端暂时不可用或 PAM Agent 重启不会恢复已撤销的访问。整项订阅策略撤销同时停用其账号项。已经交付的业务文件仍按既有交付规则处理。
+PAM Agent 收到明确撤销或授权范围缩小的快照时，先停用相应本地取密并持久化授权范围，再尝试 HTTP 同步；后端暂时不可用或 PAM Agent 重启不会恢复已撤销的访问。关闭应用通知或解除轮换策略绑定不等于撤销账号授权，仍需核对 `authorized_account_ids` 或在线查询结果。已经交付的业务文件仍按既有交付规则处理。
 
 HTTP 401/403、凭据取密的 HTTP 404 和 `credential_not_found`（HTTP 400）清空 SDK 保留值并报错。`client_upgrade_required`／HTTP 426 保留凭据并明确报错，不以缓存代替本次请求成功；可选元数据接口的 HTTP 404 不清理凭据。格式错误的成功响应不使用本地值。明确撤销删除对应项；授权快照删除范围外的项；配置变更通知先保留已有值，等待后续授权快照核对。已撤销的在途请求不能重新填充本地状态。详见 [协议兼容规则](docs/protocol-compatibility.md)。
 
@@ -58,7 +71,7 @@ HTTP 401/403、凭据取密的 HTTP 404 和 `credential_not_found`（HTTP 400）
 
 ## 可运行示例与文档
 
-- Python：[子类示例](python/subclass_demo.py)，应用接入向导提供完整混合策略及指令示例。
+- Python：[子类示例](python/subclass_demo.py)，应用接入向导提供账号通知、A/B 轮换及指令示例。
 - Go：[回调组合示例](go/cmd/hooks/main.go)，处理函数接收 context。
 - Java：[监听器示例](java/src/main/java/org/jumpserver/pam/HooksDemo.java)，用 try-with-resources 管理生命周期。
 - Node.js：[异步子类示例](node/hooks.js)，取消信号传入异步钩子。

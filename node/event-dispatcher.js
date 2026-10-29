@@ -1,5 +1,7 @@
 'use strict'
 
+const canonicalEventName = require('./event-names')
+
 const { AsyncLocalStorage } = require('node:async_hooks')
 const { performance } = require('node:perf_hooks')
 const activeHook = new AsyncLocalStorage()
@@ -145,7 +147,7 @@ class EventSubscription {
   }
 
   #accountSelector(update) {
-    if (update.commandId) return ['credential.updated', 'credential.switch.requested', 'application.restart.requested'].includes(update.event)
+    if (update.commandId) return ['credential.updated', 'credential.switch.requested', 'app.restart.requested'].includes(update.event)
       ? `command:${update.commandId}` : undefined
     if (update.credentialMode === 'alternating_rotation') {
       const key = update.credentialKey || update.key
@@ -168,7 +170,7 @@ class EventSubscription {
     const target = this.#accountSelector(update)
     if (!target || !update.eventId) return
     const usageTarget = this.#accountSelector({ ...update, commandId: undefined })
-    if (update.event !== 'application.restart.requested' && this.#scope && !this.#scope.has(usageTarget)) return
+    if (update.event !== 'app.restart.requested' && this.#scope && !this.#scope.has(usageTarget)) return
     const previous = this.#pending.get(target)
     if (Number.isSafeInteger(previous?.update.revision) && previous.update.revision > update.revision) return
     try {
@@ -179,7 +181,7 @@ class EventSubscription {
           if (!claim.accepted) { this.#pending.delete(target); return }
         }
         try {
-          if (update.event === 'application.restart.requested')
+          if (update.event === 'app.restart.requested')
             await activeHook.run(this, () => this.#client.onApplicationRestart({ signal: this.#signal }))
           else {
             if (!['subscription', 'alternating_rotation'].includes(update.credentialMode)) throw new Error('Unsupported credential mode')
@@ -230,6 +232,10 @@ class EventSubscription {
   }
 
   async #revokeAccounts(retained, event) {
+    // Preserve business use; #scope independently prevents following detached policies.
+    retained = new Set(retained)
+    for (const [target, accountId] of this.#used)
+      if (retained.has(`account:${accountId}`)) retained.add(target)
     for (const target of this.#revocations.keys())
       if (retained.has(target)) this.#revocations.delete(target)
     for (const [target, accountId] of this.#used) {
@@ -240,7 +246,8 @@ class EventSubscription {
   }
 
   async #dispatch(event) {
-    if (['snapshot', 'credential.revoked', 'application.scope.updated', 'configuration.updated'].includes(event.event))
+    event = { ...event, event: canonicalEventName(event.event) }
+    if (['snapshot', 'credential.revoked', 'app.scope.updated', 'configuration.updated'].includes(event.event))
       this.#pending.clear()
     try {
       await this.#call(this.#client.onEvent, event)
@@ -260,6 +267,14 @@ class EventSubscription {
         } catch (error) {
           await this.#report(error, event)
         }
+      }
+    } else if (this.#accountEvents && ['app.scope.updated', 'configuration.updated'].includes(event.event)) {
+      this.#scope = new Set()
+      if (event.authorizedAccountIds != null) {
+        const allowed = new Set(event.authorizedAccountIds)
+        const retained = new Set([...this.#used].filter(([, id]) => allowed.has(id)).map(([target]) => target))
+        for (const id of allowed) retained.add(`account:${id}`)
+        await this.#revokeAccounts(retained, event)
       }
     } else if (this.#accountEvents && event.commandId) {
       await this.#refresh(event, event)

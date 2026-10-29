@@ -16,10 +16,16 @@ import (
 
 type localServer struct {
 	*http.Server
-	path string
+	path   string
+	cancel context.CancelFunc
 }
 
-func (s *localServer) Close() error { err := s.Server.Close(); _ = os.Remove(s.path); return err }
+func (s *localServer) Close() error {
+	s.cancel()
+	err := s.Server.Close()
+	_ = os.Remove(s.path)
+	return err
+}
 
 func (a *Agent) startServer() (*localServer, error) {
 	path := a.Config.Delivery.Socket
@@ -54,7 +60,8 @@ func (a *Agent) startServer() (*localServer, error) {
 		os.Remove(path)
 		return nil, err
 	}
-	server := &localServer{Server: &http.Server{Handler: a, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second}, path: path}
+	ctx, cancel := context.WithCancel(context.Background())
+	server := &localServer{Server: &http.Server{Handler: a, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}, path: path, cancel: cancel}
 	go func() { _ = server.Serve(listener) }()
 	return server, nil
 }
@@ -64,6 +71,20 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	reply := func(status int, payload any) { w.WriteHeader(status); _ = json.NewEncoder(w).Encode(payload) }
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/events":
+		a.socketEvents(w, r)
+	case strings.HasPrefix(r.URL.Path, "/v1/services/"):
+		a.serveSocketService(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/services":
+		services := []map[string]any{}
+		for _, service := range a.Config.Services {
+			if service.Delivery == "socket" {
+				services = append(services, map[string]any{"service_id": service.Name, "restart_supported": service.RestartSupported})
+			}
+		}
+		reply(200, services)
+	case r.Method == http.MethodGet && (r.URL.Path == "/v1/application" || r.URL.Path == "/v1/instance" || r.URL.Path == "/v1/policies" || r.URL.Path == "/v1/policy"):
+		a.serveMetadata(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/health":
 		reply(200, a.Health())
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/usage":
@@ -100,7 +121,12 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(400, map[string]string{"code": "account_id_required"})
 			return
 		}
-		value, err := a.AccountCredential(r.Context(), accountID)
+		fallback := r.URL.Query().Get("allow_local_fallback")
+		if fallback != "" && fallback != "true" && fallback != "false" {
+			reply(400, map[string]string{"code": "invalid_local_fallback"})
+			return
+		}
+		value, err := a.accountCredential(r.Context(), accountID, fallback != "false")
 		if err != nil {
 			if incompatible(err) {
 				reply(426, map[string]string{"code": "client_upgrade_required"})
@@ -129,7 +155,7 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&request) != nil || (request.EventID == "" && (request.Key == "" || request.Revision < 0)) || (request.EventID != "" && request.Key != "") {
+		if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || (request.EventID == "" && (request.Key == "" || request.Revision < 0)) || (request.EventID != "" && request.Key != "") {
 			reply(400, map[string]string{"code": "invalid_confirmation"})
 			return
 		}

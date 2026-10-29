@@ -113,7 +113,7 @@ The complete Linux/systemd example below includes application identity, polling,
 
 `pull_interval` is the global polling interval in seconds, a positive integer with a default of 300. The PAM Agent synchronizes immediately at startup, then checks account and credential versions at this interval, fetching secrets only when versions or the active account change. Services with `update_on_notification: false` update on the next poll; notifications do not postpone it.
 
-## 4. store
+## 4. Account storage store
 
 `store` delivers credentials as standard JSON or environment files for applications that read credentials from files. It controls which accounts are written, the output directory, format and file owner. Updating an existing business configuration or reloading a service belongs in `services`.
 
@@ -141,7 +141,7 @@ The complete Linux/systemd example below includes application identity, polling,
 
 Each stored account has its own file named by its actual account ID, including separate A/B accounts. Files contain plaintext credentials with mode 0600. A/B standby accounts being changed are temporarily unavailable. Successful authorization reconciliation removes revoked files. An unchanged reconciliation reads metadata without fetching passwords again; actual fetches remain audited and participate in rotation access observation.
 
-## 5. socket
+## 5. Local API socket
 
 `socket` configures the local Unix Socket interface for health checks, account listing, on-demand credential retrieval, account usage reporting and application-result confirmation. Applications can query the socket without enabling `store`. Retrieval follows the application authorization in Core; `store.accounts` selects file output and does not restrict the API account scope.
 
@@ -183,7 +183,7 @@ Validate the running connection and switch the application before confirming an 
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ```
 
-## 6. services
+## 6. Application updates service
 
 Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.
 
@@ -345,7 +345,7 @@ Example stdin payload (excerpt):
 
 ```json
 {
-  "event": "credentials.updated",
+  "event": "credential.updated",
   "credentials": {
     "<primary-account-id>": {
       "account_id": "<active-account-id>",

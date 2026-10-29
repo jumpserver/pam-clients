@@ -19,6 +19,21 @@ from jms_pam.models import KnownRevision
 
 @unittest.skipUnless(os.environ.get("JMS_TEST_ENDPOINT"), "Run through tests/run.py")
 class PythonContractTests(unittest.TestCase):
+    def test_authoritative_scope_removes_all_unauthorized_cache_aliases(self):
+        for name in ('snapshot', 'app.scope.updated', 'application.scope.updated'):
+            instance = 'python-authority-cache-' + name
+            with self.client(instance) as client:
+                client.get_account(account_id='account')
+                client.get_credential(key='db')
+                client._reconcile_latest_credentials({
+                    'event': name, 'credentials': [{'key': 'db'}], 'authorized_account_ids': [],
+                })
+                self.control(instance, 503)
+                with self.assertRaises(PAMError):
+                    client.get_account(account_id='account')
+                with self.assertRaises(PAMError):
+                    client.get_credential(key='db')
+
     def test_managed_account_events_retry_result_and_report_current_rotation_account(self):
         class ManagedClient(Client):
             def on_account_changed(self, account):

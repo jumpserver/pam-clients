@@ -143,7 +143,7 @@ func TestLatestCredentialRetentionRevocationAndClone(t *testing.T) {
 			case "scope":
 				client.reconcileLatestCredentials(Event{Event: "snapshot"})
 			case "configuration":
-				client.reconcileLatestCredentials(Event{Event: "application.scope.updated"})
+				client.reconcileLatestCredentials(Event{Event: "app.scope.updated"})
 			}
 			retained, err := client.GetCredential(context.Background(), selector)
 			if change == "retain" || change == "configuration" {

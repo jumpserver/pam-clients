@@ -12,7 +12,7 @@ type accountEventResult struct{ status, errorCode string }
 func accountEventSelector(event Event) (CredentialSelector, bool) {
 	if event.CommandID != "" {
 		switch event.Event {
-		case "credential.updated", "credential.switch.requested", "application.restart.requested":
+		case "credential.updated", "credential.switch.requested", "app.restart.requested":
 			return CredentialSelector{Key: "command:" + event.CommandID}, true
 		default:
 			return CredentialSelector{}, false
@@ -55,7 +55,7 @@ func (w *EventWatcher) reportAccountUsage() {
 }
 
 func (w *EventWatcher) applyAccountEvent(update Event) error {
-	if update.Event == "application.restart.requested" {
+	if update.Event == "app.restart.requested" {
 		if w.handlers.OnApplicationRestart == nil {
 			return errors.New("application restart is not configured")
 		}
@@ -93,7 +93,7 @@ func (w *EventWatcher) refreshAccount(update, event Event, delay time.Duration) 
 	usage := update
 	usage.CommandID = ""
 	usageSelector, _ := accountEventSelector(usage)
-	if update.Event != "application.restart.requested" && w.accountScope != nil && !w.accountScope[usageSelector] {
+	if update.Event != "app.restart.requested" && w.accountScope != nil && !w.accountScope[usageSelector] {
 		return
 	}
 	if previous, exists := w.pending[selector]; exists && previous.update.Revision > update.Revision {
@@ -165,6 +165,12 @@ func (w *EventWatcher) revokeAccount(selector CredentialSelector, id string, eve
 }
 
 func (w *EventWatcher) revokeAccounts(retained map[CredentialSelector]bool, event Event) {
+	// Preserve actual business use without restoring the policy notification scope.
+	for selector, id := range w.usedAccounts {
+		if retained[CredentialSelector{AccountID: id}] {
+			retained[selector] = true
+		}
+	}
 	for selector := range w.pendingRevocations {
 		if retained[selector] {
 			delete(w.pendingRevocations, selector)

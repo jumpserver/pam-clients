@@ -130,6 +130,8 @@ type AccountSelector struct {
 // Rules and their file/script paths are trusted local configuration. Core cannot supply them.
 type Rule struct {
 	Name                 string            `json:"name,omitempty"`
+	Delivery             string            `json:"delivery,omitempty"`
+	RestartSupported     bool              `json:"restart_supported,omitempty"`
 	AllowAccountSwitch   bool              `json:"allow_account_switch,omitempty"`
 	UpdateOnNotification *bool             `json:"update_on_notification,omitempty"`
 	Keys                 []string          `json:"keys,omitempty"`
@@ -283,6 +285,9 @@ func (c Config) Validate() (err error) {
 	}
 	mappedTargets := map[string]mappedTarget{}
 	for _, rule := range c.Rules {
+		if rule.Delivery != "" && (!c.modern() || rule.Delivery != "socket") {
+			return errors.New("socket delivery requires a services declaration")
+		}
 		if (len(rule.Keys) == 0) == (len(rule.Accounts) == 0) {
 			return errors.New("delivery rules require either keys or accounts")
 		}
@@ -290,10 +295,10 @@ func (c Config) Validate() (err error) {
 		if modern && (len(rule.Files) > 0 || rule.Action != nil) {
 			return errors.New("legacy files/action cannot be mixed with staged delivery blocks")
 		}
-		if !modern && len(rule.Files) == 0 && rule.Action == nil {
+		if rule.Delivery != "socket" && !modern && len(rule.Files) == 0 && rule.Action == nil {
 			return errors.New("delivery rules require files or an action")
 		}
-		if modern && rule.ConfigUpdate == nil && rule.ServiceAction == nil {
+		if rule.Delivery != "socket" && modern && rule.ConfigUpdate == nil && rule.ServiceAction == nil {
 			return errors.New("staged delivery requires config_update or service_action")
 		}
 		keys := map[string]bool{}
