@@ -1,6 +1,6 @@
 # cURL — Hướng dẫn sử dụng
 
-Thư mục này chứa tập lệnh HTTP có chữ ký để chẩn đoán API account-secret cũ. Để tích hợp ứng dụng, dùng SDK Python, Go, Java hoặc Node.js.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## Yêu cầu môi trường
 
@@ -11,7 +11,7 @@ Cần Bash, cURL, OpenSSL và base64. Thay ASSET và ACCOUNT; bảo đảm chu�
 
 ## Cấu hình và chạy
 
-Tạo ứng dụng trong Quản lý ứng dụng và cấp quyền cho tài khoản tài sản đích. Điền điểm cuối, AK/SK của ứng dụng và ID tổ chức bên dưới; thay mọi giá trị giữ chỗ trước khi chạy.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-Ví dụ mặc định truy vấn tài sản ubuntu_docker và tài khoản root. Đổi thành tên thực tế đã được cấp quyền trong mã. Chạy lệnh từ thư mục gốc kho mã. Kết quả chứa bí mật, không đưa vào nhật ký ứng dụng.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## Yêu cầu và phản hồi
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-id xác định ứng dụng, không phải phiên bản tài khoản. secret là null có thể do cấu hình xem bí mật của máy chủ. Các ví dụ này chưa nhận sự kiện thông tin xác thực, báo cáo phiên bản đã áp dụng hoặc thực thi lệnh ứng dụng.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## Khắc phục sự cố
 
-Với 401, kiểm tra AK/SK, tổ chức, giờ máy chủ và URL đã ký. Với 403, kiểm tra trạng thái ứng dụng và quyền tài khoản. Với 400, kiểm tra bộ chọn tài sản/tài khoản và mã hóa URL. Không ghi bí mật hoặc tiêu đề Authorization; tên phải khớp tài nguyên được cấp quyền.
+Check identity, authorization, signature and instance ID.
 
 ## Tích hợp chính sách thông tin xác thực
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng thay đổi trước khi báo `success` hoặc `failed` qua `event_id`. Nhận sự kiện hoặc lấy mật khẩu không có nghĩa là áp dụng thành công. Sự kiện và snapshot có `event_id`, `account_id`, `account_revision`; hãy kiểm tra phiên bản. Nhận lệnh bằng `running` và xử lý lặp lại an toàn.
 
-received chỉ có nghĩa là đã đọc sự kiện. Trước khi xử lý sự kiện nghiệp vụ có event_id, gửi received trên cùng WebSocket; snapshot và pong không cần biên nhận. Đồng bộ ảnh chụp mỗi lần kết nối/kết nối lại, xử lý credential.updated, thu hồi quyền và thay đổi cấu hình.
+received chỉ có nghĩa là đã đọc sự kiện. Trước khi xử lý sự kiện nghiệp vụ có event_id, gửi received trên cùng WebSocket; snapshot và pong không cần biên nhận. Đồng bộ ảnh chụp mỗi lần kết nối/kết nối lại, xử lý credential.secret.updated / credential.switch.published / credential.refresh.requested, thu hồi quyền và thay đổi cấu hình.

@@ -15,6 +15,8 @@ import org.jumpserver.pam.Models.Event;
 
 /** A managed listener. close() stops and waits; hooks may close their own subscription. */
 public final class EventSubscription implements AutoCloseable {
+  private static final Set<String> CREDENTIAL_APPLICATION_EVENTS = Set.of(
+      "credential.secret.updated", "credential.switch.published", "credential.refresh.requested");
   private final Client client;
   private final CredentialEventListener listener;
   private final EventStream stream;
@@ -152,7 +154,7 @@ public final class EventSubscription implements AutoCloseable {
   private static String accountSelector(Event event) {
     if (!event.getCommandId().isEmpty()) {
       String name = event.getEvent();
-      return name.equals("credential.updated") || name.equals("credential.switch.requested")
+      return CREDENTIAL_APPLICATION_EVENTS.contains(name) || name.equals("credential.switch.requested")
               || name.equals("app.restart.requested")
           ? "command:" + event.getCommandId() : null;
     }
@@ -262,8 +264,7 @@ public final class EventSubscription implements AutoCloseable {
   private void dispatch(Event event) {
     String name = event.getEvent();
     if (name.equals("snapshot")
-        || name.equals("credential.revoked")
-        || name.equals("app.scope.updated") || name.equals("configuration.updated")) pending.clear();
+        || name.equals("app.scope.updated")) pending.clear();
     try {
       listener.onEvent(event);
     } catch (Exception error) {
@@ -281,7 +282,7 @@ public final class EventSubscription implements AutoCloseable {
         }
         for (Event update : event.getCredentials()) refresh(update, event, 0);
       } else if (listener instanceof AccountEventListener
-          && (name.equals("app.scope.updated") || name.equals("configuration.updated"))) {
+          && (name.equals("app.scope.updated"))) {
         accountScope = new HashSet<>();
         if (event.getData().has("authorized_account_ids")) {
           Set<String> allowed = new HashSet<>(event.getAuthorizedAccountIds());
@@ -293,21 +294,8 @@ public final class EventSubscription implements AutoCloseable {
         }
       } else if (listener instanceof AccountEventListener && !event.getCommandId().isEmpty()) {
         refresh(event, event, 0);
-      } else if (name.equals("credential.updated") && event.getCommandId().isEmpty()) {
+      } else if (CREDENTIAL_APPLICATION_EVENTS.contains(name) && event.getCommandId().isEmpty()) {
         refresh(event, event, 0);
-      } else if (name.equals("credential.revoked")) {
-        if (listener instanceof AccountEventListener) {
-          if (accountScope != null) {
-            accountScope.remove("policy:" + event.getKey());
-            accountScope.remove("account:" + event.getAccountId());
-          }
-          Set<String> retained = new HashSet<>();
-          for (Map.Entry<String, String> item : usedAccounts.entrySet())
-            if (!item.getValue().equals(event.getAccountId()) && !item.getKey().equals("policy:" + event.getKey()))
-              retained.add(item.getKey());
-          revokeAccounts(retained, event);
-        }
-        listener.onCredentialRevoked(event);
       }
     } catch (Exception error) {
       report(error, event);

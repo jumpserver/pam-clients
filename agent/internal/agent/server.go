@@ -107,10 +107,7 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/accounts":
 		value, err := a.Accounts(r.Context())
 		if err != nil {
-			if incompatible(err) {
-				reply(426, map[string]string{"code": "client_upgrade_required"})
-				return
-			}
+
 			reply(503, map[string]string{"code": "account_query_failed"})
 			return
 		}
@@ -128,10 +125,7 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		value, err := a.accountCredential(r.Context(), accountID, fallback != "false")
 		if err != nil {
-			if incompatible(err) {
-				reply(426, map[string]string{"code": "client_upgrade_required"})
-				return
-			}
+
 			reply(403, map[string]string{"code": "credential_query_failed"})
 			return
 		}
@@ -146,26 +140,18 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(status, map[string]string{"code": err.Error()})
 			return
 		}
-		reply(200, value)
+		reply(200, value.result("local"))
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/confirm":
 		var request struct {
-			Key      string `json:"key"`
-			Revision int64  `json:"revision"`
-			EventID  string `json:"event_id"`
+			EventID string `json:"event_id"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || (request.EventID == "" && (request.Key == "" || request.Revision < 0)) || (request.EventID != "" && request.Key != "") {
+		if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || request.EventID == "" {
 			reply(400, map[string]string{"code": "invalid_confirmation"})
 			return
 		}
-		var applied Applied
-		var err error
-		if request.EventID != "" {
-			applied, err = a.ConfirmEvent(r.Context(), request.EventID)
-		} else {
-			applied, err = a.Confirm(r.Context(), request.Key, request.Revision)
-		}
+		applied, err := a.ConfirmEvent(r.Context(), request.EventID)
 		if err != nil {
 			reply(400, map[string]string{"code": "confirmation_rejected"})
 			return

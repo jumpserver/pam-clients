@@ -168,7 +168,7 @@ func TestSocketABSwitchWaitsForEveryServiceAndRejectsOldDelivery(t *testing.T) {
 		t.Fatal("initial delivery missing")
 	}
 	values, err := a.SocketCredentials("db", initial.Delivery.ID)
-	if err != nil || values[testA].AccountID != testA {
+	if err != nil || values[testA].Account.ID != testA {
 		t.Fatal("initial effective credential missing", err)
 	}
 	if len(a.state.Delivered) != 0 || len(remote.results) != 0 || len(a.AccountUsageSnapshot().AccountIDs) != 0 {
@@ -196,7 +196,7 @@ func TestSocketABSwitchWaitsForEveryServiceAndRejectsOldDelivery(t *testing.T) {
 		}
 		current := snapshotFor(t, a, "db")
 		values, err = a.SocketCredentials("db", current.Delivery.ID)
-		if err != nil || values[testA].AccountID != id {
+		if err != nil || values[testA].Account.ID != id {
 			t.Fatal("declared A did not follow effective account", err)
 		}
 		if _, err = a.SocketResult(ctx, "db", SocketResult{DeliveryID: old, Status: "success"}); !errors.Is(err, errSocketConflict) {
@@ -274,12 +274,12 @@ func TestSocketFailureRetryAndRevocationDoNotAdvanceUsage(t *testing.T) {
 	remote.mu.Lock()
 	remote.fault = &pam.PAMError{Code: "NetworkError"}
 	remote.mu.Unlock()
-	err = a.HandleEvent(ctx, pam.Event{Event: "credential.revoked", CredentialKey: "rotation", AccountID: testB})
+	err = a.HandleEvent(ctx, pam.Event{Event: "app.scope.updated", AuthorizedAccountIDs: []string{testA, testC}})
 	if err == nil {
 		t.Fatal("expected unavailable backend")
 	}
 	revoked := snapshotFor(t, a, "db")
-	if revoked.Delivery == nil || revoked.Delivery.Event != "credential.revoked" || len(revoked.Delivery.Credentials) != 0 {
+	if revoked.Delivery == nil || revoked.Delivery.Event != "app.scope.updated" || len(revoked.Delivery.Credentials) != 0 {
 		t.Fatal("offline revocation was not delivered", revoked)
 	}
 	if _, err = a.SocketCredentials("db", view.Delivery.ID); !errors.Is(err, errSocketConflict) {
@@ -587,7 +587,7 @@ func TestSocketResultOutboxRetriesWithoutReapplyingAndFreshnessFloorBlocksAck(t 
 	remote.mu.Lock()
 	remote.fault = &pam.PAMError{Code: "NetworkError"}
 	remote.mu.Unlock()
-	_ = restarted.HandleEvent(ctx, pam.Event{Event: "credential.updated", CredentialKey: "rotation", Revision: 2, AccountID: testB})
+	_ = restarted.HandleEvent(ctx, pam.Event{Event: "credential.secret.updated", CredentialKey: "rotation", Revision: 2, AccountID: testB})
 	if _, err = restarted.SocketResult(ctx, "db", SocketResult{DeliveryID: old.Delivery.ID, Status: "success"}); !errors.Is(err, errSocketConflict) {
 		t.Fatal("known newer version allowed an old ACK")
 	}
@@ -659,31 +659,5 @@ func TestSocketStatusBeforeInitialSyncAndReceiptStagesRemainIndependent(t *testi
 	applySocket(t, restarted, "db")
 	if snapshotFor(t, restarted, "db").CoreStatus != "confirmed" {
 		t.Fatal("Core confirmation was not exposed")
-	}
-}
-
-func TestSocketAccountRevisionFloorAndProtocolMismatchRejectStaleApplication(t *testing.T) {
-	_, remote, a := socketFixture(t, "db")
-	ctx := context.Background()
-	if err := a.Sync(ctx); err != nil {
-		t.Fatal(err)
-	}
-	view := snapshotFor(t, a, "db")
-	remote.mu.Lock()
-	remote.fault = &pam.PAMError{Code: "NetworkError"}
-	remote.mu.Unlock()
-	_ = a.HandleEvent(ctx, pam.Event{Event: "credential.updated", CredentialKey: "account:" + testA, AccountID: testA, Revision: 2, AccountRevision: 2})
-	if _, err := a.SocketCredentials("db", view.Delivery.ID); !errors.Is(err, errSocketConflict) {
-		t.Fatal("account version floor did not block an older rotation credential", err)
-	}
-	_ = a.failure(&pam.PAMError{StatusCode: 426, Code: "client_upgrade_required"}, true)
-	if _, err := a.SocketCredentials("db", view.Delivery.ID); !incompatible(err) {
-		t.Fatal("protocol mismatch was hidden as an offline value", err)
-	}
-	if _, err := a.SocketResult(ctx, "db", SocketResult{DeliveryID: view.Delivery.ID, Status: "success"}); !incompatible(err) {
-		t.Fatal("unsupported protocol accepted a business confirmation", err)
-	}
-	if snapshotFor(t, a, "db").ErrorCode != "client_upgrade_required" {
-		t.Fatal("upgrade requirement was missing from local events")
 	}
 }

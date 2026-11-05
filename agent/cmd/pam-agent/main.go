@@ -41,7 +41,7 @@ func diagnostic(err error) string {
 		case "ResponseError":
 			return "the backend returned an invalid response"
 		default:
-			return fmt.Sprintf("backend request rejected (HTTP %d); check identity, authorization and protocol compatibility", failure.StatusCode)
+			return fmt.Sprintf("backend request rejected (HTTP %d); check identity, authorization and request settings", failure.StatusCode)
 		}
 	}
 	return err.Error()
@@ -61,7 +61,7 @@ func run(args []string) error {
   get_accounts [--config PATH | --socket PATH]
                                             List authorized account metadata
   get_secret ACCOUNT_ID [--config PATH | --socket PATH]
-                                            Get account secret JSON, with API/local source
+                                            Get account JSON, source and last_pull_at
   confirm EVENT_ID --socket PATH             Confirm successful application of an event
   report_accounts [ACCOUNT_ID ...] --socket PATH
                                             Replace explicit account usage (empty clears it)
@@ -200,11 +200,10 @@ func run(args []string) error {
 		return err
 	case "confirm":
 		if len(args) == 0 {
-			return errors.New("credential key is required")
+			return errors.New("event ID is required")
 		}
 		key := args[0]
 		args = args[1:]
-		revision := flags.Int64("revision", -1, "exact applied revision")
 		socket := flags.String("socket", "", "local PAM Agent socket")
 		if err := flags.Parse(args); err != nil {
 			return err
@@ -213,9 +212,7 @@ func run(args []string) error {
 			return errors.New("socket and event ID are required")
 		}
 		data := map[string]any{"event_id": key}
-		if *revision >= 0 {
-			data = map[string]any{"key": key, "revision": *revision}
-		} // Legacy CLI compatibility.
+
 		body, _ := json.Marshal(data)
 		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)

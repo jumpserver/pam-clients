@@ -166,19 +166,20 @@ class Application:
             self.events.append({key: event[key] for key in (
                 "event", "event_id", "operation_id", "credential_key", "account_id", "account_revision", "revision",
             ) if key in event})
+        if kind == "app.scope.updated":
+            allowed = set(event["authorized_account_ids"])
+            for name, service in self.services.items():
+                if service.get("account_id") and service["account_id"] not in allowed:
+                    self.revoke(name)
+            return
         if kind == "snapshot":
             updates = event.get("credentials", [])
             keys = {item.get("credential_key") or item.get("key") for item in updates}
             for name in self.services:
                 if self.config[name]["credential_key"] not in keys:
                     self.revoke(name)
-        elif kind in ("credential.updated", "credential.switch.requested"):
+        elif kind in ("credential.secret.updated", "credential.switch.published", "credential.refresh.requested", "credential.switch.requested"):
             updates = [event]
-        elif kind == "credential.revoked":
-            for name in self.services:
-                if event.get("credential_key") == self.config[name]["credential_key"]:
-                    self.revoke(name)
-            return
         else:
             return
         with self.lock:

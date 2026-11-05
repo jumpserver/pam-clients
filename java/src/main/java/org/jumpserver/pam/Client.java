@@ -485,8 +485,7 @@ public final class Client implements AutoCloseable {
               || error.getStatusCode() == 404
               || (error.getStatusCode() == 400 && error.getCode().equals("credential_not_found"));
       boolean temporary =
-          !error.isCompatibilityError()
-              && (error.getCode().equals("NetworkError")
+          ((error.getCode().equals("NetworkError") && (error.getStatusCode() == 0 || (error.getStatusCode() >= 200 && error.getStatusCode() < 300)))
                   || (error.getStatusCode() >= 500 && error.getStatusCode() < 600));
       synchronized (credentialsLock) {
         if (denied) {
@@ -508,33 +507,14 @@ public final class Client implements AutoCloseable {
   void reconcileLatestCredentials(Event event) {
     String name = event.getEvent();
     if (!name.equals("snapshot")
-        && !name.equals("credential.revoked")
-        && !name.equals("app.scope.updated") && !name.equals("configuration.updated")) return;
+        && !name.equals("app.scope.updated")) return;
     synchronized (credentialsLock) {
       credentialGeneration++;
-      if (name.equals("app.scope.updated") || name.equals("configuration.updated")) {
+      if (name.equals("app.scope.updated")) {
         java.util.Set<String> authorized = new java.util.HashSet<>(event.getAuthorizedAccountIds());
         latestCredentials.entrySet().removeIf(item -> event.getData().has("authorized_account_ids")
             ? !authorized.contains(item.getValue().getAccount().getId())
             : item.getKey().startsWith("account_id:"));
-        return;
-      }
-      if (!name.equals("snapshot")) {
-        String key = event.getKey(), accountId = event.getAccountId();
-        if (key.isEmpty() && accountId.isEmpty()) latestCredentials.clear();
-        else
-          latestCredentials
-              .entrySet()
-              .removeIf(
-                  item ->
-                      (!key.isEmpty()
-                              && (item.getKey().equals("key:" + key)
-                                  || item.getValue().getKey().equals(key)
-                                  || item.getValue().getKey().startsWith(key + ":")))
-                          || (!accountId.isEmpty()
-                              && (key.isEmpty() || key.startsWith("account:"))
-                              && (item.getKey().equals("account_id:" + accountId)
-                                  || item.getValue().getAccount().getId().equals(accountId))));
         return;
       }
       java.util.Set<String> keys = new java.util.HashSet<>();

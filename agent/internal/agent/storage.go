@@ -25,7 +25,7 @@ func securePath(path string) error {
 		}
 		if err == nil {
 			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || (stat.Uid != 0 && int(stat.Uid) != os.Geteuid()) || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
+			if !ok || stat.Uid != 0 && int(stat.Uid) != os.Geteuid() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 {
 				return errors.New("path must have trusted ownership, no writable ancestors and no symlinks")
 			}
 			if current != path && !info.IsDir() {

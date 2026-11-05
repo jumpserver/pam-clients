@@ -76,7 +76,7 @@ def verify(root):
             assert any(record["client__instance_id"] == configs["sdk"]["instance_id"]
                        and record["fetched_revision"] == accounts[name].version for record in records)
             source_ids = ApplicationAudit.objects.filter(credential=policy, revision=accounts[name].version).values("id")
-            events = CredentialRotationEvent.objects.filter(source_event_id__in=source_ids, event="credential.updated")
+            events = CredentialRotationEvent.objects.filter(source_event_id__in=source_ids, event="credential.secret.updated")
             applied_instances = {recipient["instance_id"] for event in events for recipient in event.recipients
                                  if recipient.get("status") == "success" and recipient.get("account_id") == str(accounts[name].id)
                                  and recipient.get("account_revision") == accounts[name].version}
@@ -85,7 +85,7 @@ def verify(root):
             change = json.loads((root / f"{name}-change.json").read_text())
             ids = ApplicationAudit.objects.filter(credential=policy, operation_id=change["operation_id"]).values("id")
             chain = list(CredentialRotationEvent.objects.filter(source_event_id__in=ids).order_by("published_at").values_list("event", flat=True))
-            assert chain == ["credential.change.started", "credential.change.completed", "credential.updated"], chain
+            assert chain == ["credential.change.started", "credential.change.completed", "credential.secret.updated"], chain
             assert change["old_password_rejected"] and change["new_password_accepted"]
             lifecycle[name] = {**change, "events": chain, "applied_instances": sorted(applied_instances)}
         confirmations[name] = [{**record, "applied_account_id": str(record["applied_account_id"])} for record in records]

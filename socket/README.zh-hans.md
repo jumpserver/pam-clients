@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -90,7 +90,7 @@ Upgrade: websocket
 {"request_id":"3","operation":"result","delivery_id":"<delivery-id>","status":"failed","error_code":"database_probe_failed"}
 ```
 
-按原 delivery_id 返回 success 或 failed。Agent 先持久化结果，再向 Core 上报；相关业务全部成功后才确认凭据事件。accepted 表示本地已保存，不代表 Core 已接收。成功结果可幂等重报；旧版本返回 HTTP 409。失败后等待 1–30 秒，retry_ready 会变为 true。结果响应丢失时重报结果，不重复已经成功的业务动作。回调必须可重复执行：业务动作和本地 ACK 之间发生崩溃时，无法保证只执行一次。 快照中的 received、credentials_read、result 分别表示业务接收、读取凭据和业务处理结果；core_status 单独表示 Core 上报状态，支持 pending、confirmed、failed、not_required。received 回执通过同名操作提交，取密也会记录接收阶段，二者都不确认业务成功。
+按原 delivery_id 返回 success 或 failed。 Agent 先持久化结果，再向 Core 上报；相关业务全部成功后才确认凭据事件。 accepted 表示本地已保存，不代表 Core 已接收。 失败后等待 1–30 秒，retry_ready 会变为 true。 结果响应丢失时重报结果，不重复已经成功的业务动作。 回调必须可重复执行：业务动作和本地 ACK 之间发生崩溃时，无法保证只执行一次。 快照中的 received、credentials_read、result 分别表示业务接收、读取凭据和业务处理结果；core_status 单独表示 Core 上报状态，支持 pending、confirmed、failed、not_required。 received 回执通过同名操作提交，取密也会记录接收阶段，二者都不确认业务成功。
 
 ## 4. Commands / status
 
@@ -107,6 +107,58 @@ Agent 先认领指令，再交给业务。只有声明 restart_supported=true �
 ```
 
 ## 5. API
+
+CLI/Socket 取密和业务凭据读取返回 `account`、`source`、`last_pull_at`。`account.version` 是实际账号的凭据版本；普通结果不再包含策略版本、`account_revision` 和 `event_id`。`source` 为 `api` 表示本次从 Core 实时取密，为 `local` 表示读取本地缓存。`last_pull_at` 是该账号最后一次成功从 Core 取密的 RFC 3339 时间，即使版本不变也会更新；随缓存凭据持久化，重启保留。仅同步元数据、读取缓存或拉取失败都不更新时间。旧缓存缺少时间时，下一次在线同步会真实取密一次并补齐，即使版本不变；离线或拉取失败时仍返回 null，后续同步继续重试。成功补齐后，版本不变不再重复取密。仅按需取密不会开启离线凭据保留。
+
+`event_id` 保留在通知元数据和脚本通知外层，用于回报应用成功或失败，不属于账号字段，也不是全局最后事件的指针。快照复用匹配账号、账号版本、策略和客户端实例的最新事件，没有匹配项时创建补发事件。脚本通过 `credentials[selector].account` 读取账号；已有 Go 模板、字段映射和 EnvironmentFile 变量保留原字段名。已有 JSON 消费方需要适配嵌套的 account 结构。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+凭据 JSON 文件只保留 `account`，不显示 `source` 或 `last_pull_at`。拉取时间集中写到 `store.root` 所指目录同级的 `last_pull_at.json`，按实际账号 ID 记录，私有状态中也继续保留。每次实时取密成功，即使版本不变，也会立即更新诊断文件，不改写凭据文件。仅核对版本、读取缓存或拉取失败都不更新时间；撤销账号时移除对应记录。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

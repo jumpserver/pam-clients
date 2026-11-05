@@ -27,7 +27,7 @@ func appendPrivate(path string, data []byte) error {
 		return err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || (stat.Uid != 0 && int(stat.Uid) != os.Geteuid()) {
+	if !ok || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || stat.Uid != 0 && int(stat.Uid) != os.Geteuid() {
 		return errors.New("event journal must be a trusted regular private file")
 	}
 	count, err := file.Write(data)

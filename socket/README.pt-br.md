@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+Consultas CLI/Socket e leituras de serviços retornam `account`, `source` e `last_pull_at`. `account.version` é a versão real das credenciais da conta; resultados comuns omitem versões de política, `account_revision` e `event_id`. `source` é `api` para uma consulta ao Core e `local` para cache. `last_pull_at` é a data RFC 3339 da última consulta bem-sucedida dessa conta ao Core, mesmo sem mudança de versão. Ela persiste com o cache após reiniciar. Sincronização de metadados, leitura do cache e falhas não a atualizam. Caches antigos sem data conhecida retornam null. Consultas sob demanda não ativam retenção offline.
+
+`event_id` permanece nos metadados de notificação e nos envelopes dos scripts para informar o resultado. Snapshots reutilizam o evento mais recente correspondente à conta, versão, política e cliente, ou criam um evento de republicação. Scripts leem `credentials[selector].account`. Templates Go, mapeamentos e variáveis EnvironmentFile mantêm seus nomes. Leitores JSON existentes precisam adotar a estrutura account aninhada.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Arquivos JSON de credenciais contêm apenas `account`, sem `source` ou `last_pull_at`. As datas são exportadas por ID real da conta para `last_pull_at.json`, ao lado do diretório `store.root`, e mantidas no estado privado. Uma consulta ao vivo bem-sucedida atualiza o diagnóstico imediatamente mesmo na mesma versão, sem regravar credenciais. Verificações de versão, leituras do cache e falhas não alteram a data. Contas revogadas são removidas do diagnóstico.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

@@ -175,8 +175,7 @@ func (w *EventWatcher) refresh(update, event Event, delay time.Duration) {
 }
 
 func (w *EventWatcher) dispatch(event Event) {
-	event.Event = canonicalEventName(event.Event)
-	if event.Event == "snapshot" || event.Event == "credential.revoked" || event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
+	if event.Event == "snapshot" || event.Event == "app.scope.updated" {
 		clear(w.pending)
 	}
 	if w.handlers.OnEvent != nil {
@@ -208,7 +207,7 @@ func (w *EventWatcher) dispatch(event Event) {
 		for _, update := range event.Credentials {
 			w.refresh(update, event, 0)
 		}
-	case "app.scope.updated", "configuration.updated":
+	case "app.scope.updated":
 		if w.handlers.OnAccountChanged != nil {
 			w.accountScope = make(map[CredentialSelector]bool)
 			if event.AuthorizedAccountIDs != nil {
@@ -226,30 +225,9 @@ func (w *EventWatcher) dispatch(event Event) {
 				w.revokeAccounts(retained, event)
 			}
 		}
-	case "credential.updated":
+	case CredentialSecretUpdated, CredentialSwitchPublished, CredentialRefreshRequested:
 		if event.CommandID == "" || w.handlers.OnAccountChanged != nil {
 			w.refresh(event, event, 0)
-		}
-	case "credential.revoked":
-		if w.handlers.OnAccountChanged != nil {
-			retained := make(map[CredentialSelector]bool)
-			key := event.CredentialKey
-			if key == "" {
-				key = event.Key
-			}
-			delete(w.accountScope, CredentialSelector{AccountID: event.AccountID})
-			delete(w.accountScope, CredentialSelector{Key: "policy:" + key})
-			for selector, id := range w.usedAccounts {
-				if id != event.AccountID && selector.Key != "policy:"+key {
-					retained[selector] = true
-				}
-			}
-			w.revokeAccounts(retained, event)
-		}
-		if w.handlers.OnCredentialRevoked != nil {
-			if err := invokeEventHook(func() error { return w.handlers.OnCredentialRevoked(w.ctx, event) }); err != nil {
-				w.report(err, &event)
-			}
 		}
 	case "credential.switch.requested", "app.restart.requested":
 		if w.handlers.OnAccountChanged != nil && event.CommandID != "" {

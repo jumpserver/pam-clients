@@ -1,6 +1,6 @@
 # cURL — 利用ガイド
 
-このディレクトリは旧 account-secret API の診断用 HTTP 署名スクリプトです。アプリケーションの連携には Python、Go、Java、Node.js の SDK を使用してください。
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## 動作要件
 
@@ -11,7 +11,7 @@ Bash、cURL、OpenSSL、base64 が必要です。ASSET と ACCOUNT を変更し�
 
 ## 設定と実行
 
-アプリケーション管理でアプリケーションを作成し、対象の資産アカウントを許可します。以下のエンドポイント、アプリケーション AK/SK、組織 ID を設定し、実行前にすべてのプレースホルダーを実際の値に変更してください。
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-既定の資産は ubuntu_docker、アカウントは root です。コード内で許可された実際の名前に変更してください。コマンドはリポジトリのルートから実行します。出力に秘密情報が含まれるため、アプリケーションログに記録しないでください。
+Set the server, application identity, organization, instance ID and account ID.
 
 ## リクエストとレスポンス
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-id はアプリケーションの識別子で、アカウントのリビジョンではありません。secret が null の場合は、サーバーの秘密情報表示設定による制限が考えられます。このサンプルは認証情報イベント、生効リビジョンの報告、アプリケーションコマンドには対応していません。
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## トラブルシューティング
 
-401 では AK/SK、組織、ホスト時刻、署名 URL を確認します。403 ではアプリケーションの状態とアカウント権限、400 では資産・アカウントの指定と URL エンコードを確認してください。秘密情報と Authorization ヘッダーをログに記録しないでください。
+Check identity, authorization, signature and instance ID.
 
 ## 認証情報ポリシーへの接続
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 `account_id` で対象アカウントを取得し、接続検証と切り替えが完了してから `event_id` で `success` または `failed` を報告します。受信や取得の成功は適用成功ではありません。イベントと再接続スナップショットには `event_id`、`account_id`、`account_revision` が含まれます。適用前に版を検証し、コマンドは `running` で取得してください。再実行に対応した処理が必要です。
 
-received はイベントを読み取ったことだけを示します。event_id を持つ業務イベントの処理前に、同じ WebSocket で received を送信します。snapshot と pong は受領通知不要です。接続・再接続のたびに快照を同期し、credential.updated、権限取消、設定変更を処理します。
+received はイベントを読み取ったことだけを示します。event_id を持つ業務イベントの処理前に、同じ WebSocket で received を送信します。snapshot と pong は受領通知不要です。接続・再接続のたびに快照を同期し、credential.secret.updated / credential.switch.published / credential.refresh.requested、権限取消、設定変更を処理します。

@@ -1,6 +1,6 @@
 # cURL — Guía de uso
 
-Este directorio contiene un script HTTP firmado para diagnosticar la API heredada account-secret. Para integrar aplicaciones, use el SDK de Python, Go, Java o Node.js.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## Requisitos
 
@@ -11,7 +11,7 @@ El script requiere Bash, cURL, OpenSSL y base64. Cambie ASSET y ACCOUNT y compru
 
 ## Configuración y ejecución
 
-Cree una aplicación en Administración de aplicaciones y autorice las cuentas de destino. Configure la URL, AK/SK de la aplicación y el ID de organización; sustituya todos los valores de ejemplo antes de ejecutar.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-Los ejemplos consultan el activo ubuntu_docker y la cuenta root de forma predeterminada. Sustitúyalos por nombres autorizados reales. Ejecute los comandos desde la raíz del repositorio. La salida contiene secretos; no la envíe a los registros de la aplicación.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## Solicitud y respuesta
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-El campo id identifica la aplicación, no una revisión de cuenta. Un secreto null puede deberse al ajuste del servidor para visualizar secretos. Estos ejemplos no reciben eventos, no informan de revisiones aplicadas ni ejecutan comandos de aplicación.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## Solución de problemas
 
-Para 401, compruebe AK/SK, organización, hora del equipo y URL firmada. Para 403, compruebe el estado de la aplicación y la autorización de cuentas. Para 400, compruebe los selectores y la codificación de la consulta. No registre secretos ni cabeceras Authorization. Los nombres deben corresponder a los recursos autorizados.
+Check identity, authorization, signature and instance ID.
 
 ## Acceso a políticas de credenciales
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 Obtenga la cuenta mediante `account_id`. Valide y aplique el cambio antes de informar `success` o `failed` con `event_id`. Recibir o consultar no equivale a aplicar. Los eventos y las instantáneas incluyen `event_id`, `account_id` y `account_revision`; compruebe la versión antes de aplicar. Reclame los comandos con `running` y use manejadores idempotentes.
 
-Un recibo received solo indica que se leyó un evento. Envíe received con event_id en el mismo WebSocket antes de procesar eventos de negocio; snapshot y pong no requieren recibo. Concilie snapshot en cada conexión o reconexión, procese credential.updated y gestione revocaciones y cambios de configuración.
+Un recibo received solo indica que se leyó un evento. Envíe received con event_id en el mismo WebSocket antes de procesar eventos de negocio; snapshot y pong no requieren recibo. Concilie snapshot en cada conexión o reconexión, procese credential.secret.updated / credential.switch.published / credential.refresh.requested y gestione revocaciones y cambios de configuración.

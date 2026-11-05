@@ -9,9 +9,7 @@ import (
 	"strings"
 )
 
-// These are local file formats, independent of the SDK and wire protocol versions.
-// Additive changes keep v1 defaults; incompatible semantics need a new reader
-// and migration before either constant changes.
+// Current local configuration and private state formats.
 const CurrentConfigVersion = 1
 const CurrentStateVersion = 1
 
@@ -19,8 +17,7 @@ func unsupportedVersion(kind, field string, version, supported int) error {
 	return fmt.Errorf("unsupported PAM Agent %s %s %d (supported: %d); use a PAM Agent that supports this format", kind, field, version, supported)
 }
 
-// Missing version fields identify the original v1 format. Explicit null, zero,
-// fractional and non-numeric values must not silently select that default.
+// Require the current explicit format version.
 func readFormatVersion(raw []byte, kind, field string, supported int) (int, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	var object map[string]json.RawMessage
@@ -38,11 +35,14 @@ func readFormatVersion(raw []byte, kind, field string, supported int) (int, erro
 			return 0, fmt.Errorf("PAM Agent %s version field must be named %q", kind, field)
 		}
 	}
-	version := 1
+	version := 0
 	if value, exists := object[field]; exists {
 		if err := json.Unmarshal(value, &version); err != nil || version < 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return 0, fmt.Errorf("PAM Agent %s %s must be a positive integer", kind, field)
 		}
+	}
+	if version == 0 {
+		return 0, fmt.Errorf("PAM Agent %s requires %s", kind, field)
 	}
 	if version != supported {
 		return 0, unsupportedVersion(kind, field, version, supported)
@@ -66,8 +66,7 @@ func formatJSONError(kind string, err error) error {
 	return fmt.Errorf("invalid PAM Agent %s JSON", kind)
 }
 
-// Normalize only in memory. Startup must not rewrite the state file; normal
-// atomic persistence adds the version while keeping the existing runtime state.
+// Decode the current private state format.
 func decodeState(raw []byte, state *State) error {
 	version, err := readFormatVersion(raw, "state", "state_version", CurrentStateVersion)
 	if err != nil {

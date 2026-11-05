@@ -162,6 +162,58 @@ When running without root, omit both `store.owner` and `socket.owner` to use the
 
 Run CLI and Socket requests as the configured application user. `get_accounts` lists authorized account metadata; `get_secret` retrieves a secret on demand, including pull-only accounts. It writes the secret to stdout, so use it only in a private terminal. Replace the Socket path in foreground mode.
 
+CLI/Socket secret queries and service credential reads return `account`, `source` and `last_pull_at`. `account.version` is the actual account credential version; ordinary results omit policy revisions, `account_revision` and `event_id`. `source` is `api` for a live Core fetch and `local` for retained data. `last_pull_at` is the RFC 3339 time of the last successful Core credential fetch for that account, even when its version is unchanged. It is retained with cached credentials across restarts; metadata sync, cache reads and failed pulls do not advance it. Older caches without a known pull time trigger one real credential fetch on the next online sync, even if the version is unchanged. Failed fetches leave the time unknown (null) and are retried; after success, unchanged metadata syncs do not fetch again. Pull-only queries do not enable offline credential retention.
+
+`event_id` stays in notification metadata and script notification envelopes for reporting application success/failure; it is not an account field or a global latest-event pointer. Snapshots reuse the latest matching account/version/policy/client event, or create a republished event if none exists. Script readers use `credentials[selector].account`; existing Go templates, field mappings and EnvironmentFile variables keep their existing field names. Existing JSON readers must adopt the nested account structure.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Credential JSON files contain only `account`, with no `source` or `last_pull_at`. Pull times are exported separately to `last_pull_at.json` beside the directory configured by `store.root`, keyed by the actual account ID. The private state retains the same times. A successful live credential fetch updates the diagnostic file immediately, even for the same version, without rewriting credential files. Periodic version checks, cache reads and failed pulls do not advance it. Revoked accounts are removed from the diagnostic file.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
+
 ```bash
 pam-agent get_accounts
 pam-agent get_secret '<account-id>'
@@ -187,7 +239,7 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.
 
-New configurations use `update_config` → `reload_service` → `app_check`: update the business file, reload/restart the service (or run a fixed script), then verify the running application. These names require an updated PAM Agent. `services` accepts only these three step names; old names are rejected.
+New configurations use `update_config` → `reload_service` → `app_check`: update the business file, reload/restart the service (or run a fixed script), then verify the running application. These names require an updated PAM Agent.
 
 | Configure and run | Update business configuration and A/B rotation |
 | --- | --- |
@@ -345,12 +397,24 @@ Example stdin payload (excerpt):
 
 ```json
 {
-  "event": "credential.updated",
+  "event": "credential.refresh.requested",
   "credentials": {
     "<primary-account-id>": {
-      "account_id": "<active-account-id>",
-      "username": "db_app",
-      "secret": "<password>",
+      "account": {
+        "id": "<active-account-id>",
+        "name": "database",
+        "username": "db_app",
+        "secret_type": "password",
+        "secret": "<password>",
+        "version": 3,
+        "asset": {
+          "id": "<asset-id>",
+          "name": "database-server",
+          "address": "10.0.0.10"
+        }
+      },
+      "source": "local",
+      "last_pull_at": "2026-10-30T06:30:00Z",
       "event_id": "<event-id>"
     }
   }
@@ -370,7 +434,7 @@ import tempfile
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-credential = payload["credentials"]["<primary-account-id>"]
+credential = payload["credentials"]["<primary-account-id>"]["account"]
 target = Path(sys.argv[1])
 original = target.stat()
 with target.open(encoding="utf-8") as source:

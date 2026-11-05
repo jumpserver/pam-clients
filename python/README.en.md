@@ -2,7 +2,7 @@
 
 For a runnable application that reads/writes PostgreSQL and Redis and verifies SDK / PAM Agent credential switches, see the [database application demo](database_app/README.md).
 
-Applications can connect to JumpServer directly with the Python SDK or run the PAM Agent on the application host. The PAM Agent runs in the foreground on Linux, macOS and Windows; its built-in systemd installer is Linux-only. Application authorization controls on-demand access. The application-level Account credential change notifications switch covers all authorized accounts; A/B switching uses a separately bound rotation policy. Clients receive snapshots and subsequent events over a signed WebSocket. Use credential.updated, snapshot and administrator switch commands to fetch and apply current credentials.
+Applications can connect to JumpServer directly with the Python SDK or run the PAM Agent on the application host. The PAM Agent runs in the foreground on Linux, macOS and Windows; its built-in systemd installer is Linux-only. Application authorization controls on-demand access. The application-level Account credential change notifications switch covers all authorized accounts; A/B switching uses a separately bound rotation policy. Clients receive snapshots and subsequent events over a signed WebSocket. `credential.secret.updated` signals a secret-content update, `credential.switch.published` publishes a target account switch, and `credential.refresh.requested` requests application of the current credentials. These three events, snapshots and administrator switch commands trigger credential fetching and application.
 
 ## Python interface conventions
 
@@ -27,7 +27,6 @@ with Client(instance_id=instance_id, **client_options) as client:
 
 Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.
 
-The original request-object API under `jms_pam.credential.v1` remains available for compatibility and emits `DeprecationWarning`. New integrations use the `Client` API shown here. Regenerate SDK access configuration when migrating to it.
 
 See the policy’s operation guide for its cycle and recovery. Administrator commands and shared protocols are documented in Events and commands below.
 
@@ -204,6 +203,58 @@ When running without root, omit both `store.owner` and `socket.owner` to use the
 
 Run CLI and Socket requests as the configured application user. `get_accounts` lists authorized account metadata; `get_secret` retrieves a secret on demand, including pull-only accounts. It writes the secret to stdout, so use it only in a private terminal. Replace the Socket path in foreground mode.
 
+CLI/Socket secret queries and service credential reads return `account`, `source` and `last_pull_at`. `account.version` is the actual account credential version; ordinary results omit policy revisions, `account_revision` and `event_id`. `source` is `api` for a live Core fetch and `local` for retained data. `last_pull_at` is the RFC 3339 time of the last successful Core credential fetch for that account, even when its version is unchanged. It is retained with cached credentials across restarts; metadata sync, cache reads and failed pulls do not advance it. Older caches without a known pull time trigger one real credential fetch on the next online sync, even if the version is unchanged. Failed fetches leave the time unknown (null) and are retried; after success, unchanged metadata syncs do not fetch again. Pull-only queries do not enable offline credential retention.
+
+`event_id` stays in notification metadata and script notification envelopes for reporting application success/failure; it is not an account field or a global latest-event pointer. Snapshots reuse the latest matching account/version/policy/client event, or create a republished event if none exists. Script readers use `credentials[selector].account`; existing Go templates, field mappings and EnvironmentFile variables keep their existing field names. Existing JSON readers must adopt the nested account structure.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Credential JSON files contain only `account`, with no `source` or `last_pull_at`. Pull times are exported separately to `last_pull_at.json` beside the directory configured by `store.root`, keyed by the actual account ID. The private state retains the same times. A successful live credential fetch updates the diagnostic file immediately, even for the same version, without rewriting credential files. Periodic version checks, cache reads and failed pulls do not advance it. Revoked accounts are removed from the diagnostic file.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
+
 ```bash
 pam-agent get_accounts
 pam-agent get_secret '<account-id>'
@@ -229,7 +280,7 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.
 
-New configurations use `update_config` → `reload_service` → `app_check`: update the business file, reload/restart the service (or run a fixed script), then verify the running application. These names require an updated PAM Agent. `services` accepts only these three step names; old names are rejected.
+New configurations use `update_config` → `reload_service` → `app_check`: update the business file, reload/restart the service (or run a fixed script), then verify the running application. These names require an updated PAM Agent.
 
 | Configure and run | Update business configuration and A/B rotation |
 | --- | --- |
@@ -387,12 +438,24 @@ Example stdin payload (excerpt):
 
 ```json
 {
-  "event": "credential.updated",
+  "event": "credential.refresh.requested",
   "credentials": {
     "<primary-account-id>": {
-      "account_id": "<active-account-id>",
-      "username": "db_app",
-      "secret": "<password>",
+      "account": {
+        "id": "<active-account-id>",
+        "name": "database",
+        "username": "db_app",
+        "secret_type": "password",
+        "secret": "<password>",
+        "version": 3,
+        "asset": {
+          "id": "<asset-id>",
+          "name": "database-server",
+          "address": "10.0.0.10"
+        }
+      },
+      "source": "local",
+      "last_pull_at": "2026-10-30T06:30:00Z",
       "event_id": "<event-id>"
     }
   }
@@ -412,7 +475,7 @@ import tempfile
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-credential = payload["credentials"]["<primary-account-id>"]
+credential = payload["credentials"]["<primary-account-id>"]["account"]
 target = Path(sys.argv[1])
 original = target.stat()
 with target.open(encoding="utf-8") as source:
@@ -608,7 +671,7 @@ with ApplicationClient(instance_id=instance_id, **client_options) as client:
 ```
 <!-- python-events-example:end -->
 
-The account callback runs serially behind a bounded event queue. Failed account updates retry with 1–30 second backoff. Success is reported only after the business callback returns; a failed result upload retries the upload without repeating a completed action in the same listener. Commands execute only after an accepted claim; failed command actions are not automatically repeated. Applied accounts are reported as a complete usage snapshot; A/B switches replace the current account. Implement revoked-account cleanup for scope removals. Usage reporting, fetches and file delivery never themselves confirm application success. Low-level streams and legacy credential hooks retain explicit confirmation. Business handlers must remain idempotent across restarts.
+The account callback runs serially behind a bounded event queue. Failed account updates retry with 1–30 second backoff. Success is reported only after the business callback returns; a failed result upload retries the upload without repeating a completed action in the same listener. Commands execute only after an accepted claim; failed command actions are not automatically repeated. Applied accounts are reported as a complete usage snapshot; A/B switches replace the current account. Implement revoked-account cleanup for scope removals. Usage reporting, fetches and file delivery never themselves confirm application success. Business handlers must remain idempotent across restarts.
 
 ### Lifecycle and shutdown
 
@@ -623,7 +686,7 @@ SDK credential getters request the API first. A successful fetch replaces the re
 - `account.from_local`
 - `get_account(account_id=..., allow_local_fallback=False)`
 
-With managed event listening enabled, snapshot and credential.updated automatically fetch the current credential, replace the retained value and then invoke the business hook. A failed refresh leaves the previous value in place and retries. The PAM Agent also refetches on update notifications and retains its previous credentials during backend outages. Refresh and manual switching use the live-only calls below; a retained password must not be treated as a newly fetched revision or automatically confirmed.
+With managed event listening enabled, snapshot and credential.secret.updated / credential.switch.published / credential.refresh.requested automatically fetch the current credential, replace the retained value and then invoke the business hook. A failed refresh leaves the previous value in place and retries. The PAM Agent also refetches on update notifications and retains its previous credentials during backend outages. Refresh and manual switching use the live-only calls below; a retained password must not be treated as a newly fetched revision or automatically confirmed.
 
 
 
@@ -675,7 +738,7 @@ with Client(instance_id=instance_id, **client_options) as client:
 
 ### Application status reporting
 
-Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Python, Java and Node.js return false on network/API failures, including an older Core without this endpoint; Go provides `TryReportStatus` for the same behavior. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
+Report a complete snapshot of the application state and the account IDs currently in use. States: `starting`, `running`, `degraded`, `stopping`, `stopped`, `error`. An empty account list clears previous usage. Call on state changes or from your own heartbeat; no background reporting is started. Strict variants expose failure details. Invalid arguments are rejected. Requests use the configured HTTP timeout; keep reporting off latency-sensitive paths. Reporting never fetches secrets, confirms rotation or invalidates retained credentials. Use machine-readable `error_code` only, without secrets or exception messages. `get_client_info` / `GetClientInfo` / `getClientInfo` return the last reported snapshot and its timestamp.
 
 ```python
 client.report_accounts([account.id])
@@ -709,7 +772,7 @@ client.report_status("degraded", account_ids=[account.id], error_code="db_unavai
 
 The client closes HTTP sessions and event streams with with or close. clone creates an independent session. HTTP, network, authentication and decoding failures raise PAMError with code, status_code, detail and original_error. Retry transient errors at the application boundary; handle authorization denial explicitly and keep credentials out of logs.
 
-All SDKs use protocol version 1; PAM Agent configuration uses schema version 1. A client_upgrade_required response (HTTP 426) requires checking compatibility and upgrading. Unknown optional fields and notification events are tolerated; unsupported policy modes must not be applied or confirmed. Received event receipts are sent automatically and do not prove credential application. Client metadata may include server_capabilities. Missing or null means unknown; unknown names are tolerated. Capabilities describe server features, not authorization.
+
 
 <!-- sdk-doc:end -->
 
@@ -725,22 +788,26 @@ All SDKs use protocol version 1; PAM Agent configuration uses schema version 1. 
 
 ## Choose an integration
 
-| Method | Use when | Start here |
+Choose by who applies PAM-managed usernames and passwords to the service. Socket API is an application integration through PAM Agent: the application calls a local API while the Agent handles communication with PAM.
+
+| Method | Integration characteristics | Responsibilities |
 | --- | --- | --- |
-| SDK | You can change the application code and let it connect to JumpServer. | Select SDK integration and your programming language. Implement a managed account-change callback for automatic updates. |
-| PAM Agent | You need local credential files, business configuration updates or a local Socket, and want to keep JumpServer keys outside business code. | Select Agent integration, install the Agent and configure store, socket and services as needed. |
-| Socket API | Business-managed connections through the local Agent; no JumpServer SDK or AK/SK in the business. | Socket API access; declare a service with delivery: socket. |
+| PAM Agent | Integrate through configuration, templates or adaptation scripts; suitable for existing services. | The Agent retrieves and refreshes the accounts required by the service. Configure field mappings, templates or adaptation scripts to update service configuration, reload or restart the service, and verify that the credentials are in use. |
+| SDK | Use the SDK for the application language and call it directly from business code. | The application embeds a language-specific SDK and connects directly to PAM. The SDK handles PAM communication and event processing; the application implements connection validation, credential changes and release of old connections in business callbacks. |
+| Socket API | Cross-language integration without embedding a JumpServer SDK; the Agent can be upgraded independently of the application. | The application uses HTTP / WebSocket over the local Agent's Unix Socket to retrieve credentials, receive notifications and report results. The Agent handles PAM authentication, credential refresh and reporting retries; the application validates and switches its own connections. |
+
+Agent automation follows the configured service adaptation and checks. For every method, successful credential retrieval or delivery alone does not prove that the service has switched successfully.
 
 ## Setup and acceptance
 
 1. Create an application, authorize accounts and download its private identity configuration.
-2. Choose SDK or PAM Agent, install the matching client, fetch an account and verify a real connection.
-3. For automatic updates, enable application notifications and implement the business change. For A/B switching, also bind a rotation policy and enable following its current account.
+2. Choose Agent service adaptation, an embedded SDK or the Agent's Socket API according to who will apply credentials. Install the matching components, fetch an account and verify a real connection.
+3. For automatic updates, enable application notifications and configure Agent business actions or implement application connection changes. For A/B switching, also bind a rotation policy and enable following its current account.
 4. Verify one account update or A/B switch: the application uses the new credential, old connections are released and the business result is successful. Reception, fetching and file delivery alone are insufficient.
 
 ## Where to find the details
 
-Agent integration covers deployment, files, local APIs and business actions. SDK integration covers installation, managed callbacks and language-specific APIs. Events and commands is the shared reference for event payloads, snapshots, receipts and administrator commands. The operation guide inside each rotation policy explains its own cycle, blockers and recovery.
+Agent integration covers deployment and service adaptation: credential files, configuration updates, reload/restart actions and validation. SDK integration covers language-specific installation and business callbacks. Socket API access covers local API calls, credential retrieval, notifications, business results and A/B switching. Events and commands is the shared reference for event payloads, snapshots, receipts and administrator commands. The operation guide inside each rotation policy explains its own cycle, blockers and recovery.
 
 <!-- overview-doc:end -->
 
@@ -754,27 +821,29 @@ This reference applies to all SDK languages and PAM Agent. Prefer managed SDK ca
 
 | Event | Responsibility |
 | --- | --- |
-| credential.updated and snapshot items | Fetch the named account, verify its version, apply it and report the business result. Managed SDK callbacks handle the protocol. |
+| credential.secret.updated / credential.switch.published / credential.refresh.requested and snapshot items | Fetch the named account, verify its version, apply it and report the business result. Managed SDK callbacks handle the protocol. |
 | app.scope.updated | Reconcile scope and remove invalid state. Removing a rotation binding does not revoke account authorization. |
 | `rotation.*` (such as `rotation.started` and `rotation.completed`), `credential.change.*` (such as `credential.change.started` and `credential.change.completed`) | Update progress, logs or alerts. Do not repeat credential application or confirm business success for these notifications. |
 | credential.switch.requested and app.restart.requested | Administrator commands for selected instances: claim, execute and report the command result. |
 
 ## Complete event catalog
 
-Every Core application event, administrator command and connection control message is listed below, with compatibility entries separated. This is the complete reference; rotation details explain how the events relate to that policy workflow.
+Current application events, rotation operation commands and connection control messages. Rotation details display progress; each event has one execution responsibility.
 
 ### Credential and scope events
 
-credential.updated applies credentials. app.scope.updated and snapshot reconcile scope: detach a missing rotation policy while preserving use of authorized accounts. Only actual account authorization removal disables local access, clears retained credentials and asks the application to release connections.
+credential.secret.updated / credential.switch.published / credential.refresh.requested applies credentials. app.scope.updated and snapshot reconcile scope: detach a missing rotation policy while preserving use of authorized accounts. Only actual account authorization removal disables local access, clears retained credentials and asks the application to release connections.
 
 | Event code | Meaning |
 | --- | --- |
-| `credential.updated` | Current credentials or published account changed; fetch and apply the named account. |
+| `credential.secret.updated` | The account secret version changed. Fetch and apply the named account; this does not change the selected account. |
+| `credential.switch.published` | A target account and policy revision were published for switching, including return to the source account. Fetch and apply the named target; publication is not application success. |
+| `credential.refresh.requested` | Fetch and apply the currently published credentials for an authorization grant, manual refresh or snapshot reconciliation. This does not mean the password changed or a rotation started. |
 | `app.scope.updated` | Account authorization, notification settings or rotation bindings changed. Use authorized_account_ids to determine account access, then snapshot to reconcile notifications and rotation following. Removing a binding must not close an otherwise authorized account connection. |
 
 ### General password-change events
 
-General task lifecycle notifications for progress and alerts. Do not fetch again or report application success for these notifications; apply credentials on credential.updated or snapshot.
+General task lifecycle notifications for progress and alerts. Do not fetch again or report application success for these notifications; apply credentials on credential.secret.updated / credential.switch.published / credential.refresh.requested or snapshot.
 
 | Event code | Meaning |
 | --- | --- |
@@ -784,7 +853,7 @@ General task lifecycle notifications for progress and alerts. Do not fetch again
 
 ### Rotation progress events
 
-These notifications explain cycle progress and outcomes. Application switching follows credential.updated or snapshot, not a second action on each progress event.
+These notifications explain cycle progress and outcomes. Application switching follows credential.secret.updated / credential.switch.published / credential.refresh.requested or snapshot, not a second action on each progress event.
 
 | Event code | Meaning |
 | --- | --- |
@@ -794,19 +863,26 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observing successful secret fetches for the original account after publication. |
+| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
 | `rotation.force_stopped` | An administrator ended the cycle without waiting for remaining recovery confirmations. |
 
-### Administrator command events
+### Manual account rotation operations
 
-Claim with running, execute only when accepted is true, then report the command result. These are independent of automatic rotation progress.
+credential.switch.requested asks selected instances to apply the account and revision already published by the rotation policy. Administrators can manually apply or retry the switch; the command does not start a new rotation.
 
 | Event code | Meaning |
 | --- | --- |
 | `credential.switch.requested` | Apply the already published account and version on selected instances; this does not start a rotation. |
+
+### Application operation commands
+
+app.restart.requested restarts the application and verifies its health. Manual account switching belongs to the account rotation operations above.
+
+| Event code | Meaning |
+| --- | --- |
 | `app.restart.requested` | Execute the supported application restart action and verify health. |
 
 ### Connection and receipt messages
@@ -819,27 +895,6 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
-
-### Compatibility events
-
-Legacy event names and old preparation-cycle entries, not a workflow for new integrations. Current Core no longer emits credential.revoked; new rotation cycles verify the backup before publishing the switch.
-
-| Event code | Meaning |
-| --- | --- |
-| `credential.revoked` | Retired: current Core no longer sends this event. Use app.scope.updated and snapshot; retained only for older Core integrations and historical records. |
-| `configuration.updated` | Legacy event name, normalized to `app.scope.updated`. |
-| `rotation.preparation.started` | Legacy preparation began aligning applications to the current account. |
-| `rotation.accounts.aligned` | Applications finished alignment in the legacy preparation flow. |
-| `rotation.standby.waiting` | Legacy preparation is observing secret fetches for the standby account. |
-| `rotation.preparation.ready` | Legacy preparation is ready; no switch or password change is implied. |
-| `rotation.preparation.cancelled` | Legacy preparation was cancelled. |
-| `rotation.verification.started` | Legacy event name, normalized to `rotation.verify.started`. |
-| `rotation.verification.failed` | Legacy event name, normalized to `rotation.verify.failed`. |
-| `rotation.verification.cancelled` | Legacy event name, normalized to `rotation.verify.cancelled`. |
-| `application.scope.updated` | Legacy event name, normalized to `app.scope.updated`. |
-| `application.restart.requested` | Legacy event name, normalized to `app.restart.requested`. |
-| `rotation.waiting_for_application` | Legacy event name, normalized to `rotation.waiting_for_app`. |
-| `rotation.verification.skipped` | Legacy event name, normalized to `rotation.verify.skipped`. |
 
 ## Payload fields
 
@@ -856,7 +911,7 @@ Legacy event names and old preparation-cycle entries, not a workflow for new int
 
 ## Snapshots and authorization
 
-Core sends snapshot on connection, reconnection and scope changes. Its credentials include all authorized accounts when application notifications are enabled, plus active authorized A/B rotation policies bound to the application. Process each item like credential.updated using event_id, account_id and account_revision. The snapshot also includes authorized_account_ids; get_accounts lists authorized account metadata. Removing a rotation policy binding does not revoke account authorization.
+Core sends snapshot on connection, reconnection and scope changes. Its credentials include all authorized accounts when application notifications are enabled, plus active authorized A/B rotation policies bound to the application. Process each item like credential.secret.updated / credential.switch.published / credential.refresh.requested using event_id, account_id and account_revision. The snapshot also includes authorized_account_ids; get_accounts lists authorized account metadata. Removing a rotation policy binding does not revoke account authorization.
 
 ```json
 {
@@ -880,28 +935,19 @@ The SDK automatically sends a best-effort received receipt before yielding a bus
 
 Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
 
-## Administrator commands
+## Command execution and results
 
-Administrators send commands from the application’s Send event action and choose instances and an expiry time.
+Administrators select target instances and an expiry time. Use credential.switch.requested to apply the published rotation target, and app.restart.requested for application operations.
 
-- credential.switch.requested asks the instance to apply the rotation policy’s **already published** account and version. It does not start a rotation or select another account.
-- app.restart.requested asks the application to run its supported restart action and verify health. The SDK application must implement that handler; Agent support depends on its local service configuration.
+1. Poll GET /api/v1/accounts/credential-client/commands/ or receive commands through WebSocket.
+2. Claim through POST /api/v1/accounts/credential-client/command-result/ with status: running. Execute only when accepted is true.
+3. Report success after actual switching or a successful restart health check; report failed with a safe error code on failure.
 
-Managed SDK handlers claim and report commands automatically. Raw consumers use the signed client API:
+Managed SDK callbacks claim and report automatically. received means receipt only. Automatic rotation progress events update progress without repeating command execution.
 
-1. GET /api/v1/accounts/credential-client/commands/ with instance_id to poll pending commands; connected instances can also receive them over WebSocket.
-2. POST /api/v1/accounts/credential-client/command-result/ with instance_id, command_id and status: running. Execute only if accepted is true.
-3. After actual application switching or a successful restart health check, report status: success through the same command-result API; on failure report failed with a safe error_code. A received receipt or confirm_event alone does not replace command-result reporting.
-
-Expired commands cannot be claimed. Duplicate delivery must not repeat a claimed action. Failed command actions are not automatically repeated; inspect the application before sending a new restart request.
-
-## Connection liveness and compatibility
+## Connection liveness
 
 Event connections send application ping messages at 10-second intervals while idle and reconnect after approximately 30 seconds without messages. Reconnect uses 1–30 second exponential backoff and fresh signatures. Reconnect snapshots restore current state; past events are not replayed.
-
-Current names are app.scope.updated, app.restart.requested, rotation.verify.started/failed/cancelled and rotation.waiting_for_app. Old application prefixes, rotation.verification names and configuration.updated normalize to the new names without changing event IDs. credential.revoked is no longer emitted and remains only for older Core integrations and historical records.
-
-`get_credential` and key-based confirmation remain available for older integrations. New integrations use `get_account` and `confirm_event`. The event-result workflow requires the corresponding Core update; SDK 1.0.2 alone cannot add this server capability.
 
 <!-- protocol-doc:end -->
 
@@ -968,7 +1014,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -1014,6 +1060,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+CLI/Socket secret queries and service credential reads return `account`, `source` and `last_pull_at`. `account.version` is the actual account credential version; ordinary results omit policy revisions, `account_revision` and `event_id`. `source` is `api` for a live Core fetch and `local` for retained data. `last_pull_at` is the RFC 3339 time of the last successful Core credential fetch for that account, even when its version is unchanged. It is retained with cached credentials across restarts; metadata sync, cache reads and failed pulls do not advance it. Older caches without a known pull time trigger one real credential fetch on the next online sync, even if the version is unchanged. Failed fetches leave the time unknown (null) and are retried; after success, unchanged metadata syncs do not fetch again. Pull-only queries do not enable offline credential retention.
+
+`event_id` stays in notification metadata and script notification envelopes for reporting application success/failure; it is not an account field or a global latest-event pointer. Snapshots reuse the latest matching account/version/policy/client event, or create a republished event if none exists. Script readers use `credentials[selector].account`; existing Go templates, field mappings and EnvironmentFile variables keep their existing field names. Existing JSON readers must adopt the nested account structure.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Credential JSON files contain only `account`, with no `source` or `last_pull_at`. Pull times are exported separately to `last_pull_at.json` beside the directory configured by `store.root`, keyed by the actual account ID. The private state retains the same times. A successful live credential fetch updates the diagnostic file immediately, even for the same version, without rewriting credential files. Periodic version checks, cache reads and failed pulls do not advance it. Revoked accounts are removed from the diagnostic file.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

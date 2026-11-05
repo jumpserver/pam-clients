@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+CLI/Socket 取密及業務憑據讀取回傳 `account`、`source`、`last_pull_at`。`account.version` 是實際帳號的憑據版本；一般結果不再包含策略版本、`account_revision` 或 `event_id`。`source` 為 `api` 表示即時從 Core 取密，`local` 表示讀取本機快取。`last_pull_at` 是該帳號最後成功從 Core 取密的 RFC 3339 時間，即使版本相同仍會更新；隨快取持久化並於重新啟動後保留。中繼資料同步、快取讀取及失敗請求均不更新時間。舊快取缺少時間時，下次線上同步會實際取密一次並補齊，即使版本相同；離線或取密失敗仍回傳 null，之後同步重試。成功補齊後，版本相同不再重複取密。僅按需取密不會啟用離線憑據保留。
+
+`event_id` 留在通知中繼資料及腳本通知外層，用於回報套用結果，不屬於帳號欄位。快照重用符合帳號、版本、策略及用戶端的最新事件，無符合項目則建立補發事件。腳本透過 `credentials[selector].account` 讀取；既有 Go 範本、欄位映射及 EnvironmentFile 變數保留原名稱。既有 JSON 讀取程式需適配巢狀 account 結構。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+憑據 JSON 檔案只保留 `account`，不顯示 `source` 或 `last_pull_at`。拉取時間集中寫到 `store.root` 目錄同層的 `last_pull_at.json`，依實際帳號 ID 記錄，私有狀態亦保留。即時取密成功時，即使版本相同，也立即更新診斷檔案，不改寫憑據檔案。僅核對版本、讀取快取或取密失敗均不更新時間；撤銷帳號時移除對應記錄。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

@@ -1,6 +1,6 @@
 # cURL — 使用指南
 
-本目錄提供舊 account-secret API 的 HTTP 簽章偵錯腳本。應用程式整合請使用 Python、Go、Java 或 Node.js SDK。
+使用签名 HTTP 请求读取应用授权账号的当前凭据。
 
 ## 環境需求
 
@@ -11,7 +11,7 @@
 
 ## 設定與執行
 
-在應用程式管理中建立應用程式並授權目標資產帳號。填入下方端點、應用程式 AK/SK 和組織 ID；執行前將所有預留位置替換為實際值。
+设置服务端、应用身份、组织、实例 ID 和账号 ID。
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-範例預設查詢資產 ubuntu_docker 和帳號 root，請改為實際授權名稱。以下指令從儲存庫根目錄開始執行。範例輸出包含密碼，不要傳送到應用程式日誌。
+设置服务端、应用身份、组织、实例 ID 和账号 ID。
 
 ## 請求與回應
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-回應 id 表示應用程式身分，不表示帳號版本；secret 為 null 時可能受伺服器密碼檢視設定限制。這些範例不接收憑證事件、不回報生效版本，也不執行應用程式指令。
+响应包含账号、资产及凭据版本；密码仅通过签名取密接口返回。
 
 ## 問題排查
 
-401 時檢查 AK/SK、組織、主機時間及簽章 URL；403 時檢查應用程式狀態與帳號授權；400 時檢查資產/帳號選擇參數與 URL 編碼。不要記錄密碼或 Authorization 標頭，資產名及帳號名應符合獲授權資源。
+检查身份、授权、签名和实例 ID。
 
 ## 憑證策略接入
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 使用 `account_id` 取得事件指定帳號。完成連線驗證與切換後，透過 `event_id` 回報 `success` 或 `failed`；收到事件或取密成功不代表套用成功。事件與重連快照包含 `event_id`、`account_id`、`account_revision`，套用前須檢查帳號版本。指令先以 `running` 認領；處理須具冪等性。
 
-received 回執僅表示已讀取事件。處理帶 event_id 的業務事件前，在同一 WebSocket 傳送 received；snapshot 和 pong 無需回執。每次連線或重新連線都同步快照，處理 credential.updated，並回應授權撤銷及設定變更。
+received 回執僅表示已讀取事件。處理帶 event_id 的業務事件前，在同一 WebSocket 傳送 received；snapshot 和 pong 無需回執。每次連線或重新連線都同步快照，處理 credential.secret.updated / credential.switch.published / credential.refresh.requested，並回應授權撤銷及設定變更。

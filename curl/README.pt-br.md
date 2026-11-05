@@ -1,6 +1,6 @@
 # cURL — Guia de uso
 
-Este diretório contém um script HTTP assinado para diagnosticar a API legada account-secret. Para integrar aplicações, use o SDK Python, Go, Java ou Node.js.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## Requisitos
 
@@ -11,7 +11,7 @@ O script exige Bash, cURL, OpenSSL e base64. Substitua ASSET e ACCOUNT e confira
 
 ## Configurar e executar
 
-Crie uma aplicação em Gerenciamento de aplicações e autorize as contas de destino. Configure URL, AK/SK da aplicação e ID da organização; substitua todos os valores de exemplo antes de executar.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-Os exemplos consultam o ativo ubuntu_docker e a conta root por padrão. Substitua-os por nomes reais autorizados. Execute os comandos da raiz do repositório. A saída contém segredos; não a envie aos logs da aplicação.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## Requisição e resposta
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-O campo id identifica a aplicação, não uma revisão da conta. Um segredo null pode decorrer da configuração de visualização de segredos do servidor. Estes exemplos não recebem eventos, não informam revisões aplicadas nem executam comandos de aplicação.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## Solução de problemas
 
-Para 401, verifique AK/SK, organização, horário do host e URL assinada. Para 403, verifique o estado da aplicação e autorização das contas. Para 400, verifique seletores e codificação da consulta. Não registre segredos nem cabeçalhos Authorization. Os nomes devem corresponder aos recursos autorizados.
+Check identity, authorization, signature and instance ID.
 
 ## Acesso a políticas de credenciais
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 Busque a conta com `account_id`. Valide e aplique a mudança antes de informar `success` ou `failed` com `event_id`. Receber ou buscar não significa aplicar. Eventos e snapshots incluem `event_id`, `account_id` e `account_revision`; verifique a versão. Reivindique comandos com `running` e use operações idempotentes.
 
-Um recibo received indica apenas que um evento foi lido. Envie received com event_id no mesmo WebSocket antes de processar eventos de negócio; snapshot e pong não exigem recibo. Reconcilie snapshot em cada conexão ou reconexão, processe credential.updated e trate revogações e alterações de configuração.
+Um recibo received indica apenas que um evento foi lido. Envie received com event_id no mesmo WebSocket antes de processar eventos de negócio; snapshot e pong não exigem recibo. Reconcilie snapshot em cada conexão ou reconexão, processe credential.secret.updated / credential.switch.published / credential.refresh.requested e trate revogações e alterações de configuração.

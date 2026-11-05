@@ -24,7 +24,7 @@ function client(instanceId = 'node', source = 'jms-pam') {
   })
 }
 
-test('compatibility errors preserve cached values without accepting stale data as a successful upgrade', async () => {
+test('HTTP errors fail without returning cached values', async () => {
   const instance = 'node-compat-cycle'
   const sdk = client(instance)
   const control = async fault => {
@@ -36,14 +36,14 @@ test('compatibility errors preserve cached values without accepting stale data a
     const initial = await sdk.getAccount({ accountId: 'account' })
     await control(426)
     for (const allowLocalFallback of [true, false]) {
-      await assert.rejects(sdk.getAccount({ accountId: 'account', allowLocalFallback }), error => error instanceof PAMError && error.isCompatibilityError)
+      await assert.rejects(sdk.getAccount({ accountId: 'account', allowLocalFallback }), error => error instanceof PAMError && error.statusCode === 426)
     }
     await control(503)
     const retained = await sdk.getAccount({ accountId: 'account' })
     assert.equal(retained.fromLocal, true)
     assert.equal(retained.secret, initial.secret)
     await control(401)
-    await assert.rejects(sdk.getAccount({ accountId: 'account' }), error => error instanceof PAMError && !error.isCompatibilityError)
+    await assert.rejects(sdk.getAccount({ accountId: 'account' }), error => error instanceof PAMError && error.statusCode !== 426)
     await control(503)
     await assert.rejects(sdk.getAccount({ accountId: 'account' }), PAMError)
   } finally { sdk.close() }
@@ -302,7 +302,7 @@ test(
       }
       assert.deepEqual(
         events.map((event) => event.event),
-        ['snapshot', 'credential.updated', 'future.notification', 'snapshot'],
+        ['snapshot', 'credential.secret.updated', 'future.notification', 'snapshot'],
       )
       assert.equal(events[3].credentials[0].revision, 3)
       assert.equal(events[2].futurePayload.notice, 'preserved')

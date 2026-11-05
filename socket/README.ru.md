@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+Запросы CLI/Socket и чтение данных сервисами возвращают `account`, `source` и `last_pull_at`. `account.version` — версия учётных данных самой записи; обычные результаты не содержат версию политики, `account_revision` и `event_id`. `source` равен `api` при запросе Core и `local` для кэша. `last_pull_at` — время последнего успешного получения данных этой записи из Core в формате RFC 3339, даже если версия не изменилась. Оно сохраняется с кэшем после перезапуска. Синхронизация метаданных, чтение кэша и ошибки его не обновляют. Старый кэш без известного времени возвращает null. Запрос по требованию сам по себе не включает автономное хранение.
+
+`event_id` остаётся в метаданных уведомлений и оболочках скриптов для отчёта о результате. Снимок повторно использует последнее событие с подходящими записью, версией, политикой и клиентом либо создаёт событие повторной публикации. Скрипты читают `credentials[selector].account`. Имена полей Go-шаблонов, сопоставлений и EnvironmentFile сохраняются. Читатели JSON должны перейти на вложенную структуру account.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+JSON-файлы учётных данных содержат только `account`, без `source` и `last_pull_at`. Время получения экспортируется по фактическому ID записи в `last_pull_at.json` рядом с каталогом `store.root` и сохраняется в закрытом состоянии. Успешный прямой запрос сразу обновляет диагностику даже при той же версии, не перезаписывая файлы учётных данных. Проверки версий, чтение кэша и ошибки время не меняют. Отозванные записи удаляются из диагностики.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

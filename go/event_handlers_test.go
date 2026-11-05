@@ -61,7 +61,7 @@ func TestUpdateEventRefreshesLatestAndOnlyBackendOutageUsesLocal(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("Initial fetch did not complete")
 	}
-	controlBackend(t, instance, url.Values{"revision": {"3"}, "event": {"credential.updated"}})
+	controlBackend(t, instance, url.Values{"revision": {"3"}, "event": {"credential.secret.updated"}})
 	for {
 		select {
 		case value := <-updates:
@@ -139,7 +139,7 @@ func TestLatestCredentialRetentionRevocationAndClone(t *testing.T) {
 			}
 			switch change {
 			case "revoked":
-				client.reconcileLatestCredentials(Event{Event: "credential.revoked"})
+				client.reconcileLatestCredentials(Event{Event: "app.scope.updated", AuthorizedAccountIDs: []string{}})
 			case "scope":
 				client.reconcileLatestCredentials(Event{Event: "snapshot"})
 			case "configuration":
@@ -171,7 +171,7 @@ func TestPolicyRevocationPreservesIndependentAccountPull(t *testing.T) {
 	client.latestCredentials[CredentialSelector{Key: value.Key}] = value
 	client.latestCredentials[CredentialSelector{AccountID: "account"}] = Credential{Key: "account:account", Account: Account{ID: "account"}}
 	client.latestCredentials[CredentialSelector{Key: "other"}] = Credential{Key: "other"}
-	client.reconcileLatestCredentials(Event{Event: "credential.revoked", CredentialKey: "policy"})
+	client.reconcileLatestCredentials(Event{Event: "snapshot", Credentials: []Event{{Key: "other"}}, AuthorizedAccountIDs: []string{"account", ""}})
 	if len(client.latestCredentials) != 2 || client.latestCredentials[CredentialSelector{Key: "other"}].Key != "other" ||
 		client.latestCredentials[CredentialSelector{AccountID: "account"}].Account.ID != "account" {
 		t.Fatal("Policy revocation did not remove the push key or cleared independent pull")
@@ -300,11 +300,11 @@ func TestManagedRejectsOutdatedRevision(t *testing.T) {
 	watcher := &EventWatcher{client: client, ctx: ctx, cancel: cancel, pending: make(map[CredentialSelector]pendingCredential)}
 	called := false
 	watcher.handlers = EventHandlers{OnCredentialChanged: func(context.Context, Credential) error { called = true; return nil }, OnError: func(context.Context, error, *Event) {}}
-	watcher.dispatch(Event{Event: "credential.updated", CredentialMode: "alternating_rotation", Key: "db", Revision: 3})
+	watcher.dispatch(Event{Event: "credential.secret.updated", CredentialMode: "alternating_rotation", Key: "db", Revision: 3})
 	if called || len(watcher.pending) != 1 {
 		t.Fatal("Outdated credential was applied")
 	}
-	watcher.dispatch(Event{Event: "credential.updated", CredentialMode: "alternating_rotation", Key: "db", Revision: 2})
+	watcher.dispatch(Event{Event: "credential.secret.updated", CredentialMode: "alternating_rotation", Key: "db", Revision: 2})
 	if called || watcher.pending[CredentialSelector{Key: "db"}].update.Revision != 3 {
 		t.Fatal("An older event cancelled the newer revision retry")
 	}

@@ -366,7 +366,7 @@ func (c *Client) getCredential(ctx context.Context, selector CredentialSelector,
 			clear(c.latestCredentials)
 			c.credentialGeneration++
 		}
-		temporary := !failure.IsCompatibilityError() && (failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600))
+		temporary := ((failure.Code == "NetworkError" && (failure.StatusCode == 0 || (failure.StatusCode >= 200 && failure.StatusCode < 300))) || (failure.StatusCode >= 500 && failure.StatusCode < 600))
 		latest, found := c.latestCredentials[selector]
 		if allowLocalFallback && temporary && !denied && !c.closed && ctx.Err() == nil && found {
 			value = latest

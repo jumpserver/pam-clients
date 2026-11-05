@@ -146,7 +146,7 @@ SDK 取密先請求 API，成功後替換保留值，不讓舊版本覆蓋新版
 - `account.isFromLocal()`
 - `getAccount(accountId, false)`
 
-啟用高層監聽後，snapshot、credential.updated 自動取密、替換保留值，再呼叫業務函式。刷新失敗保留上一份並重試。PAM Agent 也在更新通知後主動取密，後端故障時保留已有值。刷新與手動切換使用下方即時取得的呼叫；本地保留值不代表剛取得新版本，亦不自動確認輪換。
+啟用高層監聽後，snapshot、credential.secret.updated / credential.switch.published / credential.refresh.requested 自動取密、替換保留值，再呼叫業務函式。刷新失敗保留上一份並重試。PAM Agent 也在更新通知後主動取密，後端故障時保留已有值。刷新與手動切換使用下方即時取得的呼叫；本地保留值不代表剛取得新版本，亦不自動確認輪換。
 
 
 
@@ -265,7 +265,7 @@ HTTP、網路、認證及解碼錯誤使用 SDK 例外或錯誤類型，包含�
 
 `PAMException`
 
-各 SDK 使用版本 1 協定，PAM Agent 設定格式為版本 1。收到 client_upgrade_required（HTTP 426）時檢查相容性並升級。允許未知可選欄位及通知事件，未實作的策略類型不得套用或確認。SDK 自動傳送接收回執，不能作為憑證已生效的證明。 實例資訊可包含 server_capabilities；缺失或 null 表示未知，未知名稱可保留。能力清單描述伺服器功能，不授予權限。
+
 
 <!-- sdk-doc:end -->
 
@@ -281,22 +281,26 @@ HTTP、網路、認證及解碼錯誤使用 SDK 例外或錯誤類型，包含�
 
 ## 选择接入方式
 
-| 接入方式 | 适用情况 | 从哪里开始 |
+依「由誰將 PAM 管理的帳號密碼套用至業務服務」選擇接入方式。Socket API 屬於透過 PAM Agent 接入的方式：應用程式呼叫本機 API，由 Agent 負責與 PAM 通訊。
+
+| 接入方式 | 接入特點 | 職責分工 |
 | --- | --- | --- |
-| SDK | 可以修改业务代码，由应用直接连接 JumpServer。 | 选择“SDK 接入”和编程语言，需要自动更新时实现托管账号变更回调。 |
-| PAM Agent | 需要本地凭据文件、业务配置更新或本地 Socket，希望将 JumpServer 密钥保留在独立 Agent 中。 | 选择“Agent 接入”，安装后按需配置 store、socket 和 services。 |
-| Socket API | Business-managed connections through the local Agent; no JumpServer SDK or AK/SK in the business. | Socket API access; declare a service with delivery: socket. |
+| PAM Agent | 透過設定、範本或適配指令碼接入，適合既有業務服務。 | Agent 取得並更新業務需要的帳號密碼，依設定透過欄位對應、範本或適配指令碼更新業務設定，執行服務重新載入或重新啟動，並驗證憑據生效。 |
+| SDK | 使用對應語言的 SDK，便於在業務程式碼中直接呼叫。 | 業務服務引入對應語言的 SDK，直接連線至 PAM。SDK 處理 PAM 通訊及事件機制；服務本身在業務回呼中實作連線驗證、憑據切換及舊連線釋放。 |
+| Socket API | 支援跨語言接入，減少業務對 JumpServer SDK 的依賴，Agent 可獨立於業務應用程式升級。 | 應用程式透過本機 Agent 的 Unix Socket HTTP / WebSocket 介面取得憑據、接收通知及回報結果。Agent 處理 PAM 驗證、憑據更新及結果回報重試；應用程式自行驗證及切換業務連線。 |
+
+Agent 的自動處理以設定的服務適配及檢查為準。三種方式都需要驗證業務實際使用了新憑據，僅取得或交付成功不代表業務切換成功。
 
 ## 接入与验收顺序
 
-1. 创建应用，授权账号，下载并保护应用身份配置。
-2. 选择 SDK 或 PAM Agent，安装匹配客户端，先获取一个账号并验证真实连接。
-3. 需要自动更新时，开启应用通知并实现业务更新；需要 A/B 切换时，再绑定轮换策略并允许跟随当前账号。
-4. 验证一次账号更新或 A/B 切换：运行中的业务采用新凭据、旧连接释放、业务处理结果成功。仅接收事件、取密或写文件不足以通过验收。
+1. 建立應用程式，授權帳號，下載並保護應用程式身分設定。
+2. 依套用憑據的責任分工，選擇 Agent 適配服務、業務整合 SDK，或透過 Agent 的 Socket API 互動。安裝對應元件，先取得一個帳號並驗證實際連線。
+3. 需要自動更新時，開啟應用程式通知，設定 Agent 業務動作或實作應用程式本身的連線切換；需要 A/B 切換時，再繫結輪換策略並允許跟隨目前帳號。
+4. 驗證一次帳號更新或 A/B 切換：執行中的業務採用新憑據、舊連線釋放、業務處理結果成功。僅接收事件、取得憑據或寫入檔案不足以通過驗收。
 
 ## 后续查阅位置
 
-“Agent 接入”说明安装、文件存储、本地接口和业务动作；“SDK 接入”说明各语言安装、托管回调和 API；“事件与指令”集中解释通用事件数据、快照、回执及手动指令。每个账号切换策略内的“轮换运行说明”解释该策略的周期、阻塞和恢复。
+「Agent 接入」說明部署及業務服務適配，包括憑據檔案、設定更新、重新載入或重新啟動及生效檢查；「SDK 接入」說明各語言安裝及業務回呼；「Socket API 接入」說明本機 API 呼叫、取得憑據、通知、業務結果及 A/B 切換。「事件與指令」集中解釋通用事件資料、快照、回執及手動指令。每個帳號切換策略內的「輪換執行說明」解釋該策略的週期、阻塞及復原。
 
 <!-- overview-doc:end -->
 
@@ -311,27 +315,29 @@ HTTP、網路、認證及解碼錯誤使用 SDK 例外或錯誤類型，包含�
 
 | 事件 | 应用职责 |
 | --- | --- |
-| credential.updated、snapshot 条目 | 获取事件指定的账号、校验版本，完成业务应用后上报结果。SDK 托管回调负责协议处理。 |
+| credential.secret.updated / credential.switch.published / credential.refresh.requested、snapshot 条目 | 获取事件指定的账号、校验版本，完成业务应用后上报结果。SDK 托管回调负责协议处理。 |
 | app.scope.updated | 对账范围并清理失效状态。解除轮换绑定不等于撤销账号授权。 |
 | `rotation.*`（如 `rotation.started`、`rotation.completed` 等）、`credential.change.*`（如 `credential.change.started`、`credential.change.completed` 等） | 更新进度、日志或告警，不重复应用凭据，也不对这些通知确认业务成功。 |
 | credential.switch.requested、app.restart.requested | 管理员针对选定实例的手动指令，须认领、执行并上报指令结果。 |
 
 ## 完整事件清单
 
-以下逐项列出 Core 应用事件、手动指令及连接控制消息；兼容项单独标注。这里是完整事件参考，轮换详情只解释其在具体流程中的作用。
+本页列出当前应用事件、轮换操作指令和连接控制消息。轮换详情展示进度，应用按事件职责执行。
 
 ### 凭据与范围事件
 
-credential.updated 负责应用凭据；app.scope.updated 和 snapshot 负责范围对账。绑定消失时停止跟随策略并保留仍授权账号的使用状态；实际授权消失时才停用本地取密、清理凭据并通知业务释放连接。
+credential.secret.updated / credential.switch.published / credential.refresh.requested 负责应用凭据；app.scope.updated 和 snapshot 负责范围对账。绑定消失时停止跟随策略并保留仍授权账号的使用状态；实际授权消失时才停用本地取密、清理凭据并通知业务释放连接。
 
 | 事件标识 | 含义 |
 | --- | --- |
-| `credential.updated` | 当前凭据或发布账号更新，按事件账号取密并应用。 |
+| `credential.secret.updated` | 帳號憑證內容及版本已更新。依事件帳號即時取密並套用；此事件不表示切換帳號。 |
+| `credential.switch.published` | 已發布本輪目標帳號與策略版本，取消時也用於發布切回原帳號。依事件目標帳號取密並套用；發布不等於應用已切換成功。 |
+| `credential.refresh.requested` | 要求重新取得並套用目前憑證，用於新增授權、手動重新整理與快照核對；不表示密碼已改變，也不啟動新輪換。 |
 | `app.scope.updated` | 账号授权、通知开关或轮换策略绑定变化。按 authorized_account_ids 判断账号是否仍获授权，再通过 snapshot 对账通知项和轮换绑定；解除绑定不应关闭仍获授权账号的连接。 |
 
 ### 通用改密事件
 
-通用任务生命周期通知用于进度与告警，不因此再次取密或确认业务成功；通过 credential.updated 或 snapshot 应用凭据。
+通用任务生命周期通知用于进度与告警，不因此再次取密或确认业务成功；通过 credential.secret.updated / credential.switch.published / credential.refresh.requested 或 snapshot 应用凭据。
 
 | 事件标识 | 含义 |
 | --- | --- |
@@ -341,7 +347,7 @@ credential.updated 负责应用凭据；app.scope.updated 和 snapshot 负责范
 
 ### 轮换进度事件
 
-这些通知说明轮换进度与结果。应用通过 credential.updated 或 snapshot 切换，不因每条进度通知重复执行。
+这些通知说明轮换进度与结果。应用通过 credential.secret.updated / credential.switch.published / credential.refresh.requested 或 snapshot 切换，不因每条进度通知重复执行。
 
 | 事件标识 | 含义 |
 | --- | --- |
@@ -351,19 +357,26 @@ credential.updated 负责应用凭据；app.scope.updated 和 snapshot 负责范
 | `rotation.verify.cancelled` | 备用账号验证已取消。 |
 | `rotation.started` | 轮换已发布目标账号并进入切换阶段。 |
 | `rotation.waiting_for_app` | 等待必需应用实例完成切换并确认。 |
-| `rotation.source.waiting` | 发布切换后，观察原主账号的成功取密记录。 |
+| `rotation.source.waiting` | 从发布切换时刻开始观察原主账号的成功取密，与应用切换确认并行进行；两项条件均达标后才允许改密。 |
 | `rotation.source.ready` | 原主账号无取密窗口和客户端确认条件达标，可以继续改密。 |
 | `rotation.completed` | 原主账号改密已核验，本轮轮换完成。 |
 | `rotation.failed` | 轮换进入改密失败或需要核验恢复的状态。 |
 | `rotation.force_stopped` | 管理员跳过剩余恢复确认，强制结束周期。 |
 
-### 管理员指令事件
+### 账号轮换的手动操作
 
-先用 running 认领，仅在 accepted 为 true 时执行，再上报指令结果；这些指令独立于自动轮换进度通知。
+credential.switch.requested 要求选定实例应用本轮已发布的目标账号和版本，用于管理员手动推动或重试应用切换；不启动新轮换。
 
 | 事件标识 | 含义 |
 | --- | --- |
 | `credential.switch.requested` | 要求选定实例应用已经发布的账号及版本，不会启动新轮换。 |
+
+### 应用运维指令
+
+app.restart.requested 请求重启应用并验证健康状态。账号轮换的手动切换指令见上一节。
+
+| 事件标识 | 含义 |
+| --- | --- |
 | `app.restart.requested` | 执行应用支持的重启动作，并验证健康状态。 |
 
 ### 连接与回执消息
@@ -376,27 +389,6 @@ SDK 和 Agent 管理保活及接收回执。snapshot、pong 无需 received 回�
 | `ping` | 客户端向 Core 发送应用层保活消息。 |
 | `pong` | Core 对应用层 ping 的响应。 |
 | `received` | 客户端确认已读取事件，不表示业务成功。 |
-
-### 兼容事件
-
-旧事件名和旧准备周期兼容项，不作为新接入的执行流程。当前 Core 不再发送 credential.revoked；新轮换周期验证备用账号后直接发布切换。
-
-| 事件标识 | 含义 |
-| --- | --- |
-| `credential.revoked` | 已停用：当前 Core 不再发送。由 app.scope.updated 和 snapshot 统一处理；仅保留旧 Core 接入及历史记录兼容。 |
-| `configuration.updated` | 旧事件名，兼容映射为 `app.scope.updated`。 |
-| `rotation.preparation.started` | 旧准备流程开始对齐应用当前账号。 |
-| `rotation.accounts.aligned` | 旧准备流程中，应用账号已完成对齐。 |
-| `rotation.standby.waiting` | 旧准备流程观察备用账号取密。 |
-| `rotation.preparation.ready` | 旧准备流程就绪，不代表已切换或改密。 |
-| `rotation.preparation.cancelled` | 旧准备流程已取消。 |
-| `rotation.verification.started` | 旧事件名，兼容映射为 `rotation.verify.started`。 |
-| `rotation.verification.failed` | 旧事件名，兼容映射为 `rotation.verify.failed`。 |
-| `rotation.verification.cancelled` | 旧事件名，兼容映射为 `rotation.verify.cancelled`。 |
-| `application.scope.updated` | 旧事件名，兼容映射为 `app.scope.updated`。 |
-| `application.restart.requested` | 旧事件名，兼容映射为 `app.restart.requested`。 |
-| `rotation.waiting_for_application` | 旧事件名，兼容映射为 `rotation.waiting_for_app`。 |
-| `rotation.verification.skipped` | 旧事件名，兼容映射为 `rotation.verify.skipped`。 |
 
 ## 事件字段
 
@@ -413,7 +405,7 @@ SDK 和 Agent 管理保活及接收回执。snapshot、pong 无需 received 回�
 
 ## 快照与授权范围
 
-初次連線、重連及範圍變化時，Core 傳送 snapshot。credentials 包含應用開啟通知後的全部授權帳號，以及已綁定且仍有授權的有效 A/B 輪換策略。每項依 credential.updated 處理，使用 event_id、account_id 和 account_revision。快照也包含 authorized_account_ids；完整授權帳號中繼資料可透過 get_accounts 查詢。解除輪換策略綁定不等於撤銷帳號授權。
+初次連線、重連及範圍變化時，Core 傳送 snapshot。credentials 包含應用開啟通知後的全部授權帳號，以及已綁定且仍有授權的有效 A/B 輪換策略。每項依 credential.secret.updated / credential.switch.published / credential.refresh.requested 處理，使用 event_id、account_id 和 account_revision。快照也包含 authorized_account_ids；完整授權帳號中繼資料可透過 get_accounts 查詢。解除輪換策略綁定不等於撤銷帳號授權。
 
 ```json
 {
@@ -437,28 +429,19 @@ SDK 在交出業務事件前自動盡力傳送 received 回執，應用程式無
 
 使用 `account_id` 取得事件指定帳號。完成連線驗證與切換後，透過 `event_id` 回報 `success` 或 `failed`；收到事件或取密成功不代表套用成功。事件與重連快照包含 `event_id`、`account_id`、`account_revision`，套用前須檢查帳號版本。指令先以 `running` 認領；處理須具冪等性。
 
-## 管理员手动指令
+## 指令执行与结果
 
-管理员从应用的“发送事件”操作选择目标实例及有效期。
+管理员选择目标实例和有效期。账号轮换中使用 credential.switch.requested 应用已发布的目标账号；应用运维使用 app.restart.requested 重启应用。
 
-- credential.switch.requested 要求实例应用轮换策略**已经发布**的账号及版本，不会启动新轮换，也不会选择另一个账号。
-- app.restart.requested 要求应用执行支持的重启动作并验证健康状态；SDK 应用须实现相应处理函数，Agent 能力由本地服务配置决定。
+1. 通过 GET /api/v1/accounts/credential-client/commands/ 获取待处理指令，或通过 WebSocket 接收。
+2. 向 POST /api/v1/accounts/credential-client/command-result/ 上报 status: running 认领指令；仅 accepted 为 true 时执行。
+3. 实际切换或重启并验证成功后，上报 success；失败时上报 failed 和安全错误码。
 
-SDK 托管处理函数负责指令认领和结果回报。底层消费者使用已签名的客户端 API：
+托管 SDK 回调自动认领并上报结果。received 仅代表收到指令。自动轮换进度事件只更新进度，不重复执行指令。
 
-1. GET /api/v1/accounts/credential-client/commands/，传入 instance_id，轮询待处理指令；已连接实例也可通过 WebSocket 接收。
-2. POST /api/v1/accounts/credential-client/command-result/，提交 instance_id、command_id 和 status: running，仅在 accepted 为 true 时执行。
-3. 实际完成业务切换，或重启且健康检查成功后，通过同一指令结果接口报告 status: success；失败报告 failed，并使用安全的 error_code。received 回执或仅调用 confirm_event 不能替代指令结果上报。
-
-过期指令不能再认领，重复投递不得重复执行已认领动作。失败的指令动作不自动重做；重新发送重启前先检查应用状态。
-
-## 连接保活与兼容
+## 连接保活
 
 閒置時每 10 秒傳送應用層 ping，約 30 秒收不到訊息則重連，以 1–30 秒指數退避並重新簽章。快照恢復目前狀態，不重播歷史事件。
-
-当前使用 app.scope.updated、app.restart.requested、rotation.verify.started/failed/cancelled 和 rotation.waiting_for_app。旧 application 前缀、rotation.verification 名称及 configuration.updated 兼容映射到新名称，事件 ID 不变。credential.revoked 已停止发送，仅保留旧 Core 接入及历史记录兼容。
-
-舊 key API 保留相容。新整合使用 `get_account` 和 `confirm_event`，並須同步更新 Core。
 
 <!-- protocol-doc:end -->
 
@@ -526,7 +509,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -572,6 +555,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+CLI/Socket 取密及業務憑據讀取回傳 `account`、`source`、`last_pull_at`。`account.version` 是實際帳號的憑據版本；一般結果不再包含策略版本、`account_revision` 或 `event_id`。`source` 為 `api` 表示即時從 Core 取密，`local` 表示讀取本機快取。`last_pull_at` 是該帳號最後成功從 Core 取密的 RFC 3339 時間，即使版本相同仍會更新；隨快取持久化並於重新啟動後保留。中繼資料同步、快取讀取及失敗請求均不更新時間。舊快取缺少時間時，下次線上同步會實際取密一次並補齊，即使版本相同；離線或取密失敗仍回傳 null，之後同步重試。成功補齊後，版本相同不再重複取密。僅按需取密不會啟用離線憑據保留。
+
+`event_id` 留在通知中繼資料及腳本通知外層，用於回報套用結果，不屬於帳號欄位。快照重用符合帳號、版本、策略及用戶端的最新事件，無符合項目則建立補發事件。腳本透過 `credentials[selector].account` 讀取；既有 Go 範本、欄位映射及 EnvironmentFile 變數保留原名稱。既有 JSON 讀取程式需適配巢狀 account 結構。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+憑據 JSON 檔案只保留 `account`，不顯示 `source` 或 `last_pull_at`。拉取時間集中寫到 `store.root` 目錄同層的 `last_pull_at.json`，依實際帳號 ID 記錄，私有狀態亦保留。即時取密成功時，即使版本相同，也立即更新診斷檔案，不改寫憑據檔案。僅核對版本、讀取快取或取密失敗均不更新時間；撤銷帳號時移除對應記錄。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

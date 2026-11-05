@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+CLI/Socket secret queries and service credential reads return `account`, `source` and `last_pull_at`. `account.version` is the actual account credential version; ordinary results omit policy revisions, `account_revision` and `event_id`. `source` is `api` for a live Core fetch and `local` for retained data. `last_pull_at` is the RFC 3339 time of the last successful Core credential fetch for that account, even when its version is unchanged. It is retained with cached credentials across restarts; metadata sync, cache reads and failed pulls do not advance it. Older caches without a known pull time trigger one real credential fetch on the next online sync, even if the version is unchanged. Failed fetches leave the time unknown (null) and are retried; after success, unchanged metadata syncs do not fetch again. Pull-only queries do not enable offline credential retention.
+
+`event_id` stays in notification metadata and script notification envelopes for reporting application success/failure; it is not an account field or a global latest-event pointer. Snapshots reuse the latest matching account/version/policy/client event, or create a republished event if none exists. Script readers use `credentials[selector].account`; existing Go templates, field mappings and EnvironmentFile variables keep their existing field names. Existing JSON readers must adopt the nested account structure.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Credential JSON files contain only `account`, with no `source` or `last_pull_at`. Pull times are exported separately to `last_pull_at.json` beside the directory configured by `store.root`, keyed by the actual account ID. The private state retains the same times. A successful live credential fetch updates the diagnostic file immediately, even for the same version, without rewriting credential files. Periodic version checks, cache reads and failed pulls do not advance it. Revoked accounts are removed from the diagnostic file.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

@@ -243,7 +243,7 @@ async function startServer() {
               },
             },
             account: {
-              id: data.instance_id.startsWith("managed-") ? data.account_id || "account" : "account",
+              id: data.instance_id.startsWith("managed-") || data.instance_id.startsWith("agent-native-") ? data.account_id || "account" : "account",
               name: "db-user",
               username: "app",
               secret_type: "password",
@@ -355,11 +355,14 @@ async function startServer() {
         };
         if (data.sync_error === "invalid-flag") result.credentials[0].available = "false";
         if (agentControl) {
+          result.config_schema_version = 1;
+          result.server_capabilities = ["agent_sync", "agent_store_services", "event_results"];
+          result.credentials[0].key = "account:" + agentControl.accountId;
           result.credentials[0].revision = agentControl.revision || 2;
-          result.credentials[0].account_id = "account";
+          result.credentials[0].account_id = agentControl.accountId;
           result.credentials[0].account_revision = agentControl.revision || 2;
           result.credentials[0].event_id = "agent-event-" + (agentControl.revision || 2);
-          result.scope = { credential_keys: ["db"], confirmation_keys: ["db"] };
+          result.scope = { credential_keys: ["account:" + agentControl.accountId], confirmation_keys: [] };
         }
       } else if (route === "/commands/") {
         result = {
@@ -424,6 +427,7 @@ async function startServer() {
     socket.send(
       JSON.stringify({
         event: "snapshot",
+        authorized_account_ids: [controls.get(instance)?.accountId || "account"],
         credentials: [{ key: "db", credential_mode: "alternating_rotation", revision: snapshotRevision,
           ...(managed ? {event_id: "managed-" + snapshotRevision, account_id: controls.get(instance)?.accountId || "account", account_revision: snapshotRevision} : {}) }],
       }),
@@ -431,7 +435,7 @@ async function startServer() {
     if (instance.startsWith("retry-")) return;
     socket.send(
       JSON.stringify({
-        event: "credential.updated",
+        event: "credential.secret.updated",
         event_id: managed ? "managed-" + snapshotRevision : "updated-" + count,
         credential_key: "db",
         credential_mode: "alternating_rotation",

@@ -37,14 +37,14 @@ func PrepareLocal(ctx context.Context, bootstrapFile, directory, instanceID stri
 	config.Delivery.Root = filepath.Join(directory, "credentials")
 	config.Delivery.Socket = filepath.Join(directory, "run", "agent.sock")
 	config.Delivery.User = account.Username
-	if config.modern() {
-		config.Socket = &SocketConfiguration{Socket: config.Delivery.Socket, Owner: account.Username}
-		if config.Store != nil {
-			config.Store.Root = config.Delivery.Root
-			config.Store.Owner = account.Username
-		}
-		config = config.normalized()
+
+	config.Socket = &SocketConfiguration{Socket: config.Delivery.Socket, Owner: account.Username}
+	if config.Store != nil {
+		config.Store.Root = config.Delivery.Root
+		config.Store.Owner = account.Username
 	}
+	config = config.normalized()
+
 	if err = config.ensureInstanceID(); err != nil {
 		return "", err
 	}

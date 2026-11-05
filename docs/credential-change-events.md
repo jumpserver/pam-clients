@@ -10,7 +10,7 @@
 credential.change.started
   → 目标账号改密、结果保存
   → credential.change.completed
-  → credential.updated
+  → credential.secret.updated
   → 应用实时取密、验证新连接、替换旧连接
   → 应用上报事件处理结果
 ```
@@ -21,15 +21,14 @@ credential.change.started
 | --- | --- | --- |
 | 改密前通知 | `credential.change.started` | 告知本次改密进入流程。当前 `ChangeSecretRecord` 建立为 pending 时已发送，pending → running 不重复发送，不能解读为远端已改密或所有应用已准备好。 |
 | 改密后成功/失败 | `credential.change.completed` / `credential.change.failed` | 表示改密任务结果，不表示全部应用已经换好连接。 |
-| 新凭据已发布 | `credential.updated` | 触发 SDK/PAM Agent 实时取密和交付；应用仍须验证实际数据库连接后才能报告应用成功。 |
+| 新凭据已发布 | `credential.secret.updated` | 触发 SDK/PAM Agent 实时取密和交付；应用仍须验证实际数据库连接后才能报告应用成功。 |
 
-当前保留已有事件名，避免与 `pre_change_secret`、`post_change_secret`、`secret_updated` 同时发送造成重复取密。小版本添加可选事件或字段；旧客户端忽略不认识的通知。改变已有事件含义、把通知升级为执行门禁，需要新的明确契约。
+账号切换使用 `credential.switch.published`，凭据内容变化使用 `credential.secret.updated`，重新应用当前凭据使用 `credential.refresh.requested`。三类事件分别表达切换发布、内容更新及刷新请求，不保留原先混用的事件代码或映射。轮换阶段的 `rotation.*` 和改密任务阶段的 `credential.change.*` 只表达进度与结果。
 
 ## PAM Agent 进度与通用取密审计
 
 普通取密仍由现有通用审计记录账号、版本、实例和结果，不要求提供 event_id，也不会因取密就确认业务已生效。PAM Agent 通过现有 `/agent/sync/` 的 `credentials` 上报已持有版本，通过 `delivered_credentials` 上报已交付版本。
 
-Core 根据应用当前授权、有效轮换绑定及本次本机交付范围核对账号版本。陈旧或超前版本不能推进进度；没有持有证据的交付报告不能凭空建立取密进度。旧调用方的 key 取密及交付版本上报按既有兼容规则处理。
 
 首次观察到已持有或已交付当前版本时，更新现有 `CredentialClientStatus` 的相应版本和时间；版本 0 同样有效。重复 sync 不生成取密审计，不重写这些阶段的时间，不把收到、持有或交付解释为应用成功。实际取密请求的准确时间仍以通用审计为准，PAM Agent 的进度时间表示服务端首次观察到该阶段的时间。
 
@@ -39,7 +38,7 @@ Core 根据应用当前授权、有效轮换绑定及本次本机交付范围核
 
 同一次改密的 started、completed/failed、updated 使用相同 `operation_id`，每条通知有独立 `event_id`。账号身份和账号版本用于判断是否仍为当前目标；普通账号通知的 revision 是账号版本，不能与轮换策略自身的发布版本混用。事件不携带密码，密码通过签名取密接口取得。
 
-生命周期通知只更新应用状态或业务日志，无需确认应用成功。自动通知中仅 `credential.updated` 和权威快照触发新版本应用，避免 completed 与 updated 各重建一次连接。事件可重复投递或延迟到达；应用按账号和版本幂等处理，不能确认已经过期的版本。普通账号改密没有“等待所有应用确认后才改密”的门禁；应用结果用于观测，A/B 轮换才有切换阶段的确认门禁。
+生命周期通知只更新应用状态或业务日志，无需确认应用成功。自动通知中 `credential.secret.updated`、`credential.switch.published`、`credential.refresh.requested` 和权威快照触发凭据应用，避免 completed 与 updated 各重建一次连接。事件可重复投递或延迟到达；应用按账号和版本幂等处理，不能确认已经过期的版本。普通账号改密没有“等待所有应用确认后才改密”的门禁；应用结果用于观测，A/B 轮换才有切换阶段的确认门禁。
 
 started 是尽力通知，不是预执行确认协议。WebSocket 的 received 仅证明收到消息，不能据此认为所有应用已准备好，也不能提前使用尚未生效的新密码重连。
 
@@ -47,6 +46,6 @@ started 是尽力通知，不是预执行确认协议。WebSocket 的 received �
 
 ## 真实连接验证
 
-[数据库应用 Demo](../python/database_app/README.md) 包含同账号改密验证场景。开发适配器真实修改专用 PostgreSQL、Redis 密码，验证新密码认证成功和旧密码新连接认证失败，再通过 Core 原有改密记录/历史信号发布事件。验收同时检查：账号 ID 不变、版本增加、连接 ID 替换、实际读写持续、Core 的 credential.updated 应用结果成功。
+[数据库应用 Demo](../python/database_app/README.md) 包含同账号改密验证场景。开发适配器真实修改专用 PostgreSQL、Redis 密码，验证新密码认证成功和旧密码新连接认证失败，再通过 Core 原有改密记录/历史信号发布事件。验收同时检查：账号 ID 不变、版本增加、连接 ID 替换、实际读写持续、Core 的 credential.secret.updated 应用结果成功。
 
 这是本地数据库适配器及真实 SDK/PAM Agent/Core 协议联调，不代表运行过 Ansible/Celery 自动改密作业。正常自动改密路径仍需在相应执行环境验收。

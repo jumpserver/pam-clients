@@ -49,11 +49,8 @@ class ApplicationClient(Client):
             elif event.get("event") == "snapshot":
                 updates = event.get("credentials", [])
                 # Release application connections absent from the new scope.
-            elif event.get("event") == "credential.updated":
+            elif event.get("event") in ("credential.secret.updated", "credential.switch.published", "credential.refresh.requested"):
                 updates = [event]
-            elif event.get("event") == "credential.revoked":
-                # Release connections for event["account_id"].
-                continue
             else:
                 continue
             for update in updates:

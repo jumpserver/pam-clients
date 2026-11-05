@@ -162,6 +162,58 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\sample-app'
 
 CLI 和 Socket 请求应以配置的应用用户执行。`get_accounts` 只列出授权账号元数据；`get_secret` 按需取密，也适用于未订阅 push 的账号。取密命令会把密码写到标准输出，请只在私有终端中调试。前台模式请替换为实际 Socket 路径。
 
+CLI/Socket 取密和业务凭据读取返回 `account`、`source`、`last_pull_at`。`account.version` 是实际账号的凭据版本；普通结果不再包含策略版本、`account_revision` 和 `event_id`。`source` 为 `api` 表示本次从 Core 实时取密，为 `local` 表示读取本地缓存。`last_pull_at` 是该账号最后一次成功从 Core 取密的 RFC 3339 时间，即使版本不变也会更新；随缓存凭据持久化，重启保留。仅同步元数据、读取缓存或拉取失败都不更新时间。旧缓存缺少时间时，下一次在线同步会真实取密一次并补齐，即使版本不变；离线或拉取失败时仍返回 null，后续同步继续重试。成功补齐后，版本不变不再重复取密。仅按需取密不会开启离线凭据保留。
+
+`event_id` 保留在通知元数据和脚本通知外层，用于回报应用成功或失败，不属于账号字段，也不是全局最后事件的指针。快照复用匹配账号、账号版本、策略和客户端实例的最新事件，没有匹配项时创建补发事件。脚本通过 `credentials[selector].account` 读取账号；已有 Go 模板、字段映射和 EnvironmentFile 变量保留原字段名。已有 JSON 消费方需要适配嵌套的 account 结构。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+凭据 JSON 文件只保留 `account`，不显示 `source` 或 `last_pull_at`。拉取时间集中写到 `store.root` 所指目录同级的 `last_pull_at.json`，按实际账号 ID 记录，私有状态中也继续保留。每次实时取密成功，即使版本不变，也会立即更新诊断文件，不改写凭据文件。仅核对版本、读取缓存或拉取失败都不更新时间；撤销账号时移除对应记录。
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
+
 ```bash
 pam-agent get_accounts
 pam-agent get_secret '<account-id>'
@@ -345,12 +397,24 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ```json
 {
-  "event": "credential.updated",
+  "event": "credential.refresh.requested",
   "credentials": {
     "<primary-account-id>": {
-      "account_id": "<active-account-id>",
-      "username": "db_app",
-      "secret": "<password>",
+      "account": {
+        "id": "<active-account-id>",
+        "name": "database",
+        "username": "db_app",
+        "secret_type": "password",
+        "secret": "<password>",
+        "version": 3,
+        "asset": {
+          "id": "<asset-id>",
+          "name": "database-server",
+          "address": "10.0.0.10"
+        }
+      },
+      "source": "local",
+      "last_pull_at": "2026-10-30T06:30:00Z",
       "event_id": "<event-id>"
     }
   }
@@ -370,7 +434,7 @@ import tempfile
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-credential = payload["credentials"]["<primary-account-id>"]
+credential = payload["credentials"]["<primary-account-id>"]["account"]
 target = Path(sys.argv[1])
 original = target.stat()
 with target.open(encoding="utf-8") as source:

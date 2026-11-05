@@ -112,7 +112,6 @@ export class PAMError extends Error {
   statusCode?: number
   detail?: string
   requestId?: string
-  readonly isCompatibilityError: boolean
 }
 export class Client {
   constructor(options: ClientOptions)

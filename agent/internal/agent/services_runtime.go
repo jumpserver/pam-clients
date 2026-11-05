@@ -78,7 +78,7 @@ func (a *Agent) removeStoreFiles(wanted map[string]string) error {
 			continue
 		}
 		base := filepath.Base(path)
-		if !accountIDPattern.MatchString(id) || !absolute(path) || (base != id+".json" && base != id+".env") {
+		if !accountIDPattern.MatchString(id) || !absolute(path) || base != id+".json" && base != id+".env" {
 			return errors.New("invalid managed store path")
 		}
 		if _, err := os.Lstat(path); err == nil {
@@ -183,8 +183,8 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 	if err = validateScope(response.Scope); err != nil {
 		return a.failure(err, false)
 	}
-	if response.ConfigSchemaVersion != pam.ConfigSchemaVersion || !contains(response.ServerCapabilities, "agent_store_services") {
-		return a.failure(errors.New("Core does not support PAM Agent store/services synchronization in v1"), false)
+	if response.ConfigSchemaVersion != pam.ConfigSchemaVersion {
+		return a.failure(errors.New("invalid Agent synchronization schema version"), false)
 	}
 	metadata := map[string]pam.CredentialRevision{}
 	for _, item := range response.Credentials {
@@ -238,24 +238,27 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		return a.failure(err, false)
 	}
 	var problems []error
-	fetched := map[string]pam.Credential{}
+	fetched := map[string]Credential{}
 	for key, item := range metadata {
 		if !item.Available {
 			continue
 		}
 		a.mu.Lock()
 		previous, exists := a.state.Latest[key]
-		valid := exists && a.state.Authorized[key] && previous.AccountID == item.AccountID && previous.Revision == item.Revision && previous.AccountRevision == item.AccountRevision && sameSwitch(previous.AccountSwitch, item.AccountSwitch)
+		valid := exists && a.state.Authorized[key] && previous.AccountID == item.AccountID &&
+			previous.Revision == item.Revision && previous.AccountRevision == item.AccountRevision &&
+			sameSwitch(previous.AccountSwitch, item.AccountSwitch)
 		a.mu.Unlock()
 		if !valid {
 			value, cached := fetched[item.AccountID]
 			if !cached {
-				value, err = a.remote.GetCredentialFresh(ctx, pam.CredentialSelector{AccountID: item.AccountID})
+				var credential pam.Credential
+				credential, err = a.remote.GetCredentialFresh(ctx, pam.CredentialSelector{AccountID: item.AccountID})
 				if err != nil {
 					var failure *pam.PAMError
 					if errors.As(err, &failure) {
 						revoked := failure.Code == "credential_not_found" || failure.Code == "credential_not_selected" || failure.Code == "credential_not_authorized" || failure.Code == "credential_not_bound"
-						if failure.StatusCode == 401 || failure.StatusCode == 403 && !revoked || failure.IsCompatibilityError() {
+						if failure.StatusCode == 401 || failure.StatusCode == 403 && !revoked {
 							return a.failure(err, true)
 						}
 					}
@@ -271,14 +274,15 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 					problems = append(problems, errors.New("service credential refresh failed"))
 					continue
 				}
+				value = flatten(credential)
 				fetched[item.AccountID] = value
 			}
-			if value.Account.ID != item.AccountID || value.Account.Revision != item.AccountRevision || value.Key != "account:"+item.AccountID {
+			if value.AccountID != item.AccountID || value.AccountRevision != item.AccountRevision || value.Key != "account:"+item.AccountID {
 				problems = append(problems, errors.New("service credential version changed during synchronization"))
 				continue
 			}
 			value.Key, value.Revision, value.AccountSwitch = key, item.Revision, item.AccountSwitch
-			previous = flatten(value)
+			previous = value
 			if err = a.recordEvent("saved", pam.Event{Event: "credential.fetched", CredentialKey: key, Revision: item.Revision, AccountID: item.AccountID}); err != nil {
 				return err
 			}
@@ -286,6 +290,9 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		previous.EventID = item.EventID
 		a.mu.Lock()
 		a.state.Latest[key] = previous
+		if !valid {
+			a.recordAccountPullLocked(previous)
+		}
 		a.state.Authorized[key] = true
 		delete(a.state.Wanted, key)
 		if item.EventID != "" {
@@ -294,7 +301,7 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 				applied.Confirmed = false
 				a.state.Applied[key] = applied
 			}
-			a.state.Events[key] = pam.Event{Event: "credential.updated", EventID: item.EventID, CredentialKey: key, AccountID: item.AccountID, Revision: item.Revision, AccountRevision: item.AccountRevision}
+			a.state.Events[key] = pam.Event{Event: pam.CredentialRefreshRequested, EventID: item.EventID, CredentialKey: key, AccountID: item.AccountID, Revision: item.Revision, AccountRevision: item.AccountRevision}
 		}
 		a.mu.Unlock()
 	}
@@ -319,6 +326,11 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 				continue
 			}
 			version := credentialVersion(value)
+			if store.Format != "environment" {
+				// Pull metadata lives outside credential files, so repeated pulls
+				// do not rewrite business data.
+				version = "account-json:" + version
+			}
 			a.mu.Lock()
 			saved := a.state.StoreVersions[id] == version && a.state.StoreFiles[id] == path
 			a.mu.Unlock()
@@ -526,7 +538,7 @@ func (a *Agent) writeStore(path string, value Credential, store StoreConfigurati
 	if store.Format == "environment" {
 		raw, err = environment(value)
 	} else {
-		raw, err = json.MarshalIndent(value, "", "  ")
+		raw, err = json.MarshalIndent(value.fileResult(), "", "  ")
 		raw = append(raw, '\n')
 	}
 	if err != nil {

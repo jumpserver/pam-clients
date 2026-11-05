@@ -37,6 +37,25 @@ async function until(check) {
   assert.fail('managed event did not converge')
 }
 
+test('distinct application events apply credentials while progress events do not', async () => {
+  const sdk = client('managed-node-event-names')
+  sdk.watchCredentialEvents = async function* () {
+    for (const event of ['credential.secret.updated', 'credential.switch.published', 'credential.refresh.requested',
+      'rotation.started', 'credential.change.completed']) {
+      yield { event, eventId: event, credentialMode: 'alternating_rotation', key: 'database',
+        accountId: 'account', accountRevision: 2, revision: 2 }
+    }
+  }
+  try {
+    await sdk.watchEvents()
+    assert.equal(sdk.applied.length, 3)
+    const results = server.stats().requests.filter(request => request.path.endsWith('/event-result/') &&
+      request.data.instance_id === 'managed-node-event-names')
+    assert.deepEqual(results.map(request => request.data.event_id),
+      ['credential.secret.updated', 'credential.switch.published', 'credential.refresh.requested'])
+  } finally { sdk.close() }
+})
+
 test('managed callback runs once when result delivery fails and reconnect repeats the event', async () => {
   const id = 'managed-node-result'
   await control(id, { result_failures: 1 })
@@ -59,7 +78,7 @@ test('managed updates retry business failure and A/B changes replace current usa
   try {
     await until(async () => (await sdk.getClientInfo()).applicationStatus?.accountIds?.includes('account'))
     assert.equal(sdk.applied.length, 1)
-    await control(id, { revision: 3, account_id: 'backup', event: 'credential.updated' })
+    await control(id, { revision: 3, account_id: 'backup', event: 'credential.secret.updated' })
     await until(async () => (await sdk.getClientInfo()).applicationStatus?.accountIds?.includes('backup'))
     assert.deepEqual((await sdk.getClientInfo()).applicationStatus.accountIds, ['backup'])
     assert.deepEqual(sdk.applied.at(-1), { id: 'backup', revision: 3 })
@@ -91,7 +110,7 @@ test('business callback mutations cannot change the reported event account ident
 test('a removed push scope rejects queued updates until a new snapshot regrants it', async () => {
   const sdk = client('managed-node-scope')
   const revoked = []
-  const update = { event: 'credential.updated', eventId: 'scope-event', key: 'database',
+  const update = { event: 'credential.secret.updated', eventId: 'scope-event', key: 'database',
     credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
   sdk.onAccountRevoked = accountId => revoked.push(accountId)
   sdk.watchCredentialEvents = async function* () {
@@ -110,7 +129,7 @@ test('a removed push scope rejects queued updates until a new snapshot regrants 
 test('failed account cleanup retries while idle without repeating application', async () => {
   const sdk = client('managed-node-revoke-retry')
   let attempts = 0
-  const update = { event: 'credential.updated', eventId: 'cleanup-event', key: 'database',
+  const update = { event: 'credential.secret.updated', eventId: 'cleanup-event', key: 'database',
     credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
   sdk.onAccountRevoked = () => { if (++attempts === 1) throw new Error('temporary cleanup failure') }
   sdk.watchCredentialEvents = async function* ({ signal }) {
@@ -129,7 +148,7 @@ test('failed account cleanup retries while idle without repeating application', 
 test('a regrant cancels pending account cleanup', async () => {
   const sdk = client('managed-node-revoke-regrant')
   let attempts = 0
-  const update = { event: 'credential.updated', eventId: 'regrant-event', key: 'database',
+  const update = { event: 'credential.secret.updated', eventId: 'regrant-event', key: 'database',
     credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
   sdk.onAccountRevoked = () => { attempts++; throw new Error('temporary cleanup failure') }
   sdk.watchCredentialEvents = async function* ({ signal }) {
@@ -151,7 +170,7 @@ test('a regrant cancels pending account cleanup', async () => {
 test('disabling notifications preserves authorized connections until actual revocation', async () => {
   const sdk = client('managed-node-notification-off')
   const revoked = []
-  const update = { event: 'credential.updated', eventId: 'notification-event', key: 'account:account',
+  const update = { event: 'credential.secret.updated', eventId: 'notification-event', key: 'account:account',
     credentialMode: 'subscription', accountId: 'account', accountRevision: 2, revision: 2 }
   let authorized = true
   sdk.onEvent = event => { if (event.event === 'snapshot') authorized = event.authorizedAccountIds.includes('account') }
@@ -173,7 +192,7 @@ test('disabling notifications preserves authorized connections until actual revo
 test('policy unbinding preserves an authorized account until actual authorization removal', async () => {
   const sdk = client('managed-node-policy-detach')
   const revoked = []
-  const update = { event: 'credential.updated', eventId: 'detach-event', key: 'database',
+  const update = { event: 'credential.secret.updated', eventId: 'detach-event', key: 'database',
     credentialMode: 'alternating_rotation', accountId: 'account', accountRevision: 2, revision: 2 }
   let authorized = true
   sdk.onEvent = event => {
@@ -201,7 +220,7 @@ test('the legacy restart name reaches the current handler only once', async () =
   let restarts = 0
   sdk.onApplicationRestart = () => { restarts++ }
   sdk.watchCredentialEvents = async function* () {
-    const event = { event: 'application.restart.requested', eventId: 'legacy-restart', commandId: 'legacy-command' }
+    const event = { event: 'app.restart.requested', eventId: 'legacy-restart', commandId: 'legacy-command' }
     yield event
     yield event
   }

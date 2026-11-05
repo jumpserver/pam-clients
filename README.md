@@ -10,7 +10,7 @@
 | `node/` | 完整 SDK、TypeScript 类型声明；Node.js 20.3+ | [中文](node/README.zh-hans.md) / [English](node/README.en.md) |
 | `agent/` | 独立 PAM Agent；Linux amd64 / arm64 发行包 | [中文](agent/README.zh-hans.md) / [English](agent/README.en.md) |
 | `socket/` | Unix Socket HTTP / WebSocket；无 SDK 的业务接入 | [中文](socket/README.zh-hans.md) / [English](socket/README.en.md) |
-| `curl/` | 旧账号取密接口的协议调试脚本 | [中文](curl/README.zh-hans.md) / [English](curl/README.en.md) |
+| `curl/` | 当前签名账号取密接口的协议调试脚本 | [中文](curl/README.zh-hans.md) / [English](curl/README.en.md) |
 
 四种语言的 SDK 以 Python 为功能基准，封装同一套凭据客户端协议。应用只传入服务端地址、应用 AK/SK、组织及实例配置，调用客户端方法即可；API 路径、查询编码、HMAC 签名、Digest、UTC 时间、请求 ID 和版本头由 SDK 自动生成。HTTP 请求和 WebSocket 重连都会重新签名。
 
@@ -37,9 +37,7 @@
 
 上述托管回调和使用账号声明需要包含这些接口的新版 SDK / PAM Agent；仅升级 Core 不会升级应用主机上的客户端。旧客户端继续使用原有接口，Python 和 Node.js 的推荐示例会明确拒绝缺少托管回调能力的旧 SDK。
 
-各 SDK 使用协议版本 1，PAM Agent 配置版本为 1。遇到 `client_upgrade_required`（HTTP 426）需检查兼容性并升级；未知可选字段和通知事件可以传给应用，未实现的策略类型不得应用或确认。
 
-程序版本与协议、本地配置及状态版本分别管理。实例信息增加可选服务端能力列表；旧响应缺少此字段时保持 v1 接入方式。兼容错误仍显式报错，但不会撤销已有凭据；可选元数据接口缺失也不清理缓存。完整规则及四语言错误分类接口见 [协议兼容规则](docs/protocol-compatibility.md)。
 
 四种 SDK 均支持事件处理函数、首次与重连快照同步、串行处理及失败退避重试，原有调用形式保留。启用高层监听后，凭据更新事件会自动取密，成功后替换本地保留的最新凭据。保留值不按时间过期；普通取密先请求 API，只有超时、网络故障或 HTTP 5xx 时才返回本地值，并标记来源。权限拒绝或明确撤销后停止使用相应凭据。PAM Agent 自动更新并保存最新凭据，后端故障期间保留已有值。轮换切换仍要求实时获取并显式确认。接口与生命周期对照见 [事件处理接口](EVENT_HANDLERS.md)。
 
@@ -137,7 +135,6 @@ python3 -m pip install jms-pam==1.0.2
 - Java 使用 `UpperCamelCase` 类名和 `lowerCamelCase` 方法、字段。
 - Node.js 使用 `camelCase` 方法、字段和 Promise / `async`、`await`。
 
-Python 的原始 `credential.v1` 请求对象接口作为兼容入口保留；新接入统一使用 `from jms_pam import Client`。
 
 ## PAM Agent
 
@@ -182,7 +179,6 @@ go build -trimpath -o pam-agent ./cmd/pam-agent
 
 仓库根目录运行 `go test -race ./go/... ./agent/...` 可同时验证两个模块。
 
-其他平台构建、调试和格式兼容维护见 [PAM Agent 开发说明](docs/agent-development.md)。
 
 ## Python SDK 自动发布
 
@@ -215,5 +211,3 @@ Python 包版本由该文件统一读取；发布 workflow 会检查包版本与
 到内部 PyPI 镜像，应用直接使用 `python3 -m pip install jms-pam`。
 
 ## 1.0.2 账号与事件接口
-
-普通取密使用 `get_account(account_id=...)` / `GetAccount` / `getAccount`，直接读取账号的用户名、密码、资产及缓存来源。事件处理按 `account_id` 实时取密，校验 `account_revision`，应用成功后通过 `event_id` 上报结果。收到事件、取密或文件投递成功都不表示应用成功。对应的 Core 更新需同步部署。旧 key API 保留兼容。

@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+Truy vấn CLI/Socket và đọc thông tin xác thực của dịch vụ trả về `account`, `source`, `last_pull_at`. `account.version` là phiên bản thông tin xác thực thực tế của tài khoản; kết quả thông thường bỏ phiên bản chính sách, `account_revision` và `event_id`. `source` là `api` khi lấy trực tiếp từ Core, hoặc `local` khi dùng bộ nhớ đệm. `last_pull_at` là thời điểm RFC 3339 lấy thành công tài khoản đó từ Core gần nhất, kể cả khi phiên bản không đổi. Thời điểm được lưu cùng bộ nhớ đệm qua lần khởi động lại. Đồng bộ siêu dữ liệu, đọc bộ nhớ đệm và lỗi không cập nhật thời điểm. Bộ nhớ đệm cũ không rõ thời điểm trả null. Truy vấn theo nhu cầu không tự bật lưu thông tin xác thực ngoại tuyến.
+
+`event_id` vẫn nằm trong siêu dữ liệu thông báo và lớp ngoài thông báo cho script để báo cáo kết quả. Snapshot dùng lại sự kiện mới nhất khớp tài khoản, phiên bản, chính sách và máy khách, hoặc tạo sự kiện phát lại. Script đọc `credentials[selector].account`. Mẫu Go, ánh xạ trường và biến EnvironmentFile giữ tên cũ. Trình đọc JSON hiện có cần chuyển sang cấu trúc account lồng nhau.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Tệp JSON thông tin xác thực chỉ chứa `account`, không có `source` hoặc `last_pull_at`. Thời điểm lấy được xuất theo ID tài khoản thực tế vào `last_pull_at.json` cùng cấp thư mục `store.root`, đồng thời được giữ trong trạng thái riêng tư. Truy vấn trực tiếp thành công cập nhật tệp chẩn đoán ngay cả khi phiên bản không đổi, không ghi lại tệp thông tin xác thực. Kiểm tra phiên bản, đọc bộ nhớ đệm và lỗi không đổi thời điểm. Tài khoản bị thu hồi được xóa khỏi tệp chẩn đoán.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

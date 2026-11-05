@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+Las consultas CLI/Socket y la lectura de credenciales de servicios devuelven `account`, `source` y `last_pull_at`. `account.version` es la versión real de las credenciales de la cuenta; los resultados normales omiten versiones de política, `account_revision` y `event_id`. `source` vale `api` para una consulta a Core y `local` para caché. `last_pull_at` es la fecha RFC 3339 de la última consulta correcta de esa cuenta a Core, incluso sin cambio de versión. Se conserva con la caché tras reiniciar. La sincronización de metadatos, las lecturas locales y los fallos no la actualizan. Una caché antigua sin fecha conocida devuelve null. Una consulta bajo demanda no activa la retención sin conexión.
+
+`event_id` permanece en los metadatos de notificación y fuera de account en las notificaciones de scripts para informar del resultado. Los snapshots reutilizan el evento más reciente que coincide con cuenta, versión, política y cliente, o crean uno de republicación. Los scripts leen `credentials[selector].account`. Las plantillas Go, asignaciones de campos y variables EnvironmentFile conservan sus nombres. Los lectores JSON existentes deben adaptarse a la estructura account anidada.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Los archivos JSON de credenciales solo contienen `account`, sin `source` ni `last_pull_at`. Las fechas se exportan por ID real de cuenta a `last_pull_at.json`, junto al directorio `store.root`, y se conservan en el estado privado. Una consulta en vivo correcta actualiza inmediatamente el diagnóstico incluso con la misma versión, sin reescribir credenciales. Comprobar versiones, leer la caché o fallar no actualiza la fecha. Las cuentas revocadas se eliminan del diagnóstico.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

@@ -48,13 +48,13 @@ test('authorization, upgrade, malformed success fail explicitly', async () => {
 
 })
 
-test('malformed or timed out 426 responses remain compatibility failures', async () => {
+test('malformed error responses preserve the HTTP status', async () => {
   for (const fault of ['426-invalid', '426-timeout']) {
     const sdk = client(`node-compat-${fault}`, { timeout: 100 })
     try {
       const key = `cache-${fault}`
       await sdk.getCredential({ key })
-      await assert.rejects(sdk.getCredential({ key }), error => error instanceof PAMError && error.isCompatibilityError)
+      await assert.rejects(sdk.getCredential({ key }), error => error instanceof PAMError && error.statusCode === 426)
       const url = new URL('/__control', server.endpoint)
       url.search = new URLSearchParams({ instance: `node-compat-${fault}`, fault: 503 })
       await fetch(url)
@@ -130,8 +130,8 @@ test('managed refresh requires a live response and older events preserve the new
   const sdk = client('node-hooks-unit')
   let calls = 0, errors = 0, fetches = 0
   sdk.watchCredentialEvents = async function* () {
-    yield { event: 'credential.updated', credentialMode: 'subscription', credentialKey: 'db:account', accountId: 'account', revision: 3 }
-    yield { event: 'credential.updated', credentialMode: 'subscription', credentialKey: 'db:account', accountId: 'account', revision: 2 }
+    yield { event: 'credential.secret.updated', credentialMode: 'subscription', credentialKey: 'db:account', accountId: 'account', revision: 3 }
+    yield { event: 'credential.secret.updated', credentialMode: 'subscription', credentialKey: 'db:account', accountId: 'account', revision: 2 }
   }
   sdk.getCredential = async (options) => { fetches++; assert.equal(options.allowLocalFallback, false); return { revision: 2 } }
   sdk.onCredentialChanged = () => { calls++ }
@@ -165,8 +165,8 @@ test('policy revocation removes subscription aliases during a backend outage', a
     await sdk.getCredential({ key: 'db:account' })
     await control(id, { fault: 503 })
     assert.equal((await sdk.getCredential({ key: 'db:account' })).fromLocal, true)
-    await control(id, { event: 'credential.revoked' })
-    for await (const event of events) if (event.event === 'credential.revoked') break
+    await control(id, { payload: JSON.stringify({ event: 'app.scope.updated', authorized_account_ids: [] }) })
+    for await (const event of events) if (event.event === 'app.scope.updated') break
     await assert.rejects(sdk.getCredential({ key: 'db:account' }), PAMError)
   } finally { sdk.close(); await events.return() }
 })
@@ -185,7 +185,7 @@ test('latest credentials survive elapsed time and are refreshed automatically by
   const sub = sdk.startEvents({signal: AbortSignal.timeout(5000)})
   try {
     await ready
-    await control(id, {revision: 3, event: 'credential.updated'})
+    await control(id, {revision: 3, event: 'credential.secret.updated'})
     await refreshed
     await control(id, {fault: 503})
     const {performance} = require('node:perf_hooks')
@@ -206,7 +206,7 @@ test('latest credentials survive elapsed time and are refreshed automatically by
 
 
 test('authoritative scope events evict unauthorized account and policy cache aliases', async () => {
-  for (const event of ['snapshot', 'app.scope.updated', 'application.scope.updated']) {
+  for (const event of ['snapshot', 'app.scope.updated']) {
     const id = `node-authority-cache-${event}`
     const sdk = client(id)
     const abort = new AbortController()

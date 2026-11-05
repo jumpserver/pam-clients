@@ -268,7 +268,7 @@ func TestEventsAndCancellation(t *testing.T) {
 		}
 		return nil
 	})
-	if err != sentinel || len(events) != 4 || events[0].Event != "snapshot" || events[1].Event != "credential.updated" || events[2].Event != "future.notification" || events[3].Credentials[0].Revision != 3 {
+	if err != sentinel || len(events) != 4 || events[0].Event != "snapshot" || events[1].Event != "credential.secret.updated" || events[2].Event != "future.notification" || events[3].Credentials[0].Revision != 3 {
 		t.Fatalf("Stream failed: %v", err)
 	}
 	var future map[string]string

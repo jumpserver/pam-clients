@@ -15,7 +15,6 @@ from ._auth import HTTPSignatureAuth
 from ._commands import execute_command
 from ._event_dispatcher import EventDispatcher
 from ._events import EventStream
-from ._event_names import canonical_event_name
 from ._transport import Transport
 from ._version import CONFIG_SCHEMA_VERSION, PROTOCOL_VERSION, __version__
 from .exceptions import PAMError
@@ -200,8 +199,8 @@ class Client:
                 error.status_code in (401, 403, 404)
                 or (error.status_code == 400 and error.code == "credential_not_found")
             )
-            temporary = not error.is_compatibility_error and (
-                error.code == "NetworkError"
+            temporary = (
+                error.code == "NetworkError" and (error.status_code is None or 200 <= error.status_code < 300)
                 or (error.status_code is not None and 500 <= error.status_code < 600)
             )
             with self._credentials_lock:
@@ -231,12 +230,12 @@ class Client:
         return credential
 
     def _reconcile_latest_credentials(self, event):
-        name = canonical_event_name(event.get("event"))
-        if name not in {"snapshot", "credential.revoked", "app.scope.updated", "configuration.updated"}:
+        name = event.get("event")
+        if name not in {"snapshot", "app.scope.updated"}:
             return
         with self._credentials_lock:
             self._credential_generation += 1
-            if name in {"app.scope.updated", "configuration.updated"}:
+            if name in {"app.scope.updated"}:
                 # Push snapshots cannot prove the full pull authorization scope.
                 authorized = event.get('authorized_account_ids')
                 self._latest_credentials = {
@@ -244,35 +243,6 @@ class Client:
                     if (value.account.id in authorized if authorized is not None
                         else selector[0] != "account_id")
                 }
-                return
-            if name != "snapshot":
-                key = event.get("credential_key") or event.get("key")
-                account_id = event.get("account_id")
-                key = key if isinstance(key, str) and key else None
-                account_id = (
-                    account_id if isinstance(account_id, str) and account_id else None
-                )
-                if key is None and account_id is None:
-                    self._latest_credentials.clear()
-                else:
-                    self._latest_credentials = {
-                        selector: credential
-                        for selector, credential in self._latest_credentials.items()
-                        if not (
-                            key is not None
-                            and (
-                                selector == ("key", key)
-                                or credential.key == key
-                                or credential.key.startswith(key + ":")
-                            )
-                            or account_id is not None
-                            and (key is None or key.startswith("account:"))
-                            and (
-                                selector == ("account_id", account_id)
-                                or credential.account.id == account_id
-                            )
-                        )
-                    }
                 return
             updates = event.get("credentials", [])
             if not isinstance(updates, list) or any(
@@ -495,7 +465,7 @@ class Client:
                 isinstance(command, dict) for command in commands
             ):
                 raise TypeError("commands must be a list of objects")
-            return [{**command, 'event': canonical_event_name(command.get('event'))} for command in commands]
+            return [{**command, 'event': command.get('event')} for command in commands]
 
         return self._request(
             "GET",
@@ -646,9 +616,6 @@ class Client:
         """Optional command hook; return only after restart and health verification."""
         raise NotImplementedError("Application restart is not configured")
 
-    def on_credential_revoked(self, event: dict[str, Any]) -> None:
-        """Override to stop using revoked credentials and release connections."""
-
     def on_event_error(self, error: Exception, event: Optional[dict[str, Any]]) -> None:
         """Handle hook/fetch failures; event is None for a fatal reader failure.
 
@@ -674,7 +641,7 @@ class Client:
             self._streams.add(stream)
         try:
             for event in stream.watch(stop_event):
-                event = {**event, 'event': canonical_event_name(event.get('event'))}
+                event = {**event, 'event': event.get('event')}
                 self._reconcile_latest_credentials(event)
                 yield event
         finally:

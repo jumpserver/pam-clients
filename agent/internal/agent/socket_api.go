@@ -150,8 +150,6 @@ func localError(err error) (int, string) {
 		return http.StatusNotFound, "socket_service_not_found"
 	case errors.Is(err, errSocketConflict):
 		return http.StatusConflict, "socket_delivery_superseded"
-	case incompatible(err):
-		return http.StatusUpgradeRequired, "client_upgrade_required"
 	}
 	var remote *pam.PAMError
 	if errors.As(err, &remote) {

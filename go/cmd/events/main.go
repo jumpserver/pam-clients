@@ -54,12 +54,12 @@ func main() {
 	defer stop()
 	err = client.WatchCredentialEvents(ctx, func(event pam.Event) error {
 		var updates []pam.Event
-		if event.CommandID != "" || event.Event == "credential.updated" {
+		if event.CommandID != "" || pam.IsCredentialApplicationEvent(event.Event) {
 			updates = []pam.Event{event}
 		} else if event.Event == "snapshot" {
 			updates = event.Credentials /* Reconcile removed connections. */
 		}
-		// Release affected connections on credential.revoked.
+		// Reconcile authorization and release removed accounts on scope updates.
 		for _, update := range updates {
 			if err := handleEvent(ctx, client, update); err != nil {
 				log.Printf("Event processing failed: %T", err)

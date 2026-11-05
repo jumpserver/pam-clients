@@ -7,7 +7,6 @@ const { setTimeout: wait } = require('node:timers/promises')
 const { WebSocket, createWebSocketStream } = require('ws')
 const { EventSubscription } = require('./event-dispatcher')
 
-const canonicalEventName = require('./event-names')
 
 const VERSION = '1.0.2'
 const PROTOCOL_VERSION = 1
@@ -35,10 +34,6 @@ class PAMError extends Error {
     this.requestId = requestId
   }
 
-  get isCompatibilityError() {
-    if ([401, 403, 404].includes(this.statusCode)) return false
-    return this.statusCode === 426 || this.code === 'client_upgrade_required'
-  }
 }
 
 function requiredString(value, name) {
@@ -482,7 +477,7 @@ class Client {
     } catch (error) {
       const denied = [401, 403, 404].includes(error.statusCode)
         || (error.statusCode === 400 && error.code === 'credential_not_found')
-      const temporary = error instanceof PAMError && !error.isCompatibilityError && (error.code === 'NetworkError'
+      const temporary = error instanceof PAMError && ((error.code === 'NetworkError' && (error.statusCode == null || (error.statusCode >= 200 && error.statusCode < 300)))
         || (error.statusCode >= 500 && error.statusCode < 600))
       if (denied) { this.#latestCredentials.clear(); this.#credentialGeneration++ }
       const latest = this.#latestCredentials.get(selector)
@@ -493,24 +488,12 @@ class Client {
   }
 
   #reconcileLatestCredentials(event) {
-    if (!['snapshot', 'credential.revoked', 'app.scope.updated', 'configuration.updated'].includes(event.event)) return
+    if (!['snapshot', 'app.scope.updated'].includes(event.event)) return
     this.#credentialGeneration++
-    if (['app.scope.updated', 'configuration.updated'].includes(event.event)) {
+    if (['app.scope.updated'].includes(event.event)) {
       const authorized = new Set(event.authorizedAccountIds || [])
       for (const [selector, credential] of this.#latestCredentials)
         if (event.authorizedAccountIds != null ? !authorized.has(credential.account.id) : selector.startsWith('account:')) this.#latestCredentials.delete(selector)
-      return
-    }
-    if (event.event !== 'snapshot') {
-      const rawKey = event.credentialKey || event.key
-      const key = typeof rawKey === 'string' && rawKey ? rawKey : undefined
-      const accountId = typeof event.accountId === 'string' && event.accountId ? event.accountId : undefined
-      if (!key && !accountId) this.#latestCredentials.clear()
-      else for (const [selector, credential] of this.#latestCredentials)
-        if ((key && (selector === `key:${key}` || credential.key === key || credential.key.startsWith(`${key}:`)))
-          || (accountId && (!key || key.startsWith('account:'))
-            && (selector === `account:${accountId}` || credential.account.id === accountId)))
-          this.#latestCredentials.delete(selector)
       return
     }
     if (!Array.isArray(event.credentials)) {
@@ -615,7 +598,7 @@ class Client {
       (data) => {
         if (!Array.isArray(data.commands)) throw new TypeError('commands must be an array')
         data.commands.forEach(object)
-        return camelize(data.commands.map(command => ({ ...command, event: canonicalEventName(command.event) })))
+        return camelize(data.commands.map(command => ({ ...command, event: command.event })))
       },
       { signal },
     )
@@ -733,7 +716,7 @@ class Client {
             if (combined.aborted) break
             const event = object(JSON.parse(frame.toString()))
             requiredString(event.event, 'event')
-            event.event = canonicalEventName(event.event)
+            event.event = event.event
             delay = 1000
             if (event.event === 'pong') continue
             if (

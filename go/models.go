@@ -313,7 +313,6 @@ func (e *Event) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	*e = Event(value)
-	e.Event = canonicalEventName(e.Event)
 	e.Data = data
 	return nil
 }
@@ -330,15 +329,6 @@ type PAMError struct {
 
 func (e *PAMError) Error() string { return fmt.Sprintf("[%s] %s", e.Code, e.Detail) }
 func (e *PAMError) Unwrap() error { return e.Err }
-
-// IsCompatibilityError separates unsupported versions from permission denial.
-// Compatibility errors are explicit failures, but do not revoke retained values.
-func (e *PAMError) IsCompatibilityError() bool {
-	if e == nil || e.StatusCode == 401 || e.StatusCode == 403 || e.StatusCode == 404 {
-		return false
-	}
-	return e.StatusCode == 426 || e.Code == "client_upgrade_required"
-}
 
 func required(data map[string]json.RawMessage, names ...string) error {
 	for _, name := range names {

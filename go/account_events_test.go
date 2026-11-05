@@ -20,8 +20,32 @@ func managedWatcher(t *testing.T, instance string, handler func(context.Context,
 }
 
 func managedUpdate() Event {
-	return Event{Event: "credential.updated", EventID: "managed-event", AccountID: "account", AccountRevision: 2,
+	return Event{Event: "credential.secret.updated", EventID: "managed-event", AccountID: "account", AccountRevision: 2,
 		Revision: 2, Key: "database", CredentialMode: "alternating_rotation"}
+}
+
+func TestDistinctCredentialApplicationEvents(t *testing.T) {
+	count := 0
+	w := managedWatcher(t, "managed-go-event-names", func(context.Context, Account) error {
+		count++
+		return nil
+	})
+	for _, name := range []string{CredentialSecretUpdated, CredentialSwitchPublished, CredentialRefreshRequested} {
+		update := managedUpdate()
+		update.Event, update.EventID = name, name
+		w.dispatch(update)
+	}
+	if count != 3 || len(w.pending) != 0 {
+		t.Fatalf("three application events must apply and report successfully: count=%d pending=%d", count, len(w.pending))
+	}
+	for _, name := range []string{"rotation.started", "credential.change.completed"} {
+		update := managedUpdate()
+		update.Event, update.EventID = name, name
+		w.dispatch(update)
+	}
+	if count != 3 {
+		t.Fatal("progress events repeated credential application")
+	}
 }
 
 func TestManagedResultRetryDoesNotRepeatBusinessApplication(t *testing.T) {
@@ -158,7 +182,7 @@ func TestPolicyUnbindingPreservesAuthorizedConnectionUntilActualRevocation(t *te
 }
 
 func TestAuthoritativeScopeEvictsAllUnauthorizedCredentialCacheAliases(t *testing.T) {
-	for _, name := range []string{"snapshot", "app.scope.updated", "application.scope.updated"} {
+	for _, name := range []string{"snapshot", "app.scope.updated"} {
 		instance := "go-authorization-cache-" + name
 		client := contractClient(t, instance, "jms-pam")
 		ctx := context.Background()
@@ -183,7 +207,7 @@ func TestLegacyRestartNameRunsTheCurrentCommandHandler(t *testing.T) {
 	calls := 0
 	w := managedWatcher(t, "managed-go-legacy-restart", func(context.Context, Account) error { t.Error("restart fetched credentials"); return nil })
 	w.handlers.OnApplicationRestart = func(context.Context) error { calls++; return nil }
-	event := Event{Event: "application.restart.requested", CommandID: "legacy-command", EventID: "legacy-restart"}
+	event := Event{Event: "app.restart.requested", CommandID: "legacy-command", EventID: "legacy-restart"}
 	w.dispatch(event)
 	w.dispatch(event)
 	if calls != 1 {

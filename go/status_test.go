@@ -72,7 +72,7 @@ func TestCredentialAndCommandHookPanicsAreIsolated(t *testing.T) {
 	watcher := &EventWatcher{client: client, ctx: context.Background(), pending: make(map[CredentialSelector]pendingCredential)}
 	watcher.handlers.OnCredentialChanged = func(context.Context, Credential) error { panic("SECRET_CREDENTIAL_PANIC") }
 	watcher.handlers.OnError = func(context.Context, error, *Event) { panic("SECRET_ERROR_HOOK") }
-	event := Event{Event: "credential.updated", CredentialMode: "alternating_rotation", CredentialKey: "db", Revision: 2}
+	event := Event{Event: "credential.secret.updated", CredentialMode: "alternating_rotation", CredentialKey: "db", Revision: 2}
 	watcher.refresh(event, event, 0)
 	if len(watcher.pending) != 1 {
 		t.Fatal("panicking credential hook did not schedule retry")

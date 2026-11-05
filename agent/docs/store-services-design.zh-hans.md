@@ -2,7 +2,6 @@
 
 Core 与 PAM Agent 统一使用协议版本 1 和 `version: 1`。完整样例见 [store-services.json](../examples/store-services.json)，接入说明由 [docs/build.py](../../docs/build.py) 统一生成。`store` 与 `services` 独立配置，不与旧结构 `delivery` / `rules` 混用。
 
-迁移配置时核对旧 delivery 输出位置，按需调整业务读取路径；旧版输出文件不在新版 store 的文件记录中，不会自动删除。新版只清理自身记录的标准存储文件，不删除业务配置文件。
 
 ## 职责与范围
 
@@ -67,6 +66,5 @@ store 写入、通知接收或成功取密均不表示业务切换成功。所�
 
 ## 验证范围
 
-自动测试覆盖旧配置兼容、新结构导出、仅 store、仅 services、all 与指定账号范围、多账号 alias 映射、通知即时与定时更新、连续通知下的定时执行、A/B 共同确认、重启去重、授权撤销及离线撤销清理。Core 测试在独立测试数据库中执行。
 
 `owner` 为可选项。非 root 运行可省略 `store.owner` 和 `socket.owner`，使用当前用户；`init-local` 会自动设置。root 运行时按业务用户的文件和 Socket 访问需求指定，字段不改变 PAM Agent 进程的运行用户。

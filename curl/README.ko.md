@@ -1,6 +1,6 @@
 # cURL — 사용 가이드
 
-이 디렉터리는 기존 account-secret API 진단용 HTTP 서명 스크립트입니다. 애플리케이션 연동에는 Python, Go, Java 또는 Node.js SDK를 사용하세요.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## 환경 요구 사항
 
@@ -11,7 +11,7 @@ Bash, cURL, OpenSSL, base64가 필요합니다. ASSET과 ACCOUNT를 바꾸고, �
 
 ## 설정 및 실행
 
-애플리케이션 관리에서 애플리케이션을 생성하고 대상 자산 계정을 허용하세요. 아래 엔드포인트, 애플리케이션 AK/SK, 조직 ID를 설정하고 실행 전에 모든 자리 표시자를 실제 값으로 바꾸세요.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-기본 자산은 ubuntu_docker, 계정은 root입니다. 예제 코드에서 실제 허용된 이름으로 바꾸세요. 명령은 저장소 루트에서 실행합니다. 예제 출력에는 비밀 정보가 포함되므로 애플리케이션 로그에 기록하지 마세요.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## 요청 및 응답
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-id는 애플리케이션을 식별하며 계정 리비전이 아닙니다. secret이 null이면 서버의 비밀 정보 보기 설정이 제한한 것일 수 있습니다. 이 예제는 자격 증명 이벤트, 적용 리비전 보고, 애플리케이션 명령을 구현하지 않습니다.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## 문제 해결
 
-401은 AK/SK, 조직, 호스트 시간, 서명 URL을 확인하세요. 403은 애플리케이션 상태와 계정 권한, 400은 자산/계정 선택과 URL 인코딩을 확인하세요. 비밀 정보와 Authorization 헤더를 기록하지 마세요. 이름은 허용된 자산과 계정에 일치해야 합니다.
+Check identity, authorization, signature and instance ID.
 
 ## 자격 증명 정책 연동
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 `account_id`로 계정을 가져오고 연결 검증과 전환을 완료한 후 `event_id`로 `success` 또는 `failed`를 보고합니다. 수신 또는 조회 성공은 적용 성공이 아닙니다. 이벤트와 재연결 스냅샷에는 `event_id`, `account_id`, `account_revision`이 있습니다. 적용 전 버전을 확인하고 명령은 `running`으로 선점하세요. 처리는 멱등적이어야 합니다.
 
-received는 이벤트를 읽었다는 뜻입니다. event_id가 있는 업무 이벤트를 처리하기 전에 같은 WebSocket에서 received를 보냅니다. snapshot과 pong에는 수신 확인이 필요 없습니다. 연결과 재연결마다 스냅샷을 동기화하고 credential.updated, 권한 취소, 설정 변경을 처리하세요.
+received는 이벤트를 읽었다는 뜻입니다. event_id가 있는 업무 이벤트를 처리하기 전에 같은 WebSocket에서 received를 보냅니다. snapshot과 pong에는 수신 확인이 필요 없습니다. 연결과 재연결마다 스냅샷을 동기화하고 credential.secret.updated / credential.switch.published / credential.refresh.requested, 권한 취소, 설정 변경을 처리하세요.

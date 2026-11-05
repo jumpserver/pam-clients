@@ -10,7 +10,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -27,7 +26,7 @@ var configFieldPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 type DeliveryConfiguration struct {
 	Mode      string `json:"delivery_mode"`
 	Root      string `json:"delivery_root"`
-	Socket    string `json:"socket_path,omitempty"`
+	Socket    string `json:"path,omitempty"`
 	User      string `json:"app_user"`
 	Unit      string `json:"systemd_unit"`
 	Operation string `json:"systemd_action"`
@@ -121,7 +120,7 @@ type ApplicationCheck struct {
 }
 
 type AccountSelector struct {
-	AccountID          string `json:"account_id"`
+	AccountID          string `json:"id"`
 	Alias              string `json:"alias,omitempty"`
 	Username           string `json:"username,omitempty"`
 	AllowAccountSwitch bool   `json:"allow_account_switch,omitempty"`
@@ -134,22 +133,19 @@ type Rule struct {
 	RestartSupported     bool              `json:"restart_supported,omitempty"`
 	AllowAccountSwitch   bool              `json:"allow_account_switch,omitempty"`
 	UpdateOnNotification *bool             `json:"update_on_notification,omitempty"`
-	Keys                 []string          `json:"keys,omitempty"`
 	Accounts             []AccountSelector `json:"accounts,omitempty"`
-	ConfigUpdate         *ConfigUpdate     `json:"config_update,omitempty"`
+	ConfigUpdate         *ConfigUpdate     `json:"update_config,omitempty"`
 	CredentialCheck      *Action           `json:"credential_check,omitempty"`
-	ServiceAction        *Action           `json:"service_action,omitempty"`
-	ApplicationCheck     *ApplicationCheck `json:"application_check,omitempty"`
-	// Files and Action are retained for existing local configurations.
-	Files  []File  `json:"files,omitempty"`
-	Action *Action `json:"action,omitempty"`
+	ServiceAction        *Action           `json:"reload_service,omitempty"`
+	ApplicationCheck     *ApplicationCheck `json:"app_check,omitempty"`
+	// Internal delivery stages are derived from the services configuration.
 }
 
 type Config struct {
 	instanceIDGenerated bool
 	// Local is chosen by the CLI for current-user foreground runs, never by Core.
 	Local               bool                  `json:"-"`
-	ConfigVersion       int                   `json:"version,omitempty"`
+	ConfigVersion       int                   `json:"version"`
 	Endpoint            string                `json:"endpoint"`
 	AppID               string                `json:"app_id"`
 	AppSecret           string                `json:"app_secret"`
@@ -158,8 +154,8 @@ type Config struct {
 	StateFile           string                `json:"state_file,omitempty"`
 	EventFile           string                `json:"event_file,omitempty"`
 	PullIntervalSeconds int                   `json:"pull_interval,omitempty"`
-	Delivery            DeliveryConfiguration `json:"delivery"`
-	Rules               []Rule                `json:"rules,omitempty"`
+	Delivery            DeliveryConfiguration `json:"-"`
+	Rules               []Rule                `json:"-"`
 	Store               *StoreConfiguration   `json:"store,omitempty"`
 	Services            []Rule                `json:"services,omitempty"`
 	Socket              *SocketConfiguration  `json:"socket,omitempty"`
@@ -215,9 +211,9 @@ func loadBootstrapConfig(path string) (Config, error) {
 func (c Config) compactDefaults() Config {
 	if c.ConfigVersion == 0 {
 		c.ConfigVersion = 1
-		if c.modern() {
-			c.ConfigVersion = CurrentConfigVersion
-		}
+
+		c.ConfigVersion = CurrentConfigVersion
+
 	}
 	if c.StateFile == DefaultState {
 		c.StateFile = ""
@@ -242,20 +238,14 @@ func validKey(key string) bool {
 }
 
 func (c Config) Validate() (err error) {
-	if c.modern() {
-		defer func() {
-			if err != nil {
-				err = errors.New(currentServiceFieldNames(err.Error()))
-			}
-		}()
-		if err := c.validateServices(); err != nil {
-			return err
-		}
-		c = c.normalized()
-		c.Rules = c.Services
+
+	if err := c.validateServices(); err != nil {
+		return err
 	}
-	// Zero is the legacy value for configurations constructed in Go. An explicit
-	// zero in JSON is rejected by decodeConfig, rather than treated as omitted.
+	c = c.normalized()
+	c.Rules = c.Services
+
+	// Programmatic construction uses defaults; JSON requires an explicit version.
 	if c.ConfigVersion != 0 && c.ConfigVersion != 1 && c.ConfigVersion != CurrentConfigVersion {
 		return unsupportedVersion("configuration", "version", c.ConfigVersion, CurrentConfigVersion)
 	}
@@ -285,36 +275,23 @@ func (c Config) Validate() (err error) {
 	}
 	mappedTargets := map[string]mappedTarget{}
 	for _, rule := range c.Rules {
-		if rule.Delivery != "" && (!c.modern() || rule.Delivery != "socket") {
+		if rule.Delivery != "" && rule.Delivery != "socket" {
 			return errors.New("socket delivery requires a services declaration")
 		}
-		if (len(rule.Keys) == 0) == (len(rule.Accounts) == 0) {
-			return errors.New("delivery rules require either keys or accounts")
+		if len(rule.Accounts) == 0 {
+			return errors.New("services require selected accounts")
 		}
-		modern := rule.ConfigUpdate != nil || rule.CredentialCheck != nil || rule.ServiceAction != nil || rule.ApplicationCheck != nil
-		if modern && (len(rule.Files) > 0 || rule.Action != nil) {
-			return errors.New("legacy files/action cannot be mixed with staged delivery blocks")
-		}
-		if rule.Delivery != "socket" && !modern && len(rule.Files) == 0 && rule.Action == nil {
-			return errors.New("delivery rules require files or an action")
-		}
-		if rule.Delivery != "socket" && modern && rule.ConfigUpdate == nil && rule.ServiceAction == nil {
-			return errors.New("staged delivery requires config_update or service_action")
+		if rule.Delivery != "socket" && rule.ConfigUpdate == nil && rule.ServiceAction == nil {
+			return errors.New("services require update_config or reload_service")
 		}
 		keys := map[string]bool{}
-		for _, key := range rule.Keys {
-			if !validKey(key) || keys[key] {
-				return errors.New("invalid or duplicate rule key")
-			}
-			keys[key] = true
-		}
 		for _, account := range rule.Accounts {
 			if !validKey(account.AccountID) || keys[account.AccountID] {
 				return errors.New("invalid or duplicate rule account_id")
 			}
 			keys[account.AccountID] = true
 		}
-		files := rule.Files
+		var files []File
 		if rule.ConfigUpdate != nil {
 			update := rule.ConfigUpdate
 			choices := 0
@@ -332,7 +309,7 @@ func (c Config) Validate() (err error) {
 			}
 			files = update.Files
 			if update.File != "" {
-				if !absolute(update.File) || (update.patchFormat() != "env" && update.patchFormat() != "yaml") || len(rule.Keys) > 0 || len(rule.Accounts) == 0 {
+				if !absolute(update.File) || update.patchFormat() != "env" && update.patchFormat() != "yaml" || len(rule.Accounts) == 0 {
 					return errors.New("file mapping requires an absolute path, env or yaml format and account selectors")
 				}
 				if c.Local && update.Owner != "" && update.Owner != c.Delivery.User {
@@ -395,14 +372,14 @@ func (c Config) Validate() (err error) {
 		}
 		for _, file := range files {
 			format := file.format()
-			if !absolute(file.Path) || file.Path == c.StateFile || file.Path == c.EventFile || file.Path == c.Delivery.Socket || (format != "json" && format != "environment" && format != "template") {
+			if !absolute(file.Path) || file.Path == c.StateFile || file.Path == c.EventFile || file.Path == c.Delivery.Socket || format != "json" && format != "environment" && format != "template" {
 				return errors.New("invalid delivery file path or format")
 			}
 			if targets[file.Path] || mappedTargets[file.Path].fields != nil {
 				return errors.New("a delivery target must belong to one rule")
 			}
 			targets[file.Path] = true
-			if format == "environment" && len(rule.Keys)+len(rule.Accounts) != 1 {
+			if format == "environment" && len(rule.Accounts) != 1 {
 				return errors.New("EnvironmentFile rules require exactly one selected credential")
 			}
 			if format == "template" && !absolute(file.Template) {
@@ -412,7 +389,7 @@ func (c Config) Validate() (err error) {
 				return errors.New("local files must belong to the current user")
 			}
 		}
-		for _, action := range []*Action{rule.Action, rule.CredentialCheck, rule.ServiceAction} {
+		for _, action := range []*Action{rule.CredentialCheck, rule.ServiceAction} {
 			if action == nil {
 				continue
 			}
@@ -446,31 +423,9 @@ func (c Config) Validate() (err error) {
 // Local rules advertise which authorized credentials this instance can use.
 // An empty rules list uses default delivery for every application binding.
 func (c Config) DeliveryScope() *pam.DeliveryScope {
-	if c.modern() {
-		return c.serviceScope()
-	}
-	if len(c.Rules) == 0 {
-		return nil
-	}
-	keys, accounts := map[string]bool{}, map[string]bool{}
-	for _, rule := range c.Rules {
-		for _, key := range rule.Keys {
-			keys[key] = true
-		}
-		for _, account := range rule.Accounts {
-			accounts[account.AccountID] = true
-		}
-	}
-	scope := &pam.DeliveryScope{Keys: make([]string, 0, len(keys)), AccountIDs: make([]string, 0, len(accounts))}
-	for key := range keys {
-		scope.Keys = append(scope.Keys, key)
-	}
-	for id := range accounts {
-		scope.AccountIDs = append(scope.AccountIDs, id)
-	}
-	sort.Strings(scope.Keys)
-	sort.Strings(scope.AccountIDs)
-	return scope
+
+	return c.serviceScope()
+
 }
 
 func validateDelivery(d DeliveryConfiguration) error {
@@ -483,7 +438,7 @@ func validateDelivery(d DeliveryConfiguration) error {
 	if d.Mode != "environment" && (d.Unit != "" || d.Operation != "") {
 		return errors.New("use rules.service_action for JSON/socket service actions")
 	}
-	if d.Mode == "environment" && (!unitPattern.MatchString(d.Unit) || (d.Operation != "reload" && d.Operation != "restart")) {
+	if d.Mode == "environment" && (!unitPattern.MatchString(d.Unit) || d.Operation != "reload" && d.Operation != "restart") {
 		return errors.New("EnvironmentFile delivery requires a pinned systemd unit and action")
 	}
 	return nil
@@ -495,7 +450,7 @@ func (a Action) Validate() error {
 	}
 	switch a.kind() {
 	case "systemd":
-		if !unitPattern.MatchString(a.Unit) || (a.operation() != "reload" && a.operation() != "restart") || a.Path != "" || len(a.Args) != 0 {
+		if !unitPattern.MatchString(a.Unit) || a.operation() != "reload" && a.operation() != "restart" || a.Path != "" || len(a.Args) != 0 {
 			return errors.New("invalid systemd action")
 		}
 	case "script":
@@ -526,99 +481,15 @@ func decodeConfig(raw []byte) (Config, error) {
 	if err != nil {
 		return config, err
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return config, formatJSONError("configuration", err)
-	}
-	for field := range fields {
-		if (field != "socket" && strings.EqualFold(field, "socket")) || (field != "local_api" && strings.EqualFold(field, "local_api")) {
-			return config, errors.New("PAM Agent configuration field must be named socket")
-		}
-		if field != "config_version" && strings.EqualFold(field, "config_version") {
-			return config, errors.New("PAM Agent configuration field must be named version")
-		}
-		if field != "services" && strings.EqualFold(field, "services") {
-			return config, errors.New("PAM Agent configuration field must be named services")
-		}
-	}
-	// Read existing configurations without rewriting them; new output uses version.
-	legacyVersion, hasLegacyVersion := fields["config_version"]
-	if hasLegacyVersion {
-		if _, exists := fields["version"]; exists {
-			return config, errors.New("use only version; do not combine version and config_version")
-		}
-		version, err = readFormatVersion(raw, "configuration", "config_version", CurrentConfigVersion)
-		if err != nil {
-			return config, err
-		}
-		fields["version"] = legacyVersion
-		delete(fields, "config_version")
-	}
-	legacyAPI, hasLegacyAPI := fields["local_api"]
-	if hasLegacyAPI {
-		if _, exists := fields["socket"]; exists {
-			return config, errors.New("use only socket; do not combine socket and local_api")
-		}
-		fields["socket"] = legacyAPI
-		delete(fields, "local_api")
-	}
-	socket, hasSocket := fields["socket"]
-	if hasSocket && !bytes.Equal(bytes.TrimSpace(socket), []byte("null")) {
-		var options map[string]json.RawMessage
-		if err := json.Unmarshal(socket, &options); err != nil {
-			return config, formatJSONError("socket configuration", err)
-		}
-		for name := range options {
-			if (name != "path" && strings.EqualFold(name, "path")) || (name != "socket_path" && strings.EqualFold(name, "socket_path")) {
-				return config, errors.New("PAM Agent socket configuration field must be named path")
-			}
-		}
-		if legacyPath, exists := options["socket_path"]; exists {
-			if _, exists := options["path"]; exists {
-				return config, errors.New("use only socket.path; do not combine path and socket_path")
-			}
-			options["path"] = legacyPath
-			delete(options, "socket_path")
-		}
-		fields["socket"], err = json.Marshal(options)
-		if err != nil {
-			return config, formatJSONError("socket configuration", err)
-		}
-	}
-	_, hasServices := fields["services"]
-	if hasServices {
-		fields["services"], err = translateServiceFields(fields["services"], false)
-		if err != nil {
-			return config, err
-		}
-	}
-	if hasServices || hasLegacyVersion || hasLegacyAPI || hasSocket {
-		raw, err = json.Marshal(fields)
-		if err != nil {
-			return config, formatJSONError("configuration", err)
-		}
-	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
-		diagnostic := formatJSONError("configuration", err)
-		if hasServices {
-			diagnostic = errors.New(currentServiceFieldNames(diagnostic.Error()))
-		}
-		return config, diagnostic
+		return config, formatJSONError("configuration", err)
 	}
 	config.ConfigVersion = version
-	if config.modern() {
-		if _, exists := fields["delivery"]; exists {
-			return config, errors.New("store/services configuration cannot contain legacy delivery")
-		}
-		if _, exists := fields["rules"]; exists {
-			return config, errors.New("store/services configuration cannot contain legacy rules")
-		}
-		config.ConfigVersion = 1
-	}
 	return config, nil
 }
+
 func validateScope(scope pam.AgentScope) error {
 	seen := map[string]bool{}
 	for _, key := range scope.Keys {

@@ -42,16 +42,8 @@ def update_credential(client, output, key, confirm=False):
 def handle_event(client, output, event, keys, confirm=False):
     if event.get("event") == "snapshot":
         updates = event.get("credentials", [])
-    elif event.get("event") == "credential.updated":
+    elif event.get("event") in ("credential.secret.updated", "credential.switch.published", "credential.refresh.requested"):
         updates = [event]
-    elif event.get("event") == "credential.revoked":
-        key = event.get("credential_key")
-        if key and (keys is None or key in keys):
-            current = load_local(output, KIND)
-            if current["credentials"].pop(key, None):
-                save_local(output, current)
-                LOG.info("Removed revoked policy %s", key)
-        return False
     else:
         return event.get("event") == "app.scope.updated"
     for update in updates:

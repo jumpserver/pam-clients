@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -24,7 +23,6 @@ type Remote interface {
 	SyncAgent(context.Context, pam.AgentSyncOptions) (pam.AgentSync, error)
 	GetCredentialFresh(context.Context, pam.CredentialSelector) (pam.Credential, error)
 	WatchCredentialEvents(context.Context, func(pam.Event) error) error
-	ConfirmCredential(context.Context, string, int64, string) (pam.CredentialConfirmation, error)
 	ConfirmEvent(context.Context, string, string, string) (pam.CommandResult, error)
 	ListApplicationCommands(context.Context) ([]pam.Event, error)
 	ReportApplicationCommandResult(context.Context, string, string, string) (pam.CommandResult, error)
@@ -101,12 +99,7 @@ func New(config Config, remote Remote) (*Agent, error) {
 		Store    *StoreConfiguration
 		Services []Rule
 	}{config.Delivery, config.Rules, config.Store, config.Services})
-	if !config.modern() {
-		localDelivery, _ = json.Marshal(struct {
-			Delivery DeliveryConfiguration
-			Rules    []Rule
-		}{config.Delivery, config.Rules})
-	}
+
 	localDigest := sha256.Sum256(localDelivery)
 	expectedLocalHash := hex.EncodeToString(localDigest[:])
 	state.LocalDeliveryHash = expectedLocalHash
@@ -150,9 +143,7 @@ func New(config Config, remote Remote) (*Agent, error) {
 		state.Commands = map[string]pam.Event{}
 	}
 	if state.LocalDeliveryHash != expectedLocalHash {
-		if !config.modern() {
-			state.Delivered = map[string]int64{}
-		}
+
 		state.LocalDeliveryHash = expectedLocalHash
 	}
 	if state.ServiceVersions == nil {
@@ -164,20 +155,20 @@ func New(config Config, remote Remote) (*Agent, error) {
 	if state.StoreFiles == nil {
 		state.StoreFiles = map[string]string{}
 	}
-	if config.modern() {
-		prepareServiceVersions(config, &state)
-	}
+
+	prepareServiceVersions(config, &state)
+
 	if err := validateScope(state.Scope); err != nil {
 		return nil, err
 	}
 	service := &Agent{Config: config, remote: remote, state: state, deliver: Deliver, changed: make(chan struct{})}
 	service.restoreSocketServices()
-	if config.modern() {
-		if err := service.pruneServiceState(); err != nil {
-			return nil, err
-		}
+
+	if err := service.pruneServiceState(); err != nil {
+		return nil, err
 	}
-	if err := service.restoreAccountUsage(); err != nil {
+
+	if err := service.restoreServiceUsage(); err != nil {
 		return nil, err
 	}
 	if config.instanceIDGenerated {
@@ -195,6 +186,9 @@ func (a *Agent) persist() error {
 	if err := writeJSON(a.Config.StateFile, a.state); err != nil {
 		return err
 	}
+	if err := a.writePullTimesLocked(); err != nil {
+		return err
+	}
 	if a.changed != nil {
 		close(a.changed)
 	}
@@ -207,35 +201,28 @@ func denied(err error) bool {
 	return errors.As(err, &failure) && (failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404)
 }
 
-func incompatible(err error) bool {
-	var failure *pam.PAMError
-	return errors.As(err, &failure) && failure.IsCompatibilityError()
-}
-
 func (a *Agent) failure(err error, identity bool) error {
 	a.mu.Lock()
 	a.state.Status = "error"
 	a.state.SyncError = "agent_sync_failed"
-	if incompatible(err) {
-		a.state.SyncError = "client_upgrade_required"
-	}
+
 	if identity && denied(err) {
 		a.state.Denied = true
 		a.state.SyncError = "agent_access_denied"
-		if a.Config.modern() {
-			clear(a.state.Latest)
-			clear(a.state.Authorized)
-			clear(a.state.Wanted)
-			clear(a.state.Delivered)
-			clear(a.state.Applied)
-		}
+
+		clear(a.state.Latest)
+		clear(a.state.Authorized)
+		clear(a.state.Wanted)
+		clear(a.state.Delivered)
+		clear(a.state.Applied)
+
 	}
 	persistence := a.persist()
 	a.mu.Unlock()
 	if persistence != nil {
 		return persistence
 	}
-	if a.Config.modern() && identity && denied(err) {
+	if identity && denied(err) {
 		return errors.Join(err, a.removeRevokedStoreFiles())
 	}
 	return err
@@ -280,45 +267,26 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 		return errors.Join(a.recordEvent("received", event), a.command(ctx, event))
 	}
 	switch event.Event {
-	case "snapshot", "credential.revoked", "credential.updated", "app.scope.updated", "configuration.updated":
+	case "snapshot", pam.CredentialSecretUpdated, pam.CredentialSwitchPublished, pam.CredentialRefreshRequested, "app.scope.updated":
 	default:
 		return a.recordEvent("received", event)
 	}
+	if (event.Event == "snapshot" || event.Event == "app.scope.updated") && event.AuthorizedAccountIDs == nil {
+		return errors.New("account authorization is missing from scope event")
+	}
 	a.mu.Lock()
-	if event.Event == "snapshot" || event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
+	if event.Event == "snapshot" || event.Event == "app.scope.updated" {
 		a.applyAccountAuthorizationLocked(event.AuthorizedAccountIDs)
 	}
 	switch event.Event {
 	case "snapshot":
-		scope := map[string]bool{}
 		for _, item := range event.Credentials {
 			key := eventKey(item)
-			scope[key] = true
 			if item.Revision > a.state.Wanted[key] {
 				a.state.Wanted[key] = item.Revision
 			}
 		}
-		for key := range a.state.Authorized {
-			if !scope[key] && !a.Config.modern() {
-				delete(a.state.Authorized, key)
-				delete(a.state.Wanted, key)
-			}
-		}
-	case "credential.revoked":
-		key := eventKey(event)
-		for candidate := range a.state.Authorized {
-			if (key == "" && event.AccountID == "") || (key != "" && (candidate == key || strings.HasPrefix(candidate, key+":"))) ||
-				(event.AccountID != "" && (key == "" || strings.HasPrefix(key, "account:")) && a.state.Latest[candidate].AccountID == event.AccountID) {
-				delete(a.state.Authorized, candidate)
-				delete(a.state.Wanted, candidate)
-				if a.Config.modern() {
-					delete(a.state.Latest, candidate)
-					delete(a.state.Delivered, candidate)
-					delete(a.state.Applied, candidate)
-				}
-			}
-		}
-	case "credential.updated":
+	case pam.CredentialSecretUpdated, pam.CredentialSwitchPublished, pam.CredentialRefreshRequested:
 		key := eventKey(event)
 		if key != "" && event.Revision >= a.state.Wanted[key] {
 			a.state.Wanted[key] = event.Revision
@@ -329,24 +297,20 @@ func (a *Agent) HandleEvent(ctx context.Context, event pam.Event) error {
 	if err != nil {
 		return err
 	}
-	if a.Config.modern() {
-		if event.Event == "credential.revoked" || event.Event == "snapshot" || event.Event == "app.scope.updated" || event.Event == "configuration.updated" {
-			if err := a.removeRevokedStoreFiles(); err != nil {
-				return err
-			}
+
+	if event.Event == "snapshot" || event.Event == "app.scope.updated" {
+		if err := a.removeRevokedStoreFiles(); err != nil {
+			return err
 		}
-		return errors.Join(a.recordEvent("received", event), a.synchronizeServices(ctx, true))
 	}
-	return errors.Join(a.recordEvent("received", event), a.synchronize(ctx))
+	return errors.Join(a.recordEvent("received", event), a.synchronizeServices(ctx, true))
+
 }
 
 // Push membership describes notifications and rotation following. Only the
 // explicit account authorization list can revoke an otherwise usable account.
 // Apply reductions before HTTP synchronization so an outage cannot retain access.
 func (a *Agent) applyAccountAuthorizationLocked(ids []string) {
-	if ids == nil {
-		return // Older snapshots do not describe the complete pull authorization.
-	}
 	allowed := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		allowed[id] = true
@@ -396,277 +360,8 @@ func (a *Agent) Sync(ctx context.Context) error {
 	return a.synchronize(ctx)
 }
 
-func (a *Agent) synchronize(ctx context.Context) (result error) {
-	if a.Config.modern() {
-		return a.synchronizeServices(ctx, false)
-	}
-	// Usage reporting is optional telemetry and must never fail credential delivery.
-	defer func() {
-		if result != nil && ctx.Err() == nil {
-			a.mu.Lock()
-			a.state.Status = "error"
-			a.mu.Unlock()
-		}
-		a.reportAccountUsage(ctx)
-	}()
-	a.mu.Lock()
-	legacyConfirmationKeys := append([]string(nil), a.state.Scope.ConfirmationKeys...)
-	options := pam.AgentSyncOptions{ConfigDigest: a.state.Digest, SyncStatus: a.state.Status, SyncError: a.state.SyncError, DeliveryScope: a.Config.DeliveryScope(), RestartSupported: a.Config.Delivery.Mode == "environment" && a.Config.Delivery.Operation == "restart"}
-	for key, value := range a.state.Latest {
-		options.Credentials = append(options.Credentials, pam.KnownRevision{Key: key, Revision: value.Revision})
-	}
-	for key, revision := range a.state.Delivered {
-		if a.state.Authorized[key] {
-			options.DeliveredCredentials = append(options.DeliveredCredentials, pam.KnownRevision{Key: key, Revision: revision})
-		}
-	}
-	a.mu.Unlock()
-	response, err := a.remote.SyncAgent(ctx, options)
-	if err != nil {
-		return a.failure(err, true)
-	}
-	metadata := map[string]pam.CredentialRevision{}
-	for _, item := range response.Credentials {
-		if !validKey(item.Key) {
-			return a.failure(errors.New("invalid credential metadata key"), false)
-		}
-		if err := validateAccountSwitch(item.AccountSwitch, ""); err != nil {
-			return a.failure(err, false)
-		}
-		metadata[item.Key] = item
-		if item.EventID != "" {
-			a.mu.Lock()
-			if a.state.Events[item.Key].EventID != item.EventID {
-				if applied, exists := a.state.Applied[item.Key]; exists {
-					applied.Confirmed = false
-					a.state.Applied[item.Key] = applied
-				}
-			}
-			a.state.Events[item.Key] = pam.Event{Event: "credential.updated", EventID: item.EventID, CredentialKey: item.Key, AccountID: item.AccountID, Revision: item.Revision, AccountRevision: item.AccountRevision}
-			a.mu.Unlock()
-		}
-	}
-	// Resolve overlapping notifications before fetching. Fetching an unused
-	// source account would also reset the rotation's no-secret-fetch window.
-	deliveryMetadata := make(map[string]Credential, len(metadata))
-	for key, item := range metadata {
-		if item.Available {
-			deliveryMetadata[key] = Credential{Key: key, AccountID: item.AccountID, AccountSwitch: item.AccountSwitch}
-		}
-	}
-	a.mu.Lock()
-	for _, key := range redundantAccountNotifications(a.Config.Rules, deliveryMetadata) {
-		delete(metadata, key)
-		delete(a.state.Latest, key)
-		delete(a.state.Delivered, key)
-		delete(a.state.Applied, key)
-		delete(a.state.Wanted, key)
-		delete(a.state.Events, key)
-	}
-	a.mu.Unlock()
-	// Signed scope reductions apply even when the delivery configuration is invalid.
-	a.mu.Lock()
-	for key := range a.state.Authorized {
-		if item, ok := metadata[key]; !ok || !item.Available {
-			delete(a.state.Authorized, key)
-			delete(a.state.Wanted, key)
-		}
-	}
-	a.mu.Unlock()
-	if err := validateScope(response.Scope); err != nil {
-		return a.failure(err, false)
-	}
-	for key := range metadata {
-		if !contains(response.Scope.Keys, key) {
-			return a.failure(errors.New("credential metadata exceeds authorized scope"), false)
-		}
-	}
-	a.mu.Lock()
-	a.state.Scope = response.Scope
-	wasDenied := a.state.Denied
-	a.state.Denied = false
-	for key, item := range metadata {
-		if item.Available && (wasDenied || !a.state.Authorized[key]) {
-			delete(a.state.Authorized, key)
-			if current, wanted := a.state.Wanted[key]; !wanted || current < item.Revision {
-				a.state.Wanted[key] = item.Revision
-			}
-		}
-	}
-	err = a.persist()
-	a.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	fetchFailed := false
-	for key, item := range metadata {
-		if !item.Available {
-			continue
-		}
-		a.mu.Lock()
-		previous, exists := a.state.Latest[key]
-		expected, wanted := a.state.Wanted[key]
-		a.mu.Unlock()
-		if item.Revision > expected {
-			expected = item.Revision
-		}
-		if exists && !item.Changed && !wanted && previous.Revision == item.Revision && (item.AccountID == "" || previous.AccountRevision == item.AccountRevision) && sameSwitch(previous.AccountSwitch, item.AccountSwitch) {
-			continue
-		}
-		selector := pam.CredentialSelector{AccountID: item.AccountID}
-		if selector.AccountID == "" {
-			selector.Key = key
-		} // Compatibility with pre-1.0.2 Core.
-		value, fetchErr := a.remote.GetCredentialFresh(ctx, selector)
-		if fetchErr == nil && item.AccountID != "" {
-			if value.Account.ID != item.AccountID || value.Account.Revision != item.AccountRevision {
-				fetchFailed = true
-				continue
-			}
-			// Stable local delivery names remain independent of the account selector.
-			value.Key, value.Revision, value.AccountSwitch = key, item.Revision, item.AccountSwitch
-		}
-		if fetchErr != nil {
-			var failure *pam.PAMError
-			isPAM := errors.As(fetchErr, &failure)
-			revoked := isPAM && (failure.StatusCode == 400 || failure.StatusCode == 403 || failure.StatusCode == 404) && (failure.Code == "credential_not_found" || failure.Code == "credential_not_selected" || failure.Code == "credential_not_authorized" || failure.Code == "credential_not_bound")
-			if isPAM && (failure.StatusCode == 401 || (failure.StatusCode == 403 && !revoked) || failure.IsCompatibilityError()) {
-				return a.failure(fetchErr, true)
-			}
-			if revoked || denied(fetchErr) {
-				a.mu.Lock()
-				delete(a.state.Authorized, key)
-				delete(a.state.Wanted, key)
-				err = a.persist()
-				a.mu.Unlock()
-				if err != nil {
-					return err
-				}
-			}
-			fetchFailed = true
-			continue
-		}
-		if value.Key != key || value.Revision < expected || value.Revision < previous.Revision ||
-			!sameSwitch(value.AccountSwitch, item.AccountSwitch) || validateAccountSwitch(value.AccountSwitch, value.Account.ID) != nil {
-			fetchFailed = true
-			continue
-		}
-		a.mu.Lock()
-		if previous.AccountID != value.Account.ID || (item.AccountID != "" && previous.AccountRevision != item.AccountRevision) || !sameSwitch(previous.AccountSwitch, value.AccountSwitch) {
-			delete(a.state.Delivered, key)
-			delete(a.state.Applied, key)
-		}
-		saved := flatten(value)
-		saved.EventID = item.EventID
-		a.state.Latest[key] = saved
-		a.state.Authorized[key] = true
-		delete(a.state.Wanted, key)
-		if value.Revision > item.Revision {
-			fetchFailed = true
-		}
-		err = a.persist()
-		a.mu.Unlock()
-		if err != nil {
-			return err
-		}
-		if err = a.recordEvent("saved", pam.Event{Event: "credential.fetched", CredentialKey: key, Revision: value.Revision, AccountID: value.Account.ID}); err != nil {
-			return err
-		}
-	}
-	a.mu.Lock()
-	latest := map[string]Credential{}
-	changed := map[string]bool{}
-	for key, item := range metadata {
-		value, ok := a.state.Latest[key]
-		if a.state.Authorized[key] && item.Available && ok && value.Revision == item.Revision && value.Revision >= a.state.Wanted[key] {
-			latest[key] = value
-			revision, delivered := a.state.Delivered[key]
-			if !delivered || revision != value.Revision {
-				changed[key] = true
-			}
-		}
-	}
-	deliveryConfig := a.Config
-	a.mu.Unlock()
-	if len(changed) > 0 {
-		if err = a.deliver(ctx, deliveryConfig, latest, changed); err != nil {
-			a.mu.Lock()
-			failedEvents := make([]pam.Event, 0, len(changed))
-			for key := range changed {
-				if event := a.state.Events[key]; event.EventID != "" {
-					failedEvents = append(failedEvents, event)
-				}
-			}
-			a.mu.Unlock()
-			for _, event := range failedEvents {
-				_, _ = a.remote.ConfirmEvent(ctx, event.EventID, "failed", "application_failed")
-			}
-			return a.failure(err, false)
-		}
-		verified := autoConfirmKeys(deliveryConfig.Rules, latest, changed)
-		a.mu.Lock()
-		for key := range changed {
-			a.state.Delivered[key] = latest[key].Revision
-			if verified[key] && (a.state.Events[key].EventID != "" || contains(a.state.Scope.ConfirmationKeys, key)) {
-				value := latest[key]
-				previous := a.state.Applied[key]
-				if previous.Revision != value.Revision || previous.AccountID != value.AccountID {
-					a.state.Applied[key] = Applied{Key: key, Revision: value.Revision, AccountID: value.AccountID}
-				}
-			}
-		}
-		a.recordAccountUsage(latest)
-		err = a.persist()
-		a.mu.Unlock()
-		if err != nil {
-			return err
-		}
-		for _, key := range sortedKeys(latest) {
-			if changed[key] {
-				value := latest[key]
-				if err = a.recordEvent("delivered", pam.Event{Event: "credential.delivered", CredentialKey: key, Revision: value.Revision, AccountID: value.AccountID}); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if fetchFailed {
-		return a.failure(errors.New("credential refresh failed; retained latest credentials preserved"), false)
-	}
-	if err = a.removeLegacySubscriptions(metadata, legacyConfirmationKeys); err != nil {
-		return a.failure(err, false)
-	}
-	a.mu.Lock()
-	a.state.Digest = response.ConfigDigest
-	a.state.Status = "success"
-	a.state.SyncError = ""
-	err = a.persist()
-	a.mu.Unlock()
-	if err != nil {
-		return err
-	}
-	return a.reportPending(ctx)
-}
-
-// Every destination for a key must explicitly verify application use before
-// a completed delivery can also count as an applied rotation revision.
-func autoConfirmKeys(rules []Rule, latest map[string]Credential, changed map[string]bool) map[string]bool {
-	verified := map[string]bool{}
-	for key := range changed {
-		seen, ready := false, true
-		for _, rule := range rules {
-			_, matched, complete, err := resolveRule(rule, latest)
-			if err != nil || !complete || !contains(matched, key) {
-				continue
-			}
-			seen = true
-			if rule.ApplicationCheck == nil || !rule.ApplicationCheck.ConfirmOnSuccess {
-				ready = false
-			}
-		}
-		verified[key] = seen && ready
-	}
-	return verified
+func (a *Agent) synchronize(ctx context.Context) error {
+	return a.synchronizeServices(ctx, false)
 }
 
 func sameSwitch(a, b *pam.AccountSwitch) bool {
@@ -699,52 +394,6 @@ func validateAccountSwitch(value *pam.AccountSwitch, active string) error {
 // Retire pre-account-key subscription state after the signed scope and new
 // delivery have succeeded. Only Agent-created default files can be identified
 // safely; custom rule destinations remain under the local administrator's control.
-func (a *Agent) removeLegacySubscriptions(metadata map[string]pam.CredentialRevision, legacyConfirmationKeys []string) error {
-	a.mu.Lock()
-	legacy := []string{}
-	for key, value := range a.state.Latest {
-		if _, current := metadata[key]; current || !validKey(key) || strings.HasPrefix(key, "account:") ||
-			contains(legacyConfirmationKeys, key) || value.AccountID == "" ||
-			!strings.HasSuffix(key, ":"+value.AccountID) {
-			continue
-		}
-		legacy = append(legacy, key)
-	}
-	a.mu.Unlock()
-	for _, key := range legacy {
-		if len(a.Config.Rules) == 0 && a.Config.Delivery.Mode != "socket" {
-			suffix := ".json"
-			if a.Config.Delivery.Mode == "environment" {
-				suffix = ".env"
-			}
-			path := filepath.Join(a.Config.Delivery.Root, defaultCredentialFilename(key, strings.TrimPrefix(suffix, ".")))
-			if _, err := os.Lstat(path); err == nil {
-				if err = secureTarget(path); err != nil {
-					return err
-				}
-				if err = os.Remove(path); err != nil {
-					return err
-				}
-			} else if !os.IsNotExist(err) {
-				return err
-			}
-		}
-	}
-	if len(legacy) == 0 {
-		return nil
-	}
-	a.mu.Lock()
-	for _, key := range legacy {
-		delete(a.state.Latest, key)
-		delete(a.state.Delivered, key)
-		delete(a.state.Applied, key)
-		delete(a.state.Authorized, key)
-		delete(a.state.Wanted, key)
-	}
-	err := a.persist()
-	a.mu.Unlock()
-	return err
-}
 
 // ConfirmEvent is called by the application after it has actually applied a delivered event.
 func (a *Agent) ConfirmEvent(ctx context.Context, eventID string) (Applied, error) {
@@ -780,17 +429,11 @@ func (a *Agent) ConfirmEvent(ctx context.Context, eventID string) (Applied, erro
 	return a.confirm(ctx, eventKey(target), target.Revision)
 }
 
-func (a *Agent) Confirm(ctx context.Context, key string, revision int64) (Applied, error) {
-	a.syncMu.Lock()
-	defer a.syncMu.Unlock()
-	return a.confirm(ctx, key, revision)
-}
-
 func (a *Agent) confirm(ctx context.Context, key string, revision int64) (Applied, error) {
 	a.mu.Lock()
 	value, exists := a.state.Latest[key]
 	deliveredRevision, delivered := a.state.Delivered[key]
-	if a.state.Denied || !a.state.Authorized[key] || !exists || !delivered || deliveredRevision != revision || value.Revision != revision || (a.state.Events[key].EventID == "" && !contains(a.state.Scope.ConfirmationKeys, key)) {
+	if a.state.Denied || !a.state.Authorized[key] || !exists || !delivered || deliveredRevision != revision || value.Revision != revision || a.state.Events[key].EventID == "" {
 		a.mu.Unlock()
 		return Applied{}, errors.New("confirm an authorized alternating-rotation revision actually applied by the application")
 	}
@@ -815,7 +458,7 @@ func (a *Agent) reportPending(ctx context.Context) error {
 	var applied []Applied
 	for key, value := range a.state.Applied {
 		current := a.state.Latest[key]
-		if !a.state.Denied && a.state.Authorized[key] && (a.state.Events[key].EventID != "" || contains(a.state.Scope.ConfirmationKeys, key)) && !value.Confirmed && current.Revision == value.Revision && current.AccountID == value.AccountID {
+		if !a.state.Denied && a.state.Authorized[key] && a.state.Events[key].EventID != "" && !value.Confirmed && current.Revision == value.Revision && current.AccountID == value.AccountID {
 			applied = append(applied, value)
 		}
 	}
@@ -836,12 +479,8 @@ func (a *Agent) reportPending(ctx context.Context) error {
 			if result.Status != "success" {
 				return errors.New("Core rejected the event application result")
 			}
-		} else {
-			// Compatibility only: new Core supplies durable event IDs.
-			if _, err := a.remote.ConfirmCredential(ctx, value.Key, value.Revision, value.AccountID); err != nil {
-				return a.failure(err, true)
-			}
 		}
+
 		a.mu.Lock()
 		value.Confirmed = true
 		a.state.Applied[value.Key] = value
@@ -929,11 +568,9 @@ func (a *Agent) command(ctx context.Context, event pam.Event) error {
 		a.mu.Lock()
 		a.state.Wanted[key] = event.Revision
 		a.mu.Unlock()
-		if a.Config.modern() {
-			err = a.synchronizeServices(ctx, true)
-		} else {
-			err = a.synchronize(ctx)
-		}
+
+		err = a.synchronizeServices(ctx, true)
+
 		if err != nil {
 			break
 		}
@@ -1022,15 +659,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		} else {
 			delay = time.Second
 		}
-		if a.Config.modern() {
-			remaining := time.Until(periodicDeadline)
-			if remaining < 0 {
-				remaining = 0
-			}
-			if remaining < next {
-				next = remaining
-			}
+
+		remaining := time.Until(periodicDeadline)
+		if remaining < 0 {
+			remaining = 0
 		}
+		if remaining < next {
+			next = remaining
+		}
+
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
@@ -1046,7 +683,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		case event := <-events:
 			schedule(a.HandleEvent(ctx, event))
 		case <-timer.C:
-			periodic := !a.Config.modern() || !time.Now().Before(periodicDeadline)
+			periodic := !time.Now().Before(periodicDeadline)
 			var err error
 			if periodic {
 				periodicDeadline = time.Now().Add(interval)

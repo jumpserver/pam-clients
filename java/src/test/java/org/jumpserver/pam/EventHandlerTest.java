@@ -51,7 +51,7 @@ class EventHandlerTest {
         })) {
       assertTrue(applied.await(5, TimeUnit.SECONDS));
       assertTrue(reconnected.await(5, TimeUnit.SECONDS));
-      control(instance, "event=credential.revoked&revision=2");
+      control(instance, "payload=%7B%22event%22%3A%22app.scope.updated%22%2C%22authorized_account_ids%22%3A%5B%5D%7D");
       assertTrue(cleaned.await(5, TimeUnit.SECONDS));
       assertEquals(2, attempts.get());
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
@@ -83,11 +83,19 @@ class EventHandlerTest {
         Thread.sleep(25);
       assertEquals(List.of("account"), sdk.getClientInfo().getApplicationStatus().getAccountIds());
       assertEquals(1, applied.get());
-      control(instance, "revision=3&account_id=backup&event=credential.updated");
+      control(instance, "revision=3&account_id=backup&event=credential.switch.published");
       while (!sdk.getClientInfo().getApplicationStatus().getAccountIds().equals(List.of("backup")) && System.nanoTime() < deadline)
         Thread.sleep(25);
       assertEquals(List.of("backup"), sdk.getClientInfo().getApplicationStatus().getAccountIds());
       assertTrue(applied.get() >= 2);
+      int expected = applied.get();
+      for (String code : List.of("credential.refresh.requested", "credential.secret.updated")) {
+        expected++;
+        control(instance, "revision=" + (expected + 1) + "&account_id=backup&event=" + code);
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (applied.get() < expected && System.nanoTime() < deadline) Thread.sleep(25);
+        assertEquals(expected, applied.get(), code + " must apply the current account");
+      }
     }
   }
 
@@ -123,7 +131,7 @@ class EventHandlerTest {
   @Test
   void authoritativeSnapshotsAndScopeEventsEvictEveryUnauthorizedCacheAlias() throws Exception {
     ObjectMapper json = new ObjectMapper();
-    for (String event : List.of("snapshot", "app.scope.updated", "application.scope.updated")) {
+    for (String event : List.of("snapshot", "app.scope.updated")) {
       String instance = "java-authorization-cache-" + event;
       try (Client sdk = new Client(options(instance))) {
         sdk.getAccount("account");
@@ -135,41 +143,6 @@ class EventHandlerTest {
         assertThrows(PAMException.class, () -> sdk.getCredential("db"));
       }
     }
-  }
-
-  @Test
-  void legacyEventNamesAreNormalizedWithoutChangingIdentity() throws Exception {
-    ObjectMapper json = new ObjectMapper();
-    java.util.Map<String, String> aliases = java.util.Map.of(
-        "rotation.verification.started", "rotation.verify.started",
-        "rotation.verification.failed", "rotation.verify.failed",
-        "rotation.verification.cancelled", "rotation.verify.cancelled",
-        "rotation.verification.skipped", "rotation.verify.skipped",
-        "rotation.waiting_for_application", "rotation.waiting_for_app",
-        "application.scope.updated", "app.scope.updated",
-        "application.restart.requested", "app.restart.requested");
-    for (java.util.Map.Entry<String, String> alias : aliases.entrySet()) {
-      Event event = new Event(json.readTree("{\"event\":\"" + alias.getKey() + "\",\"event_id\":\"stable-id\"}"));
-      assertEquals(alias.getValue(), event.getEvent());
-      assertEquals("stable-id", event.getEventId());
-    }
-  }
-
-  private void sendPayload(String instance, String payload) throws Exception {
-    control(instance, "payload=" + java.net.URLEncoder.encode(payload, java.nio.charset.StandardCharsets.UTF_8));
-  }
-
-  private void control(String instance, String query) throws Exception {
-    URI uri =
-        URI.create(
-            endpoint.replace("/prefix", "") + "/__control?instance=" + instance + "&" + query);
-    assertEquals(
-        200,
-        HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .build()
-            .send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.discarding())
-            .statusCode());
   }
 
   @Test
@@ -189,7 +162,7 @@ class EventHandlerTest {
                 public void onEventError(Exception error, Event event) {}
               })) {
         assertTrue(initial.await(5, TimeUnit.SECONDS));
-        control(instance, "revision=3&event=credential.updated");
+        control(instance, "revision=3&event=credential.secret.updated");
         assertTrue(updated.await(5, TimeUnit.SECONDS));
         control(instance, "fault=503");
         Credential retained = sdk.getCredential("db");
@@ -235,16 +208,12 @@ class EventHandlerTest {
           sdk.reconcileLatestCredentials(
               new Event(
                   new ObjectMapper().readTree("{\"event\":\"snapshot\",\"credentials\":[]}")));
-        if (change.equals("revoked") || change.equals("configuration"))
-          sdk.reconcileLatestCredentials(
-              new Event(
-                  new ObjectMapper()
-                      .readTree(
-                          "{\"event\":\""
-                              + (change.equals("revoked")
-                                  ? "credential.revoked"
-                                  : "app.scope.updated")
-                              + "\"}")));
+        if (change.equals("revoked"))
+          sdk.reconcileLatestCredentials(new Event(new ObjectMapper().readTree(
+              "{\"event\":\"app.scope.updated\",\"authorized_account_ids\":[]}")));
+        if (change.equals("configuration"))
+          sdk.reconcileLatestCredentials(new Event(new ObjectMapper().readTree(
+              "{\"event\":\"app.scope.updated\"}")));
         if (change.equals("retain") || change.equals("configuration")) {
           assertTrue(sdk.getCredential("cache-503").isFromLocal());
           assertTrue(sdk.getCredential("cache-503").isFromLocal());
@@ -266,7 +235,7 @@ class EventHandlerTest {
       sdk.reconcileLatestCredentials(
           new Event(
               new ObjectMapper()
-                  .readTree("{\"event\":\"credential.revoked\",\"credential_key\":\"db\"}")));
+                  .readTree("{\"event\":\"snapshot\",\"credentials\":[],\"authorized_account_ids\":[\"account\"]}")));
       assertThrows(PAMException.class, () -> sdk.getCredential("db:account"));
     }
   }
@@ -349,5 +318,20 @@ class EventHandlerTest {
         assertEquals(2, calls.get());
       }
     }
+  }
+  private void control(String instance, String query) throws Exception {
+    URI uri =
+        URI.create(
+            endpoint.replace("/prefix", "") + "/__control?instance=" + instance + "&" + query);
+    assertEquals(
+        200,
+        HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build()
+            .send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.discarding())
+            .statusCode());
+  }
+  private void sendPayload(String instance, String payload) throws Exception {
+    control(instance, "payload=" + java.net.URLEncoder.encode(payload, java.nio.charset.StandardCharsets.UTF_8));
   }
 }

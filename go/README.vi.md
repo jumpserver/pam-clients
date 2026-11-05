@@ -159,7 +159,7 @@ SDK gọi API trước và cập nhật giá trị giữ lại, không quay về
 - `account.FromLocal`
 - `GetAccountFresh(ctx, accountID)`
 
-Khi bật lắng nghe được quản lý, snapshot và credential.updated tự lấy dữ liệu, thay thế giá trị và gọi hàm nghiệp vụ. Lỗi cập nhật giữ bản trước và thử lại. PAM Agent cũng lấy lại theo thông báo, giữ dữ liệu khi máy chủ lỗi. Dùng lời gọi bắt buộc API bên dưới để cập nhật hay chuyển kết nối; giá trị đang giữ không phải phiên bản vừa lấy và không tự xác nhận luân chuyển.
+Khi bật lắng nghe được quản lý, snapshot và credential.secret.updated / credential.switch.published / credential.refresh.requested tự lấy dữ liệu, thay thế giá trị và gọi hàm nghiệp vụ. Lỗi cập nhật giữ bản trước và thử lại. PAM Agent cũng lấy lại theo thông báo, giữ dữ liệu khi máy chủ lỗi. Dùng lời gọi bắt buộc API bên dưới để cập nhật hay chuyển kết nối; giá trị đang giữ không phải phiên bản vừa lấy và không tự xác nhận luân chuyển.
 
 
 
@@ -306,7 +306,7 @@ Lỗi HTTP, mạng, xác thực và giải mã dùng kiểu lỗi SDK với mã 
 
 `PAMError`
 
-Mọi SDK dùng giao thức phiên bản 1; PAM Agent dùng lược đồ cấu hình phiên bản 1. Khi nhận client_upgrade_required (HTTP 426), kiểm tra tương thích và nâng cấp. Cho phép trường tùy chọn và thông báo chưa biết; không áp dụng hay xác nhận chính sách chưa hỗ trợ. Biên nhận được gửi tự động và không chứng minh đã áp dụng thông tin xác thực. Thông tin máy khách có thể chứa server_capabilities. Thiếu hoặc null nghĩa là chưa biết; tên mới được chấp nhận. Danh sách mô tả tính năng máy chủ, không cấp quyền.
+
 
 <!-- sdk-doc:end -->
 
@@ -322,22 +322,26 @@ Mọi SDK dùng giao thức phiên bản 1; PAM Agent dùng lược đồ cấu 
 
 ## Choose an integration
 
-| Method | Use when | Start here |
+Choose by who applies PAM-managed usernames and passwords to the service. Socket API is an application integration through PAM Agent: the application calls a local API while the Agent handles communication with PAM.
+
+| Method | Integration characteristics | Responsibilities |
 | --- | --- | --- |
-| SDK | You can change the application code and let it connect to JumpServer. | Select SDK integration and your programming language. Implement a managed account-change callback for automatic updates. |
-| PAM Agent | You need local credential files, business configuration updates or a local Socket, and want to keep JumpServer keys outside business code. | Select Agent integration, install the Agent and configure store, socket and services as needed. |
-| Socket API | Business-managed connections through the local Agent; no JumpServer SDK or AK/SK in the business. | Socket API access; declare a service with delivery: socket. |
+| PAM Agent | Integrate through configuration, templates or adaptation scripts; suitable for existing services. | The Agent retrieves and refreshes the accounts required by the service. Configure field mappings, templates or adaptation scripts to update service configuration, reload or restart the service, and verify that the credentials are in use. |
+| SDK | Use the SDK for the application language and call it directly from business code. | The application embeds a language-specific SDK and connects directly to PAM. The SDK handles PAM communication and event processing; the application implements connection validation, credential changes and release of old connections in business callbacks. |
+| Socket API | Cross-language integration without embedding a JumpServer SDK; the Agent can be upgraded independently of the application. | The application uses HTTP / WebSocket over the local Agent's Unix Socket to retrieve credentials, receive notifications and report results. The Agent handles PAM authentication, credential refresh and reporting retries; the application validates and switches its own connections. |
+
+Agent automation follows the configured service adaptation and checks. For every method, successful credential retrieval or delivery alone does not prove that the service has switched successfully.
 
 ## Setup and acceptance
 
 1. Create an application, authorize accounts and download its private identity configuration.
-2. Choose SDK or PAM Agent, install the matching client, fetch an account and verify a real connection.
-3. For automatic updates, enable application notifications and implement the business change. For A/B switching, also bind a rotation policy and enable following its current account.
+2. Choose Agent service adaptation, an embedded SDK or the Agent's Socket API according to who will apply credentials. Install the matching components, fetch an account and verify a real connection.
+3. For automatic updates, enable application notifications and configure Agent business actions or implement application connection changes. For A/B switching, also bind a rotation policy and enable following its current account.
 4. Verify one account update or A/B switch: the application uses the new credential, old connections are released and the business result is successful. Reception, fetching and file delivery alone are insufficient.
 
 ## Where to find the details
 
-Agent integration covers deployment, files, local APIs and business actions. SDK integration covers installation, managed callbacks and language-specific APIs. Events and commands is the shared reference for event payloads, snapshots, receipts and administrator commands. The operation guide inside each rotation policy explains its own cycle, blockers and recovery.
+Agent integration covers deployment and service adaptation: credential files, configuration updates, reload/restart actions and validation. SDK integration covers language-specific installation and business callbacks. Socket API access covers local API calls, credential retrieval, notifications, business results and A/B switching. Events and commands is the shared reference for event payloads, snapshots, receipts and administrator commands. The operation guide inside each rotation policy explains its own cycle, blockers and recovery.
 
 <!-- overview-doc:end -->
 
@@ -352,27 +356,29 @@ This reference applies to all SDK languages and PAM Agent. Prefer managed SDK ca
 
 | Event | Responsibility |
 | --- | --- |
-| credential.updated and snapshot items | Fetch the named account, verify its version, apply it and report the business result. Managed SDK callbacks handle the protocol. |
+| credential.secret.updated / credential.switch.published / credential.refresh.requested and snapshot items | Fetch the named account, verify its version, apply it and report the business result. Managed SDK callbacks handle the protocol. |
 | app.scope.updated | Reconcile scope and remove invalid state. Removing a rotation binding does not revoke account authorization. |
 | `rotation.*` (such as `rotation.started` and `rotation.completed`), `credential.change.*` (such as `credential.change.started` and `credential.change.completed`) | Update progress, logs or alerts. Do not repeat credential application or confirm business success for these notifications. |
 | credential.switch.requested and app.restart.requested | Administrator commands for selected instances: claim, execute and report the command result. |
 
 ## Complete event catalog
 
-Every Core application event, administrator command and connection control message is listed below, with compatibility entries separated. This is the complete reference; rotation details explain how the events relate to that policy workflow.
+Current application events, rotation operation commands and connection control messages. Rotation details display progress; each event has one execution responsibility.
 
 ### Credential and scope events
 
-credential.updated applies credentials. app.scope.updated and snapshot reconcile scope: detach a missing rotation policy while preserving use of authorized accounts. Only actual account authorization removal disables local access, clears retained credentials and asks the application to release connections.
+credential.secret.updated / credential.switch.published / credential.refresh.requested applies credentials. app.scope.updated and snapshot reconcile scope: detach a missing rotation policy while preserving use of authorized accounts. Only actual account authorization removal disables local access, clears retained credentials and asks the application to release connections.
 
 | Event code | Meaning |
 | --- | --- |
-| `credential.updated` | Current credentials or published account changed; fetch and apply the named account. |
+| `credential.secret.updated` | The account secret version changed. Fetch and apply the named account; this does not change the selected account. |
+| `credential.switch.published` | A target account and policy revision were published for switching, including return to the source account. Fetch and apply the named target; publication is not application success. |
+| `credential.refresh.requested` | Fetch and apply the currently published credentials for an authorization grant, manual refresh or snapshot reconciliation. This does not mean the password changed or a rotation started. |
 | `app.scope.updated` | Account authorization, notification settings or rotation bindings changed. Use authorized_account_ids to determine account access, then snapshot to reconcile notifications and rotation following. Removing a binding must not close an otherwise authorized account connection. |
 
 ### General password-change events
 
-General task lifecycle notifications for progress and alerts. Do not fetch again or report application success for these notifications; apply credentials on credential.updated or snapshot.
+General task lifecycle notifications for progress and alerts. Do not fetch again or report application success for these notifications; apply credentials on credential.secret.updated / credential.switch.published / credential.refresh.requested or snapshot.
 
 | Event code | Meaning |
 | --- | --- |
@@ -382,7 +388,7 @@ General task lifecycle notifications for progress and alerts. Do not fetch again
 
 ### Rotation progress events
 
-These notifications explain cycle progress and outcomes. Application switching follows credential.updated or snapshot, not a second action on each progress event.
+These notifications explain cycle progress and outcomes. Application switching follows credential.secret.updated / credential.switch.published / credential.refresh.requested or snapshot, not a second action on each progress event.
 
 | Event code | Meaning |
 | --- | --- |
@@ -392,19 +398,26 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observing successful secret fetches for the original account after publication. |
+| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
 | `rotation.force_stopped` | An administrator ended the cycle without waiting for remaining recovery confirmations. |
 
-### Administrator command events
+### Manual account rotation operations
 
-Claim with running, execute only when accepted is true, then report the command result. These are independent of automatic rotation progress.
+credential.switch.requested asks selected instances to apply the account and revision already published by the rotation policy. Administrators can manually apply or retry the switch; the command does not start a new rotation.
 
 | Event code | Meaning |
 | --- | --- |
 | `credential.switch.requested` | Apply the already published account and version on selected instances; this does not start a rotation. |
+
+### Application operation commands
+
+app.restart.requested restarts the application and verifies its health. Manual account switching belongs to the account rotation operations above.
+
+| Event code | Meaning |
+| --- | --- |
 | `app.restart.requested` | Execute the supported application restart action and verify health. |
 
 ### Connection and receipt messages
@@ -417,27 +430,6 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
-
-### Compatibility events
-
-Legacy event names and old preparation-cycle entries, not a workflow for new integrations. Current Core no longer emits credential.revoked; new rotation cycles verify the backup before publishing the switch.
-
-| Event code | Meaning |
-| --- | --- |
-| `credential.revoked` | Retired: current Core no longer sends this event. Use app.scope.updated and snapshot; retained only for older Core integrations and historical records. |
-| `configuration.updated` | Legacy event name, normalized to `app.scope.updated`. |
-| `rotation.preparation.started` | Legacy preparation began aligning applications to the current account. |
-| `rotation.accounts.aligned` | Applications finished alignment in the legacy preparation flow. |
-| `rotation.standby.waiting` | Legacy preparation is observing secret fetches for the standby account. |
-| `rotation.preparation.ready` | Legacy preparation is ready; no switch or password change is implied. |
-| `rotation.preparation.cancelled` | Legacy preparation was cancelled. |
-| `rotation.verification.started` | Legacy event name, normalized to `rotation.verify.started`. |
-| `rotation.verification.failed` | Legacy event name, normalized to `rotation.verify.failed`. |
-| `rotation.verification.cancelled` | Legacy event name, normalized to `rotation.verify.cancelled`. |
-| `application.scope.updated` | Legacy event name, normalized to `app.scope.updated`. |
-| `application.restart.requested` | Legacy event name, normalized to `app.restart.requested`. |
-| `rotation.waiting_for_application` | Legacy event name, normalized to `rotation.waiting_for_app`. |
-| `rotation.verification.skipped` | Legacy event name, normalized to `rotation.verify.skipped`. |
 
 ## Payload fields
 
@@ -454,7 +446,7 @@ Legacy event names and old preparation-cycle entries, not a workflow for new int
 
 ## Snapshots and authorization
 
-Core gửi snapshot khi kết nối, kết nối lại và thay đổi phạm vi. credentials gồm tất cả tài khoản được cấp quyền khi bật thông báo, cùng các chính sách A/B đã liên kết, đang hoạt động và còn quyền. Xử lý từng mục như credential.updated với event_id, account_id và account_revision. authorized_account_ids chỉ phạm vi cấp quyền; get_accounts trả siêu dữ liệu. Bỏ liên kết chính sách không thu hồi quyền tài khoản.
+Core gửi snapshot khi kết nối, kết nối lại và thay đổi phạm vi. credentials gồm tất cả tài khoản được cấp quyền khi bật thông báo, cùng các chính sách A/B đã liên kết, đang hoạt động và còn quyền. Xử lý từng mục như credential.secret.updated / credential.switch.published / credential.refresh.requested với event_id, account_id và account_revision. authorized_account_ids chỉ phạm vi cấp quyền; get_accounts trả siêu dữ liệu. Bỏ liên kết chính sách không thu hồi quyền tài khoản.
 
 ```json
 {
@@ -478,28 +470,19 @@ SDK tự động cố gắng gửi biên nhận received trước khi trả về
 
 Lấy tài khoản bằng `account_id`. Xác minh kết nối và áp dụng thay đổi trước khi báo `success` hoặc `failed` qua `event_id`. Nhận sự kiện hoặc lấy mật khẩu không có nghĩa là áp dụng thành công. Sự kiện và snapshot có `event_id`, `account_id`, `account_revision`; hãy kiểm tra phiên bản. Nhận lệnh bằng `running` và xử lý lặp lại an toàn.
 
-## Administrator commands
+## Command execution and results
 
-Administrators send commands from the application’s Send event action and choose instances and an expiry time.
+Administrators select target instances and an expiry time. Use credential.switch.requested to apply the published rotation target, and app.restart.requested for application operations.
 
-- credential.switch.requested asks the instance to apply the rotation policy’s **already published** account and version. It does not start a rotation or select another account.
-- app.restart.requested asks the application to run its supported restart action and verify health. The SDK application must implement that handler; Agent support depends on its local service configuration.
+1. Poll GET /api/v1/accounts/credential-client/commands/ or receive commands through WebSocket.
+2. Claim through POST /api/v1/accounts/credential-client/command-result/ with status: running. Execute only when accepted is true.
+3. Report success after actual switching or a successful restart health check; report failed with a safe error code on failure.
 
-Managed SDK handlers claim and report commands automatically. Raw consumers use the signed client API:
+Managed SDK callbacks claim and report automatically. received means receipt only. Automatic rotation progress events update progress without repeating command execution.
 
-1. GET /api/v1/accounts/credential-client/commands/ with instance_id to poll pending commands; connected instances can also receive them over WebSocket.
-2. POST /api/v1/accounts/credential-client/command-result/ with instance_id, command_id and status: running. Execute only if accepted is true.
-3. After actual application switching or a successful restart health check, report status: success through the same command-result API; on failure report failed with a safe error_code. A received receipt or confirm_event alone does not replace command-result reporting.
-
-Expired commands cannot be claimed. Duplicate delivery must not repeat a claimed action. Failed command actions are not automatically repeated; inspect the application before sending a new restart request.
-
-## Connection liveness and compatibility
+## Connection liveness
 
 Khi nhàn rỗi gửi ping mỗi 10 giây; khoảng 30 giây không có tin nhắn sẽ kết nối lại, chờ tăng theo hàm mũ 1–30 giây và ký mới. snapshot khôi phục trạng thái hiện tại, không phát lại lịch sử.
-
-Current names are app.scope.updated, app.restart.requested, rotation.verify.started/failed/cancelled and rotation.waiting_for_app. Old application prefixes, rotation.verification names and configuration.updated normalize to the new names without changing event IDs. credential.revoked is no longer emitted and remains only for older Core integrations and historical records.
-
-API key cũ được giữ để tương thích. Tích hợp mới dùng `get_account` và `confirm_event`, đồng thời cần cập nhật Core.
 
 <!-- protocol-doc:end -->
 
@@ -567,7 +550,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -613,6 +596,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+Truy vấn CLI/Socket và đọc thông tin xác thực của dịch vụ trả về `account`, `source`, `last_pull_at`. `account.version` là phiên bản thông tin xác thực thực tế của tài khoản; kết quả thông thường bỏ phiên bản chính sách, `account_revision` và `event_id`. `source` là `api` khi lấy trực tiếp từ Core, hoặc `local` khi dùng bộ nhớ đệm. `last_pull_at` là thời điểm RFC 3339 lấy thành công tài khoản đó từ Core gần nhất, kể cả khi phiên bản không đổi. Thời điểm được lưu cùng bộ nhớ đệm qua lần khởi động lại. Đồng bộ siêu dữ liệu, đọc bộ nhớ đệm và lỗi không cập nhật thời điểm. Bộ nhớ đệm cũ không rõ thời điểm trả null. Truy vấn theo nhu cầu không tự bật lưu thông tin xác thực ngoại tuyến.
+
+`event_id` vẫn nằm trong siêu dữ liệu thông báo và lớp ngoài thông báo cho script để báo cáo kết quả. Snapshot dùng lại sự kiện mới nhất khớp tài khoản, phiên bản, chính sách và máy khách, hoặc tạo sự kiện phát lại. Script đọc `credentials[selector].account`. Mẫu Go, ánh xạ trường và biến EnvironmentFile giữ tên cũ. Trình đọc JSON hiện có cần chuyển sang cấu trúc account lồng nhau.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Tệp JSON thông tin xác thực chỉ chứa `account`, không có `source` hoặc `last_pull_at`. Thời điểm lấy được xuất theo ID tài khoản thực tế vào `last_pull_at.json` cùng cấp thư mục `store.root`, đồng thời được giữ trong trạng thái riêng tư. Truy vấn trực tiếp thành công cập nhật tệp chẩn đoán ngay cả khi phiên bản không đổi, không ghi lại tệp thông tin xác thực. Kiểm tra phiên bản, đọc bộ nhớ đệm và lỗi không đổi thời điểm. Tài khoản bị thu hồi được xóa khỏi tệp chẩn đoán.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

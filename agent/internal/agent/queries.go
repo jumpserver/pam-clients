@@ -13,14 +13,9 @@ type AccountsResult struct {
 	Source   string                  `json:"source"`
 }
 
-type CredentialResult struct {
-	Credential
-	Source string `json:"source"`
-}
-
 func temporary(ctx context.Context, err error) bool {
 	var failure *pam.PAMError
-	return ctx.Err() == nil && errors.As(err, &failure) && !failure.IsCompatibilityError() && (failure.Code == "NetworkError" || (failure.StatusCode >= 500 && failure.StatusCode < 600))
+	return ctx.Err() == nil && errors.As(err, &failure) && (failure.Code == "NetworkError" || failure.StatusCode >= 500 && failure.StatusCode < 600)
 }
 
 // Accounts lists metadata without fetching passwords. Offline results contain
@@ -70,9 +65,9 @@ func (a *Agent) accounts(ctx context.Context) (AccountsResult, error) {
 	// Metadata alone never restores access to a previously revoked password.
 	allowed := map[string]string{}
 	for _, account := range accounts {
-		if a.Config.modern() {
-			allowed["account:"+account.ID] = account.ID
-		}
+
+		allowed["account:"+account.ID] = account.ID
+
 		for _, policy := range account.Credentials {
 			allowed[policy.Key] = account.ID
 		}
@@ -81,11 +76,11 @@ func (a *Agent) accounts(ctx context.Context) (AccountsResult, error) {
 	for key := range a.state.Authorized {
 		if allowed[key] != a.state.Latest[key].AccountID {
 			delete(a.state.Authorized, key)
-			if a.Config.modern() {
-				delete(a.state.Latest, key)
-				delete(a.state.Delivered, key)
-				delete(a.state.Applied, key)
-			}
+
+			delete(a.state.Latest, key)
+			delete(a.state.Delivered, key)
+			delete(a.state.Applied, key)
+
 			if allowed[key] == "" {
 				delete(a.state.Wanted, key)
 			}
@@ -93,9 +88,9 @@ func (a *Agent) accounts(ctx context.Context) (AccountsResult, error) {
 	}
 	err = a.persist()
 	a.mu.Unlock()
-	if a.Config.modern() {
-		err = errors.Join(err, a.removeRevokedStoreFiles())
-	}
+
+	err = errors.Join(err, a.removeRevokedStoreFiles())
+
 	return AccountsResult{Accounts: accounts, Source: "api"}, err
 }
 
@@ -105,11 +100,20 @@ func (a *Agent) retainedAccount(accountID string) (CredentialResult, error) {
 	if a.state.Denied {
 		return CredentialResult{}, errors.New("agent_access_denied")
 	}
+	var latest Credential
+	found := false
 	for _, key := range sortedKeys(a.state.Latest) {
 		value := a.state.Latest[key]
 		if a.state.Authorized[key] && value.AccountID == accountID {
-			return CredentialResult{Credential: value, Source: "local"}, nil
+			if !found || value.AccountRevision > latest.AccountRevision ||
+				value.AccountRevision == latest.AccountRevision && value.LastPullAt != nil &&
+					(latest.LastPullAt == nil || value.LastPullAt.After(*latest.LastPullAt)) {
+				latest, found = value, true
+			}
 		}
+	}
+	if found {
+		return latest.result("local"), nil
 	}
 	return CredentialResult{}, errors.New("credential_not_authorized")
 }
@@ -138,18 +142,18 @@ func (a *Agent) accountCredential(ctx context.Context, accountID string, allowLo
 				if retained.AccountID == accountID {
 					delete(a.state.Authorized, key)
 					delete(a.state.Wanted, key)
-					if a.Config.modern() {
-						delete(a.state.Latest, key)
-						delete(a.state.Delivered, key)
-						delete(a.state.Applied, key)
-					}
+
+					delete(a.state.Latest, key)
+					delete(a.state.Delivered, key)
+					delete(a.state.Applied, key)
+
 				}
 			}
 			persistence := a.persist()
 			a.mu.Unlock()
-			if a.Config.modern() {
-				persistence = errors.Join(persistence, a.removeRevokedStoreFiles())
-			}
+
+			persistence = errors.Join(persistence, a.removeRevokedStoreFiles())
+
 			return CredentialResult{}, errors.Join(a.failure(err, false), persistence)
 		}
 		return CredentialResult{}, a.failure(err, true)
@@ -157,17 +161,22 @@ func (a *Agent) accountCredential(ctx context.Context, accountID string, allowLo
 	if value.Account.ID != accountID || value.Key != "account:"+accountID {
 		return CredentialResult{}, errors.New("invalid_credential_response")
 	}
+	pulled := flatten(value)
 	a.mu.Lock()
 	for key, retained := range a.state.Latest {
-		if retained.AccountID == accountID && retained.Secret != value.Account.Secret {
+		if retained.AccountID != accountID {
+			continue
+		}
+		if retained.Secret != pulled.Secret || retained.AccountRevision != pulled.AccountRevision || retained.SecretType != pulled.SecretType {
 			delete(a.state.Authorized, key)
 			delete(a.state.Wanted, key)
 		}
 	}
+	a.recordAccountPullLocked(pulled)
 	err = a.persist()
 	a.mu.Unlock()
 	if err != nil {
 		return CredentialResult{}, err
 	}
-	return CredentialResult{Credential: flatten(value), Source: "api"}, nil
+	return pulled.result("api"), nil
 }

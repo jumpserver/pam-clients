@@ -8,7 +8,7 @@ from time import monotonic
 from typing import Any, Optional
 
 
-from ._event_names import canonical_event_name
+from ._event_names import CREDENTIAL_APPLICATION_EVENTS
 
 @dataclass
 class PendingCredential:
@@ -166,7 +166,7 @@ class EventDispatcher:
     @staticmethod
     def _account_selector(update):
         if update.get('command_id'):
-            if update.get('event') in ('credential.updated', 'credential.switch.requested', 'app.restart.requested'):
+            if update.get('event') in (*CREDENTIAL_APPLICATION_EVENTS, 'credential.switch.requested', 'app.restart.requested'):
                 return 'command', update['command_id']
             return None
         if update.get('credential_mode') == 'alternating_rotation':
@@ -280,9 +280,9 @@ class EventDispatcher:
         self._report_usage()
 
     def _dispatch(self, event) -> None:
-        event = {**event, 'event': canonical_event_name(event.get('event'))}
+        event = {**event, 'event': event.get('event')}
         name = event.get("event")
-        if name in {"snapshot", "credential.revoked", "app.scope.updated", "configuration.updated"}:
+        if name in {"snapshot", "app.scope.updated"}:
             # The following snapshot supplies the currently authorized scope.
             self.pending.clear()
         self._call(self.client.on_event, event, event)
@@ -301,7 +301,7 @@ class EventDispatcher:
                     self._refresh(update, event)
                 except Exception as error:
                     self._report_error(error, event)
-        elif name in {'app.scope.updated', 'configuration.updated'} and self.account_events:
+        elif name in {'app.scope.updated'} and self.account_events:
             self.account_scope = set()
             if event.get('authorized_account_ids') is not None:
                 allowed = set(event['authorized_account_ids'])
@@ -311,22 +311,8 @@ class EventDispatcher:
                 self._revoke_accounts(retained, event)
         elif self.account_events and event.get('command_id'):
             self._refresh(event, event)
-        elif name == "credential.updated" and not event.get("command_id"):
+        elif name in CREDENTIAL_APPLICATION_EVENTS and not event.get("command_id"):
             self._refresh(event, event)
-        elif name == "credential.revoked":
-            if self.account_events:
-                account_id = event.get('account_id')
-                key = event.get('credential_key') or event.get('key')
-                if self.account_scope is not None:
-                    self.account_scope.discard(('account', account_id))
-                    self.account_scope.discard(('policy', key))
-                retained = {selector for selector, value in self.used_accounts.items()
-                            if value != account_id and selector != ('policy', key)}
-                try:
-                    self._revoke_accounts(retained, event)
-                except Exception as error:
-                    self._report_error(error, event)
-            self._call(self.client.on_credential_revoked, event, event)
 
     def _retry(self) -> None:
         # Retry at most one credential between events so newer messages can run.

@@ -1,6 +1,6 @@
 # cURL — Guide d’utilisation
 
-Ce répertoire contient un script HTTP signé pour diagnostiquer l’ancienne API account-secret. Pour intégrer une application, utilisez le SDK Python, Go, Java ou Node.js.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## Prérequis
 
@@ -11,7 +11,7 @@ Le script nécessite Bash, cURL, OpenSSL et base64. Remplacez ASSET et ACCOUNT e
 
 ## Configuration et exécution
 
-Créez une application dans la gestion des applications et autorisez les comptes cibles. Configurez URL, AK/SK de l’application et identifiant de l’organisation ; remplacez toutes les valeurs d’exemple avant l’exécution.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-Les exemples interrogent par défaut l’actif ubuntu_docker et le compte root. Remplacez-les par des noms réels autorisés. Exécutez les commandes depuis la racine du dépôt. La sortie contient des secrets ; ne l’envoyez pas aux journaux de l’application.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## Requête et réponse
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-Le champ id identifie l’application, et non une révision du compte. Un secret null peut refléter le réglage d’affichage des secrets du serveur. Ces exemples ne reçoivent pas d’événements, ne signalent pas de révisions appliquées et n’exécutent pas de commandes d’application.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## Dépannage
 
-Pour 401, vérifiez AK/SK, organisation, heure de l’hôte et URL signée. Pour 403, vérifiez l’état de l’application et les autorisations des comptes. Pour 400, vérifiez sélecteurs et encodage de la requête. Ne journalisez ni secrets ni en-têtes Authorization. Les noms doivent correspondre aux ressources autorisées.
+Check identity, authorization, signature and instance ID.
 
 ## Accès aux politiques d’identifiants
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 Récupérez le compte via `account_id`. Validez et appliquez le changement avant de signaler `success` ou `failed` avec `event_id`. Réception et récupération ne prouvent pas l’application. Les événements et instantanés contiennent `event_id`, `account_id` et `account_revision` ; vérifiez la version. Réservez les commandes avec `running` et rendez les traitements idempotents.
 
-Un accusé received indique uniquement qu’un événement a été lu. Envoyez received avec event_id sur le même WebSocket avant le traitement métier ; snapshot et pong ne nécessitent aucun accusé. Réconciliez snapshot à chaque connexion ou reconnexion, traitez credential.updated et gérez révocations et changements de configuration.
+Un accusé received indique uniquement qu’un événement a été lu. Envoyez received avec event_id sur le même WebSocket avant le traitement métier ; snapshot et pong ne nécessitent aucun accusé. Réconciliez snapshot à chaque connexion ou reconnexion, traitez credential.secret.updated / credential.switch.published / credential.refresh.requested et gérez révocations et changements de configuration.

@@ -109,7 +109,7 @@ func TestWindowsForegroundRunKeepsCredentialsPrivate(t *testing.T) {
 		t.Fatalf("health HTTP %d", response.StatusCode)
 	}
 	filename := filepath.Join(config.Delivery.Root, defaultCredentialFilename(key, "json"))
-	var delivered Credential
+	var delivered CredentialResult
 	for i := 0; i < 50; i++ {
 		raw, readErr := os.ReadFile(filename)
 		if readErr == nil && json.Unmarshal(raw, &delivered) == nil {
@@ -117,7 +117,7 @@ func TestWindowsForegroundRunKeepsCredentialsPrivate(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if delivered.Secret != "private-secret" || strings.Contains(filepath.Base(filename), ":") {
+	if delivered.Account.Secret != "private-secret" || strings.Contains(filepath.Base(filename), ":") {
 		t.Fatal("Windows credential delivery failed or used an invalid filename")
 	}
 	for _, path := range []string{config.StateFile, filename} {

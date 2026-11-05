@@ -56,27 +56,13 @@ def handle_event(client, output, event):
                 "Removed %s credentials absent from the current snapshot", len(stale)
             )
     elif (
-        event.get("event") == "credential.updated"
+        event.get("event") in ("credential.secret.updated", "credential.switch.published", "credential.refresh.requested")
         and event.get("credential_mode") == KIND
     ):
         account_id = event.get("account_id")
         key = subscription_key(event)
         if key:
             update_account(client, output, account_id, key, event.get("revision"))
-    elif event.get("event") == "credential.revoked":
-        policy_key = event.get("credential_key")
-        if policy_key:
-            current = load_local(output, KIND)
-            stale = [
-                account_id
-                for account_id, item in current["credentials"].items()
-                if item["key"].partition(":")[0] == policy_key
-            ]
-            if stale:
-                for account_id in stale:
-                    del current["credentials"][account_id]
-                save_local(output, current)
-                LOG.info("Removed %s revoked credentials", len(stale))
     return event.get("event") == "app.scope.updated"
 
 

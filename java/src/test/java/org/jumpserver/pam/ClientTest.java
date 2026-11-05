@@ -71,14 +71,14 @@ class ClientTest {
     try (Client sdk = client(instance, "jms-pam")) {
       Account initial = sdk.getAccount("account");
       compatibilityFault(instance, 426);
-      assertTrue(assertThrows(PAMException.class, () -> sdk.getAccount("account")).isCompatibilityError());
-      assertTrue(assertThrows(PAMException.class, () -> sdk.getAccount("account", false)).isCompatibilityError());
+      assertTrue(assertThrows(PAMException.class, () -> sdk.getAccount("account")).getStatusCode() == 426);
+      assertTrue(assertThrows(PAMException.class, () -> sdk.getAccount("account", false)).getStatusCode() == 426);
       compatibilityFault(instance, 503);
       Account retained = sdk.getAccount("account");
       assertTrue(retained.isFromLocal());
       assertEquals(initial.getSecret(), retained.getSecret());
       compatibilityFault(instance, 401);
-      assertFalse(assertThrows(PAMException.class, () -> sdk.getAccount("account")).isCompatibilityError());
+      assertFalse(assertThrows(PAMException.class, () -> sdk.getAccount("account")).getStatusCode() == 426);
       compatibilityFault(instance, 503);
       assertThrows(PAMException.class, () -> sdk.getAccount("account"));
     }
@@ -111,7 +111,7 @@ class ClientTest {
           .orgId("contract-org").timeout(Duration.ofMillis(200)))) {
         String key = "cache-" + fault;
         sdk.getCredential(key);
-        assertTrue(assertThrows(PAMException.class, () -> sdk.getCredential(key)).isCompatibilityError());
+        assertTrue(assertThrows(PAMException.class, () -> sdk.getCredential(key)).getStatusCode() == 426);
         compatibilityFault("java-compat-" + fault, 503);
         assertTrue(sdk.getCredential(key).isFromLocal());
       }
@@ -358,7 +358,7 @@ class ClientTest {
             }
           });
       assertEquals(
-          List.of("snapshot", "credential.updated", "future.notification", "snapshot"),
+          List.of("snapshot", "credential.secret.updated", "future.notification", "snapshot"),
           events.stream().map(Event::getEvent).collect(java.util.stream.Collectors.toList()));
       assertEquals(3, events.get(3).getCredentials().get(0).getRevision());
       assertEquals(

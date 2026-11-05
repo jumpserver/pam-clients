@@ -1,10 +1,10 @@
 'use strict'
 
-const canonicalEventName = require('./event-names')
 
 const { AsyncLocalStorage } = require('node:async_hooks')
 const { performance } = require('node:perf_hooks')
 const activeHook = new AsyncLocalStorage()
+const CREDENTIAL_APPLICATION_EVENTS = new Set(['credential.secret.updated', 'credential.switch.published', 'credential.refresh.requested'])
 const END = Symbol('end')
 const IDLE = Symbol('idle')
 
@@ -147,7 +147,7 @@ class EventSubscription {
   }
 
   #accountSelector(update) {
-    if (update.commandId) return ['credential.updated', 'credential.switch.requested', 'app.restart.requested'].includes(update.event)
+    if (update.commandId) return [...CREDENTIAL_APPLICATION_EVENTS, 'credential.switch.requested', 'app.restart.requested'].includes(update.event)
       ? `command:${update.commandId}` : undefined
     if (update.credentialMode === 'alternating_rotation') {
       const key = update.credentialKey || update.key
@@ -246,8 +246,8 @@ class EventSubscription {
   }
 
   async #dispatch(event) {
-    event = { ...event, event: canonicalEventName(event.event) }
-    if (['snapshot', 'credential.revoked', 'app.scope.updated', 'configuration.updated'].includes(event.event))
+    event = { ...event, event: event.event }
+    if (['snapshot', 'app.scope.updated'].includes(event.event))
       this.#pending.clear()
     try {
       await this.#call(this.#client.onEvent, event)
@@ -268,7 +268,7 @@ class EventSubscription {
           await this.#report(error, event)
         }
       }
-    } else if (this.#accountEvents && ['app.scope.updated', 'configuration.updated'].includes(event.event)) {
+    } else if (this.#accountEvents && ['app.scope.updated'].includes(event.event)) {
       this.#scope = new Set()
       if (event.authorizedAccountIds != null) {
         const allowed = new Set(event.authorizedAccountIds)
@@ -278,20 +278,8 @@ class EventSubscription {
       }
     } else if (this.#accountEvents && event.commandId) {
       await this.#refresh(event, event)
-    } else if (event.event === 'credential.updated' && !event.commandId) {
+    } else if (CREDENTIAL_APPLICATION_EVENTS.has(event.event) && !event.commandId) {
       await this.#refresh(event, event)
-    } else if (event.event === 'credential.revoked') {
-      if (this.#accountEvents) {
-        const key = event.credentialKey || event.key
-        this.#scope?.delete(`policy:${key}`)
-        this.#scope?.delete(`account:${event.accountId}`)
-        await this.#revokeAccounts(new Set([...this.#used].filter(([target, id]) => id !== event.accountId && target !== `policy:${key}`).map(([target]) => target)), event)
-      }
-      try {
-        await this.#call(this.#client.onCredentialRevoked, event)
-      } catch (error) {
-        await this.#report(error, event)
-      }
     }
   }
 

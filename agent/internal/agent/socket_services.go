@@ -114,7 +114,7 @@ func (a *Agent) queueSocketServiceLocked(service Rule, payload Payload) error {
 	for selector, value := range payload.Credentials {
 		versions[selector] = SocketVersion{value.Key, value.AccountID, value.Revision, value.AccountRevision, value.EventID}
 	}
-	delivery := socketDelivery(service.Name, "credential.updated", versions, nil, a.state.ServiceConfigHashes[service.Name])
+	delivery := socketDelivery(service.Name, "credential.refresh.requested", versions, nil, a.state.ServiceConfigHashes[service.Name])
 	previous := a.state.SocketServices[service.Name]
 	if previous != nil && previous.Delivery.ID == delivery.ID {
 		return nil
@@ -179,7 +179,7 @@ func (a *Agent) revokeSocketServicesLocked() {
 		for id := range revoked {
 			ids = append(ids, id)
 		}
-		next := &SocketServiceState{Delivery: socketDelivery(name, "credential.revoked", versions, ids, a.state.ServiceConfigHashes[name]), Result: "pending", Status: "degraded", StatusError: "credential_revoked"}
+		next := &SocketServiceState{Delivery: socketDelivery(name, "app.scope.updated", versions, ids, a.state.ServiceConfigHashes[name]), Result: "pending", Status: "degraded", StatusError: "credential_revoked"}
 		a.state.SocketServices[name] = next
 	}
 }
@@ -199,7 +199,7 @@ func (a *Agent) socketDeliveryCurrentLocked(state *SocketServiceState) bool {
 
 // SocketCredentials never returns an earlier A/B value for a superseded local
 // delivery. Fetching does not advance usage, delivery, or confirmation state.
-func (a *Agent) SocketCredentials(name, id string) (map[string]Credential, error) {
+func (a *Agent) SocketCredentials(name, id string) (map[string]CredentialResult, error) {
 	if _, ok := a.socketService(name); !ok {
 		return nil, errSocketService
 	}
@@ -212,9 +212,9 @@ func (a *Agent) SocketCredentials(name, id string) (map[string]Credential, error
 	if state == nil || id == "" || id != state.Delivery.ID || !a.socketDeliveryCurrentLocked(state) {
 		return nil, errSocketConflict
 	}
-	result := map[string]Credential{}
+	result := map[string]CredentialResult{}
 	for selector, expected := range state.Delivery.Credentials {
-		result[selector] = a.state.Latest[expected.Key]
+		result[selector] = a.state.Latest[expected.Key].result("local")
 	}
 	if !state.CredentialsRead || !state.Received {
 		beforeRead, beforeReceived := state.CredentialsRead, state.Received
@@ -534,7 +534,7 @@ func (a *Agent) SocketCommandResult(ctx context.Context, name, id, status, code 
 		a.mu.Unlock()
 		return map[string]string{"status": "accepted"}, nil
 	}
-	if !exists || !target || a.socketCommandExpiredLocked(event) || a.state.Denied || (previous != "pending" && previous != status) {
+	if !exists || !target || a.socketCommandExpiredLocked(event) || a.state.Denied || previous != "pending" && previous != status {
 		a.mu.Unlock()
 		return nil, errSocketConflict
 	}

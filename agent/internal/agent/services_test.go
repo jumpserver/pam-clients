@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -47,7 +48,7 @@ func (f *servicesRemote) SyncAgent(_ context.Context, options pam.AgentSyncOptio
 			return
 		}
 		result.Scope.Keys = append(result.Scope.Keys, key)
-		result.Credentials = append(result.Credentials, pam.CredentialRevision{Key: key, AccountID: id, AccountRevision: value.Account.Revision, Revision: revision, Available: true, AccountSwitch: pair})
+		result.Credentials = append(result.Credentials, pam.CredentialRevision{Key: key, AccountID: id, AccountRevision: value.Account.Revision, Revision: revision, Available: true, AccountSwitch: pair, EventID: key + ":" + fmt.Sprint(revision) + ":" + fmt.Sprint(value.Account.Revision)})
 	}
 	for id, value := range f.values {
 		if options.DeliveryScope.AllAuthorized || contains(options.DeliveryScope.AccountIDs, id) {
@@ -61,6 +62,19 @@ func (f *servicesRemote) SyncAgent(_ context.Context, options pam.AgentSyncOptio
 		} else {
 			add("account:"+id, id, f.values[id].Account.Revision, nil)
 		}
+	}
+	return result, nil
+}
+
+func (f *servicesRemote) ListAuthorizedAccounts(context.Context) ([]pam.AuthorizedAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fault != nil {
+		return nil, f.fault
+	}
+	result := []pam.AuthorizedAccount{}
+	for id, value := range f.values {
+		result = append(result, pam.AuthorizedAccount{ID: id, Name: value.Account.Name, Username: value.Account.Username, SecretType: value.Account.SecretType, Asset: value.Asset})
 	}
 	return result, nil
 }
@@ -190,11 +204,11 @@ func TestServicesShareFetchButTrackNotificationAndRotationSeparately(t *testing.
 	if err = a.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if remote.fetched != 3 || remote.confirmed != 1 {
+	if remote.fetched != 3 || remote.confirmed != 2 {
 		t.Fatal("duplicate fetch or missing initial confirmation", remote.fetched, remote.confirmed)
 	}
 	remote.active, remote.rotation = testB, 2
-	if err = a.HandleEvent(ctx, pam.Event{Event: "credential.updated", CredentialKey: "rotation", Revision: 2}); err != nil {
+	if err = a.HandleEvent(ctx, pam.Event{Event: "credential.secret.updated", CredentialKey: "rotation", Revision: 2}); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -202,10 +216,10 @@ func TestServicesShareFetchButTrackNotificationAndRotationSeparately(t *testing.
 		t.Fatal("alias mapping did not follow active account without overwriting other fields")
 	}
 	data, _ = os.ReadFile(deferredPath)
-	if !strings.Contains(string(data), testA) || remote.confirmed != 1 {
+	if !strings.Contains(string(data), testA) || remote.confirmed != 2 {
 		t.Fatal("deferred business updated or rotation confirmed before all services applied")
 	}
-	if err = a.HandleEvent(ctx, pam.Event{Event: "snapshot"}); err != nil {
+	if err = a.HandleEvent(ctx, pam.Event{Event: "snapshot", AuthorizedAccountIDs: []string{testA, testB, testC}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = a.retainedAccount(testC); err != nil {
@@ -215,7 +229,7 @@ func TestServicesShareFetchButTrackNotificationAndRotationSeparately(t *testing.
 		t.Fatal(err)
 	}
 	data, _ = os.ReadFile(deferredPath)
-	if !strings.Contains(string(data), testB) || remote.confirmed != 2 {
+	if !strings.Contains(string(data), testB) || remote.confirmed != 3 {
 		t.Fatal("periodic synchronization failed to apply deferred account switch")
 	}
 	for _, versions := range a.state.ServiceVersions {
@@ -277,7 +291,7 @@ func TestRevokedStoreFileIsDeletedBeforeOfflineRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote.fault = &pam.PAMError{StatusCode: 503, Code: "NetworkError"}
-	if a.HandleEvent(context.Background(), pam.Event{Event: "credential.revoked", AccountID: testA}) == nil {
+	if a.HandleEvent(context.Background(), pam.Event{Event: "app.scope.updated", AuthorizedAccountIDs: []string{testB, testC}}) == nil {
 		t.Fatal("outage ignored")
 	}
 	if _, err = os.Stat(filepath.Join(config.Store.Root, testA+".json")); !os.IsNotExist(err) {
@@ -322,7 +336,7 @@ func (f *busyServicesRemote) WatchCredentialEvents(ctx context.Context, handler 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := handler(pam.Event{Event: "snapshot"}); err != nil {
+			if err := handler(pam.Event{Event: "snapshot", AuthorizedAccountIDs: []string{testA, testB, testC}}); err != nil {
 				return err
 			}
 		}

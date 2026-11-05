@@ -12,7 +12,7 @@ type accountEventResult struct{ status, errorCode string }
 func accountEventSelector(event Event) (CredentialSelector, bool) {
 	if event.CommandID != "" {
 		switch event.Event {
-		case "credential.updated", "credential.switch.requested", "app.restart.requested":
+		case CredentialSecretUpdated, CredentialSwitchPublished, CredentialRefreshRequested, "credential.switch.requested", "app.restart.requested":
 			return CredentialSelector{Key: "command:" + event.CommandID}, true
 		default:
 			return CredentialSelector{}, false

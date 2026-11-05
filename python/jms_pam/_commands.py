@@ -1,4 +1,4 @@
-"""Shared command lifecycle for modern and compatibility clients."""
+"""Shared command lifecycle for credential-application commands."""
 
 import logging
 from typing import Any, Callable

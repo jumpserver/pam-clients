@@ -1,6 +1,6 @@
 # cURL — Usage guide
 
-This directory contains a signed HTTP script for diagnosing the legacy account-secret API. For application integration, use the Python, Go, Java or Node.js SDK.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ The script requires Bash, cURL, OpenSSL and base64. Replace ASSET and ACCOUNT in
 
 ## Configure and run
 
-Create an application in Application Management and authorize the target asset accounts. Set the endpoint, application AK/SK and organization ID below; replace every placeholder with its actual value before running.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-The examples query asset ubuntu_docker and account root by default. Replace them in the example with real authorized names. Run commands from the repository root. Example output contains secrets; do not send it to application logs.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## Request and response
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-The response id identifies the application, not an account revision. A null secret can reflect the server secret-view setting. These examples do not receive credential events, report applied revisions or execute application commands.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## Troubleshooting
 
-For 401, check AK/SK, organization, host time and the signed URL. For 403, check application status and account authorization. For 400, check asset/account selectors and query encoding. Do not log secrets or Authorization headers. Account names and asset names must match the application’s authorized resources.
+Check identity, authorization, signature and instance ID.
 
 ## Credential policy access
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 Fetch the target account with `account_id`. Apply and verify the application change, then report `success` or `failed` using `event_id`. A delivery receipt or successful fetch does not mean the application succeeded. Events and reconnect snapshot items include `event_id`, `account_id` and `account_revision`. Verify the account version before applying it. Restart and manual switch commands must first be claimed with `running`. Make application handlers idempotent; a reconnect may repeat an event.
 
-A received receipt only means an event was read. Send received with event_id on the same WebSocket before handling business events; snapshot and pong require no receipt. Reconcile the snapshot on every connection and reconnect, process credential.updated, and handle revocation or configuration changes.
+A received receipt only means an event was read. Send received with event_id on the same WebSocket before handling business events; snapshot and pong require no receipt. Reconcile the snapshot on every connection and reconnect, process credential.secret.updated / credential.switch.published / credential.refresh.requested, and handle revocation or configuration changes.

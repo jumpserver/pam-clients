@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -30,113 +29,8 @@ type SocketConfiguration struct {
 var accountIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var serviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-var serviceFields = [][2]string{
-	{"config_update", "update_config"},
-	{"service_action", "reload_service"},
-	{"application_check", "app_check"},
-}
-
-// Translate only the services wire format. Rule's internal names also form the
-// persisted configuration fingerprints; keeping them stable avoids replaying
-// completed service actions when an existing configuration adopts the new keys.
-func translateServiceFields(raw json.RawMessage, export bool) (json.RawMessage, error) {
-	var services []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &services); err != nil {
-		return nil, errors.New("services must be an array of service objects")
-	}
-	for index, service := range services {
-		if rawAccounts, exists := service["accounts"]; exists {
-			var accounts []map[string]json.RawMessage
-			if err := json.Unmarshal(rawAccounts, &accounts); err != nil {
-				return nil, fmt.Errorf("services[%d].accounts must be an array of account objects", index)
-			}
-			from, to := "id", "account_id"
-			if export {
-				from, to = to, from
-			}
-			for _, account := range accounts {
-				if !export {
-					for field := range account {
-						if strings.EqualFold(field, "account_id") {
-							return nil, fmt.Errorf("services[%d].accounts uses id, not account_id", index)
-						}
-					}
-				}
-				if value, exists := account[from]; exists {
-					account[to] = value
-					delete(account, from)
-				}
-			}
-			service["accounts"], _ = json.Marshal(accounts)
-		}
-		for _, names := range serviceFields {
-			old, current := names[0], names[1]
-			for field := range service {
-				if field != old && field != current && (strings.EqualFold(field, old) || strings.EqualFold(field, current)) {
-					return nil, fmt.Errorf("services[%d] field must be named %s", index, current)
-				}
-			}
-			_, hasOld := service[old]
-			if !export && hasOld {
-				return nil, fmt.Errorf("services[%d].%s is not supported; use %s", index, old, current)
-			}
-			from, to := current, old
-			if export {
-				from, to = old, current
-			}
-			if value, exists := service[from]; exists {
-				service[to] = value
-				delete(service, from)
-			}
-		}
-	}
-	return json.Marshal(services)
-}
-
-func currentServiceFieldNames(message string) string {
-	for _, names := range serviceFields {
-		message = strings.ReplaceAll(message, names[0], names[1])
-	}
-	return strings.ReplaceAll(message, "services.accounts.account_id", "services.accounts.id")
-}
-
-func (c Config) modern() bool {
-	return c.Store != nil || c.Services != nil || c.Socket != nil
-}
-
-// Storage and service consumption use the same v1 format as the client protocol.
-func (c Config) MarshalJSON() ([]byte, error) {
-	type plain Config
-	if !c.modern() {
-		return json.Marshal(plain(c))
-	}
-	raw, err := json.Marshal(plain(c))
-	if err != nil {
-		return nil, err
-	}
-	var object map[string]json.RawMessage
-	if err = json.Unmarshal(raw, &object); err != nil {
-		return nil, err
-	}
-	delete(object, "delivery")
-	delete(object, "rules")
-	if c.Services != nil && len(c.Services) == 0 {
-		object["services"] = json.RawMessage("[]")
-	}
-	if services, exists := object["services"]; exists {
-		object["services"], err = translateServiceFields(services, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-	object["version"] = json.RawMessage("1")
-	return json.Marshal(object)
-}
-
 func (c Config) normalized() Config {
-	if !c.modern() {
-		return c
-	}
+
 	c.ConfigVersion = 1
 	api := SocketConfiguration{}
 	if c.Socket != nil {
@@ -174,11 +68,11 @@ func (c Config) validateServices() error {
 		return unsupportedVersion("configuration", "version", c.ConfigVersion, CurrentConfigVersion)
 	}
 	if len(c.Rules) > 0 {
-		return errors.New("services cannot be combined with legacy rules")
+		return errors.New("services must define the application delivery stages")
 	}
 	if c.Store != nil {
 		store := c.Store
-		if store.Accounts == nil || !absolute(store.Root) || (store.Format != "" && store.Format != "json" && store.Format != "environment") {
+		if store.Accounts == nil || !absolute(store.Root) || store.Format != "" && store.Format != "json" && store.Format != "environment" {
 			return errors.New("store requires explicit accounts, an absolute root and json or environment format")
 		}
 		for _, path := range []string{c.StateFile, c.EventFile} {
@@ -186,9 +80,18 @@ func (c Config) validateServices() error {
 				return errors.New("private state and events must be outside the managed store")
 			}
 		}
+		reserved := []string{c.StateFile, c.EventFile, c.Delivery.Socket, store.Root}
+		if c.Socket != nil {
+			reserved = append(reserved, c.Socket.Socket)
+		}
+		for _, path := range reserved {
+			if path == c.pullTimesPath() {
+				return errors.New("last_pull_at.json beside the store is reserved for pull diagnostics")
+			}
+		}
 		seen := map[string]bool{}
 		for _, id := range store.Accounts {
-			if seen[id] || (id == "all" && len(store.Accounts) != 1) || (id != "all" && !accountIDPattern.MatchString(id)) {
+			if seen[id] || id == "all" && len(store.Accounts) != 1 || id != "all" && !accountIDPattern.MatchString(id) {
 				return errors.New("invalid or duplicate store account ID; all must be used alone")
 			}
 			seen[id] = true
@@ -210,7 +113,7 @@ func (c Config) validateServices() error {
 		if service.RestartSupported && service.Delivery != "socket" {
 			return errors.New("restart_supported requires socket delivery")
 		}
-		if len(service.Keys) > 0 || len(service.Accounts) == 0 || len(service.Files) > 0 || service.Action != nil {
+		if len(service.Accounts) == 0 {
 			return errors.New("services require account selectors and staged actions")
 		}
 		aliases := map[string]bool{}
@@ -242,6 +145,9 @@ func (c Config) validateServices() error {
 					return errors.New("a business target must belong to one service")
 				}
 				owners[path] = service.Name
+				if c.Store != nil && path == c.pullTimesPath() {
+					return errors.New("service targets cannot overwrite last_pull_at.json beside the store")
+				}
 				if c.Store != nil && (path == c.Store.Root || strings.HasPrefix(path, c.Store.Root+string(filepath.Separator))) {
 					return errors.New("service targets must be outside the managed store")
 				}

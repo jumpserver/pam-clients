@@ -62,7 +62,7 @@ class FileApplicationTests(unittest.TestCase):
             client,
             self.output,
             {
-                "event": "credential.updated",
+                "event": "credential.secret.updated",
                 "credential_mode": "subscription",
                 "credential_key": "policy",
                 "account_id": "account-2",
@@ -101,7 +101,7 @@ class FileApplicationTests(unittest.TestCase):
             client,
             self.output,
             {
-                "event": "credential.updated",
+                "event": "credential.secret.updated",
                 "credential_mode": "alternating_rotation",
                 "credential_key": "policy",
                 "revision": 4,
@@ -139,7 +139,7 @@ class FileApplicationTests(unittest.TestCase):
                     client,
                     self.output,
                     {
-                        "event": "credential.updated",
+                        "event": "credential.secret.updated",
                         "credential_mode": "alternating_rotation",
                         "credential_key": "policy",
                         "revision": 5,

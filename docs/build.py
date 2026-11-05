@@ -313,12 +313,12 @@ HEADERS = """(request-target) accept date digest x-jms-request-id x-jms-org
 x-jms-client-version x-jms-protocol-version x-jms-config-schema-version"""
 
 
-def legacy_guide(language, texts):
+def curl_guide(language, texts):
     label, command, runtime, example = EXAMPLES[language]
     extra = texts["curl_note"]
     return f"""# {label} — {texts["guide"]}
 
-{texts["legacy_intro"]}
+{texts["curl_intro"]}
 
 ## {texts["requirements"]}
 
@@ -329,7 +329,7 @@ def legacy_guide(language, texts):
 
 ## {texts["configure"]}
 
-{texts["legacy_config"]}
+{texts["curl_config"]}
 
 ```bash
 cd {language}
@@ -337,23 +337,23 @@ cd {language}
 {command}
 ```
 
-{texts["targets"]}
+{texts["curl_config"]}
 
 ## {texts["response"]}
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{{"id":"<app-id>","secret":"<account-secret>"}}
+{{"key":"account:<account-id>","revision":1,"asset":{{"id":"<asset-id>","name":"database"}},"account":{{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}}}
 ```
 
-{texts["legacy_response"]}
+{texts["curl_response"]}
 
 ## {texts["troubleshooting"]}
 
-{texts["legacy_errors"]}
+{texts["curl_errors"]}
 
 ## {texts["credential_policies"]}
 
@@ -437,7 +437,9 @@ PROTOCOL_EVENT_GROUPS = [
     (
         'accounts',
         [
-            'credential.updated',
+            'credential.secret.updated',
+            'credential.switch.published',
+            'credential.refresh.requested',
             'app.scope.updated',
         ],
     ),
@@ -466,11 +468,12 @@ PROTOCOL_EVENT_GROUPS = [
         ],
     ),
     (
-        'commands',
-        [
-            'credential.switch.requested',
-            'app.restart.requested',
-        ],
+        'rotation_actions',
+        ['credential.switch.requested'],
+    ),
+    (
+        'operations',
+        ['app.restart.requested'],
     ),
     (
         'connection',
@@ -481,25 +484,7 @@ PROTOCOL_EVENT_GROUPS = [
             'received',
         ],
     ),
-    (
-        'legacy',
-        [
-            'credential.revoked',
-            'configuration.updated',
-            'rotation.preparation.started',
-            'rotation.accounts.aligned',
-            'rotation.standby.waiting',
-            'rotation.preparation.ready',
-            'rotation.preparation.cancelled',
-            'rotation.verification.started',
-            'rotation.verification.failed',
-            'rotation.verification.cancelled',
-            'application.scope.updated',
-            'application.restart.requested',
-            'rotation.waiting_for_application',
-            'rotation.verification.skipped',
-        ],
-    ),
+
 ]
 
 
@@ -569,10 +554,6 @@ def protocol_guide(texts):
 
 {texts['event_liveness']}
 
-{texts['protocol_scope_legacy']}
-
-{texts['event_compatibility']}
-
 <!-- protocol-doc:end -->
 """
 
@@ -639,7 +620,7 @@ def native_guide(language, texts):
 
 `{"PAMException" if language == "java" else "PAMError"}`
 
-{texts["native_compatibility"]}
+
 
 <!-- sdk-doc:end -->
 
@@ -712,12 +693,33 @@ AGENT_UPDATE_SCRIPT = {
         'args': ['/etc/sample-app/credentials.json'], 'timeout_seconds': 30,
     },
 }
+AGENT_ACCOUNT_RESULT = {
+    'account': {
+        'id': '<active-account-id>', 'name': 'database', 'username': 'db_app',
+        'secret_type': 'password', 'secret': '<password>', 'version': 3,
+        'asset': {'id': '<asset-id>', 'name': 'database-server', 'address': '10.0.0.10'},
+    },
+    'source': 'local',
+    'last_pull_at': '2026-10-30T06:30:00Z',
+}
+
+
+def account_result_section(texts):
+    file_result = {'account': AGENT_ACCOUNT_RESULT['account']}
+    return (
+        texts['agent_account_result'] + '\n\n```json\n'
+        + json.dumps(AGENT_ACCOUNT_RESULT, indent=2) + '\n```\n\n'
+        + texts['agent_file_result'] + '\n\n```json\n'
+        + json.dumps(file_result, indent=2) + '\n```\n\n`last_pull_at.json`:\n\n```json\n'
+        + json.dumps({'<active-account-id>': AGENT_ACCOUNT_RESULT['last_pull_at']}, indent=2) + '\n```'
+    )
+
+
 AGENT_SCRIPT_PAYLOAD = {
-    'event': 'credential.updated',
+    'event': 'credential.refresh.requested',
     'credentials': {
         '<primary-account-id>': {
-            'account_id': '<active-account-id>', 'username': 'db_app',
-            'secret': '<password>', 'event_id': '<event-id>',
+            **AGENT_ACCOUNT_RESULT, 'event_id': '<event-id>',
         },
     },
 }
@@ -729,7 +731,7 @@ import tempfile
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-credential = payload["credentials"]["<primary-account-id>"]
+credential = payload["credentials"]["<primary-account-id>"]["account"]
 target = Path(sys.argv[1])
 original = target.stat()
 with target.open(encoding="utf-8") as source:
@@ -886,7 +888,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {{
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {{
       "<primary-account-id>": {{
@@ -932,6 +934,8 @@ Upgrade: websocket
 ```
 
 ## 5. API
+
+{account_result_section(texts)}
 
 | HTTP | API |
 | --- | --- |
@@ -1064,6 +1068,8 @@ $agentDir = Join-Path $HOME '.jms-pam-agent\\sample-app'
 ### {texts['account_lookup_title']}
 
 {texts['agent_queries']}
+
+{account_result_section(texts)}
 
 ```bash
 pam-agent get_accounts
@@ -1213,7 +1219,7 @@ python3
 
 {texts["sdk_errors"]}
 
-{texts["native_compatibility"]}
+
 
 <!-- sdk-doc:end -->
 
@@ -1238,7 +1244,7 @@ def main():
         )
         documents = {
             CLIENTS / language / f"README.{locale}.md": (
-                legacy_guide(language, texts)
+                curl_guide(language, texts)
                 if language == "curl"
                 else native_guide(language, texts)
             )

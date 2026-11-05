@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+Les requêtes CLI/Socket et les lectures de service renvoient `account`, `source` et `last_pull_at`. `account.version` est la version réelle des identifiants du compte ; les résultats ordinaires omettent la version de stratégie, `account_revision` et `event_id`. `source` vaut `api` pour une lecture Core et `local` pour le cache. `last_pull_at` est la date RFC 3339 de la dernière lecture réussie de ce compte depuis Core, même à version identique. Elle est conservée avec le cache après redémarrage. Synchroniser les métadonnées, lire le cache ou échouer ne la modifie pas. Un ancien cache sans date connue renvoie null. Une requête à la demande seule ne permet pas la conservation hors ligne.
+
+`event_id` reste dans les métadonnées de notification et dans les enveloppes des scripts pour signaler le résultat. Les snapshots réutilisent le dernier événement correspondant au compte, à sa version, à la stratégie et au client, ou créent un événement de republication. Les scripts lisent `credentials[selector].account`. Les modèles Go, mappings et variables EnvironmentFile gardent leurs noms. Les lecteurs JSON existants doivent adopter la structure account imbriquée.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+Les fichiers JSON de données de connexion contiennent uniquement `account`, sans `source` ni `last_pull_at`. Les dates sont exportées par ID réel de compte dans `last_pull_at.json`, à côté du répertoire `store.root`, et conservées dans l’état privé. Une lecture en direct réussie actualise immédiatement le diagnostic même à version identique, sans réécrire les fichiers de connexion. Les vérifications de version, lectures du cache et échecs ne changent pas la date. Les comptes révoqués sont retirés du diagnostic.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

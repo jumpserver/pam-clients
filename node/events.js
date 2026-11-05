@@ -31,7 +31,7 @@ async function main() {
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
   try {
     for await (const event of client.watchCredentialEvents()) {
-      const updates = event.commandId || event.event === 'credential.updated' ? [event]
+      const updates = event.commandId || ['credential.secret.updated', 'credential.switch.published', 'credential.refresh.requested'].includes(event.event) ? [event]
         : event.event === 'snapshot' ? event.credentials || [] : []
       // Reconcile removed connections on snapshots; release revoked accounts.
       for (const update of updates) {

@@ -27,7 +27,7 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.client.on_event_error = Mock()
         self.client.report_application_command_result = Mock(return_value=SimpleNamespace(accepted=True))
         self.dispatcher = EventDispatcher(self.client)
-        self.update = {'event': 'credential.updated', 'event_id': 'event-a', 'account_id': 'account-a',
+        self.update = {'event': 'credential.secret.updated', 'event_id': 'event-a', 'account_id': 'account-a',
                        'account_revision': 2, 'revision': 3, 'credential_mode': 'alternating_rotation', 'key': 'database'}
 
     def test_callback_finishes_before_success_and_failed_ack_does_not_reapply(self):
@@ -46,6 +46,15 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.assertFalse(self.dispatcher.pending)
         self.client.on_account_changed.assert_called_once()
         self.client.get_account.assert_called_once_with(account_id='account-a', allow_local_fallback=False)
+
+    def test_distinct_application_events_apply_once_and_progress_does_not_apply(self):
+        for name in ('credential.secret.updated', 'credential.switch.published', 'credential.refresh.requested'):
+            self.dispatcher._dispatch({**self.update, 'event': name, 'event_id': name})
+        self.assertEqual(self.client.on_account_changed.call_count, 3)
+        self.assertEqual(self.client.confirm_event.call_count, 3)
+        for name in ('rotation.started', 'credential.change.completed'):
+            self.dispatcher._dispatch({**self.update, 'event': name, 'event_id': name})
+        self.assertEqual(self.client.on_account_changed.call_count, 3)
 
     def test_business_failure_reports_failed_and_retries(self):
         self.client.on_account_changed.side_effect = [RuntimeError('cannot connect'), None]
@@ -169,9 +178,9 @@ class ManagedAccountEventTests(unittest.TestCase):
         self.client.on_account_revoked.assert_called_once_with('account-a')
         self.assertEqual(list(self.dispatcher.used_accounts.values()), ['account-a'])
 
-    def test_legacy_restart_event_executes_the_current_command_handler(self):
+    def test_restart_command_executes_once(self):
         self.client.on_application_restart = Mock()
-        self.dispatcher._dispatch({'event': 'application.restart.requested',
+        self.dispatcher._dispatch({'event': 'app.restart.requested',
                                    'event_id': 'legacy-restart', 'command_id': 'legacy-command'})
         self.client.on_application_restart.assert_called_once()
         self.client.on_account_changed.assert_not_called()

@@ -18,6 +18,7 @@ import (
 )
 
 type Credential struct {
+	LastPullAt      *time.Time         `json:"last_pull_at,omitempty"`
 	AccountRevision int64              `json:"account_revision"`
 	EventID         string             `json:"event_id,omitempty"`
 	Key             string             `json:"key"`
@@ -38,7 +39,8 @@ func (c Credential) String() string {
 }
 func (c Credential) GoString() string { return c.String() }
 func flatten(c pam.Credential) Credential {
-	return Credential{AccountRevision: c.Account.Revision, Key: c.Key, Revision: c.Revision, AssetID: c.Asset.ID, Asset: c.Asset.Name, Address: c.Asset.Address, AccountID: c.Account.ID, Account: c.Account.Name, Username: c.Account.Username, SecretType: c.Account.SecretType, Secret: c.Account.Secret, AccountSwitch: c.AccountSwitch}
+	now := time.Now().UTC()
+	return Credential{LastPullAt: &now, AccountRevision: c.Account.Revision, Key: c.Key, Revision: c.Revision, AssetID: c.Asset.ID, Asset: c.Asset.Name, Address: c.Asset.Address, AccountID: c.Account.ID, Account: c.Account.Name, Username: c.Account.Username, SecretType: c.Account.SecretType, Secret: c.Account.Secret, AccountSwitch: c.AccountSwitch}
 }
 
 type Payload struct {
@@ -49,26 +51,11 @@ type Payload struct {
 // Rule payload keys are the administrator's selectors. For an account rule the
 // selector stays A even when the server selects B as the current account.
 func resolveRule(rule Rule, latest map[string]Credential) (Payload, []string, bool, error) {
-	payload := Payload{Event: "credential.updated", Credentials: map[string]Credential{}}
+	payload := Payload{Event: "credential.refresh.requested", Credentials: map[string]Credential{}}
 	matched := []string{}
 	complete := true
-	selectors := make([]AccountSelector, 0, len(rule.Keys)+len(rule.Accounts))
-	for _, key := range rule.Keys {
-		selectors = append(selectors, AccountSelector{AccountID: key})
-	}
-	selectors = append(selectors, rule.Accounts...)
-	for _, account := range selectors {
+	for _, account := range rule.Accounts {
 		selector := account.AccountID
-		if len(rule.Keys) > 0 {
-			value, ok := latest[selector]
-			if !ok {
-				complete = false
-				continue
-			}
-			payload.Credentials[selector] = value
-			matched = append(matched, selector)
-			continue
-		}
 		candidate := ""
 		for key, value := range latest {
 			matches := value.AccountID == selector
@@ -163,10 +150,14 @@ func render(file File, payload Payload) ([]byte, error) {
 	case "json":
 		if len(payload.Credentials) == 1 {
 			for _, value := range payload.Credentials {
-				return json.MarshalIndent(value, "", "  ")
+				return json.MarshalIndent(value.fileResult(), "", "  ")
 			}
 		}
-		return json.MarshalIndent(payload.Credentials, "", "  ")
+		values := make(map[string]credentialFile, len(payload.Credentials))
+		for selector, value := range payload.Credentials {
+			values[selector] = value.fileResult()
+		}
+		return json.MarshalIndent(values, "", "  ")
 	case "environment":
 		if len(payload.Credentials) != 1 {
 			return nil, errors.New("EnvironmentFile requires one credential")
@@ -225,7 +216,7 @@ func execute(ctx context.Context, action Action, payload Payload) error {
 	command := exec.CommandContext(bounded, path, args...)
 	prepareActionProcess(command)
 	command.WaitDelay = 2 * time.Second
-	raw, err := json.Marshal(payload)
+	raw, err := json.Marshal(payload.notification())
 	if err != nil {
 		return err
 	}
@@ -243,21 +234,6 @@ func execute(ctx context.Context, action Action, payload Payload) error {
 // only after all writes and actions succeed. Retried actions must be idempotent.
 func Deliver(ctx context.Context, config Config, latest map[string]Credential, changed map[string]bool) error {
 	rules := config.Rules
-	if len(rules) == 0 {
-		for key := range changed {
-			if config.Delivery.Mode == "socket" {
-				continue
-			}
-			suffix, format := "json", "json"
-			if config.Delivery.Mode == "environment" {
-				suffix, format = "env", "environment"
-			}
-			rules = append(rules, Rule{Keys: []string{key}, Files: []File{{Path: filepath.Join(config.Delivery.Root, defaultCredentialFilename(key, suffix)), Format: format, Owner: config.Delivery.User}}})
-		}
-		if config.Delivery.Mode == "environment" && len(changed) > 0 {
-			rules = append(rules, Rule{Keys: mapKeys(changed), Action: &Action{Type: "systemd", Unit: config.Delivery.Unit, Operation: config.Delivery.Operation}})
-		}
-	}
 	type write struct {
 		file     File
 		data     []byte
@@ -293,8 +269,8 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 		if !complete {
 			return errors.New("delivery rule references an unavailable credential")
 		}
-		item := job{serviceAction: rule.Action, credentialCheck: rule.CredentialCheck, applicationCheck: rule.ApplicationCheck, payload: payload}
-		files := rule.Files
+		item := job{serviceAction: rule.ServiceAction, credentialCheck: rule.CredentialCheck, applicationCheck: rule.ApplicationCheck, payload: payload}
+		var files []File
 		if rule.ConfigUpdate != nil {
 			files = rule.ConfigUpdate.Files
 			item.updateScript = rule.ConfigUpdate.Script

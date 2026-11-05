@@ -1,6 +1,6 @@
 # cURL — Руководство по использованию
 
-Этот каталог содержит HTTP-скрипт с подписью для диагностики прежнего API account-secret. Для интеграции приложения используйте SDK Python, Go, Java или Node.js.
+Use signed HTTP requests to fetch the current credentials for an application-authorized account.
 
 ## Требования
 
@@ -11,7 +11,7 @@
 
 ## Настройка и запуск
 
-Создайте приложение в разделе управления приложениями и разрешите ему целевые аккаунты ресурсов. Укажите адрес, AK/SK приложения и ID организации ниже. Перед запуском замените все заполнители реальными значениями.
+Set the server, application identity, organization, instance ID and account ID.
 
 ```bash
 cd curl
@@ -23,23 +23,23 @@ export ORG_ID='<org-id>'
 bash demo.sh
 ```
 
-По умолчанию запрашиваются ресурс ubuntu_docker и аккаунт root. Замените их разрешёнными именами в коде. Команды выполняются из корня репозитория. Вывод содержит секреты; не направляйте его в журналы приложения.
+Set the server, application identity, organization, instance ID and account ID.
 
 ## Запрос и ответ
 
 ```http
-GET /api/v1/accounts/integration-applications/account-secret/?asset=ubuntu_docker&account=root
+GET /api/v1/accounts/credential-client/credential/?account_id=<account-id>&instance_id=<instance-id>
 ```
 
 ```json
-{"id":"<app-id>","secret":"<account-secret>"}
+{"key":"account:<account-id>","revision":1,"asset":{"id":"<asset-id>","name":"database"},"account":{"id":"<account-id>","username":"app","secret":"<account-secret>","secret_type":"password"}}
 ```
 
-id обозначает приложение, а не ревизию аккаунта. Значение secret: null может быть следствием настройки просмотра секретов на сервере. Примеры не получают события учётных данных, не сообщают применённые ревизии и не выполняют команды приложения.
+The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.
 
 ## Устранение неполадок
 
-При 401 проверьте AK/SK, организацию, время хоста и подписанный URL. При 403 — состояние приложения и разрешения аккаунта, при 400 — выбор ресурса/аккаунта и кодирование URL. Не записывайте секреты и заголовки Authorization; имена должны совпадать с разрешёнными ресурсами.
+Check identity, authorization, signature and instance ID.
 
 ## Подключение к политикам учётных данных
 
@@ -68,4 +68,4 @@ x-jms-client-version x-jms-protocol-version x-jms-config-schema-version
 
 Получите аккаунт по `account_id`. После проверки подключения и применения изменений передайте `success` или `failed` по `event_id`. Получение события или секрета не означает успешное применение. События и снимки содержат `event_id`, `account_id`, `account_revision`; проверяйте версию. Сначала захватывайте команды со статусом `running`; обработка должна быть идемпотентной.
 
-received означает только чтение события. Перед обработкой события с event_id отправьте received по тому же WebSocket; snapshot и pong квитанции не требуют. При каждом подключении и переподключении сверяйте снимок, обрабатывайте credential.updated, отзыв разрешений и изменения конфигурации.
+received означает только чтение события. Перед обработкой события с event_id отправьте received по тому же WebSocket; snapshot и pong квитанции не требуют. При каждом подключении и переподключении сверяйте снимок, обрабатывайте credential.secret.updated / credential.switch.published / credential.refresh.requested, отзыв разрешений и изменения конфигурации.

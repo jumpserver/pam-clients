@@ -29,21 +29,17 @@ SDK 处理首次与重连快照，按事件账号实时取密，检查账号 ID 
 
 | 事件 | 客户端处理 |
 | --- | --- |
-| `credential.updated`、`snapshot` 条目 | 按 `account_id` 实时取密，校验 `account_revision`，完成业务切换后按 `event_id` 上报结果。 |
+| `credential.secret.updated / credential.switch.published / credential.refresh.requested`、`snapshot` 条目 | 按 `account_id` 实时取密，校验 `account_revision`，完成业务切换后按 `event_id` 上报结果。 |
 | `app.scope.updated`、后续 `snapshot` | 分别对账账号授权与轮换绑定。解绑时停止跟随策略，保留仍获授权账号的连接；实际授权撤销时才清理账号凭据和连接。 |
 | `credential.switch.requested`、`app.restart.requested` | 管理员手动指令；以 `running` 认领后执行，再通过指令结果接口上报。 |
 | `rotation.*`（如 `rotation.started`、`rotation.completed` 等）、`credential.change.*`（如 `credential.change.started`、`credential.change.completed` 等） | 记录进度或告警，不再次取密、切换业务或确认应用成功。 |
 
-应用级“账号凭据变更通知”覆盖全部授权账号，A/B 切换另行绑定轮换策略。`snapshot.credentials` 合并这两种通知范围，`authorized_account_ids` 表示账号授权范围，二者不能混用。协议中的 `credential_mode: subscription` 表示账号通知，不要求创建订阅策略。旧准备阶段事件只用于历史记录；当前周期在验证备用账号后直接发布切换，从发布时刻开始观察原主账号成功取密，与客户端确认并行等待。
 
-当前 Core 已停止发送 `credential.revoked`，旧接入的处理入口与历史记录保留兼容。范围变化统一通过 `app.scope.updated` 和 `snapshot` 通知，不要求业务确认范围事件。
 
-以下旧凭据钩子和原始事件流继续兼容，其确认仍由调用方显式完成。
 
-- 新接入处理首次及重连 `snapshot`、`credential.updated` 时，统一按事件的 `account_id` 取密，校验 `account_revision` 后应用。
+- 新接入处理首次及重连 `snapshot`、`credential.secret.updated / credential.switch.published / credential.refresh.requested` 时，统一按事件的 `account_id` 取密，校验 `account_revision` 后应用。
 - 原始事件钩子先执行，再执行凭据变更或撤销处理函数。生命周期事件不取密，指令仍通过 SDK 的认领接口执行业务处理。
 - 独立读取器与串行处理函数使用容量 128 的有界队列，满载时产生背压。Node.js 钩子逐个 await；CPU 密集任务仍需要应用安排 worker。
-- 取密或凭据处理失败按 1、2、4…30 秒退避重试，每次重新取密。同一目标的新事件替换重试，较旧版本事件不会取消较新版本的拉取重试；快照重置重试范围，撤销或配置变化取消待重试项。处理函数应支持重复调用。
 - 原始事件和撤销处理函数的错误进入错误处理函数，不自动重试任意指令。默认日志仅输出错误类型，避免日志包含凭据。
 - 事件连接空闲时每 10 秒发送应用层 ping，约 30 秒没有收到消息则重连。重连采用 1–30 秒指数退避并重新签名；快照恢复当前状态，不重放历史事件。
 - `received` 仅表示读取事件。托管账号回调成功后，SDK 通过 `event_id` 上报；原始事件流仍使用 `confirm_event` / `ConfirmEvent` / `confirmEvent`。收到事件或取密成功不触发业务确认。
@@ -65,7 +61,6 @@ SDK 在当前客户端进程内存中保留最新值，关闭后释放；clone �
 
 PAM Agent 收到明确撤销或授权范围缩小的快照时，先停用相应本地取密并持久化授权范围，再尝试 HTTP 同步；后端暂时不可用或 PAM Agent 重启不会恢复已撤销的访问。关闭应用通知或解除轮换策略绑定不等于撤销账号授权，仍需核对 `authorized_account_ids` 或在线查询结果。已经交付的业务文件仍按既有交付规则处理。
 
-HTTP 401/403、凭据取密的 HTTP 404 和 `credential_not_found`（HTTP 400）清空 SDK 保留值并报错。`client_upgrade_required`／HTTP 426 保留凭据并明确报错，不以缓存代替本次请求成功；可选元数据接口的 HTTP 404 不清理凭据。格式错误的成功响应不使用本地值。明确撤销删除对应项；授权快照删除范围外的项；配置变更通知先保留已有值，等待后续授权快照核对。已撤销的在途请求不能重新填充本地状态。详见 [协议兼容规则](docs/protocol-compatibility.md)。
 
 高层事件刷新与 PAM Agent 始终实时取密；高层事件处理拒绝低于事件版本的 API 凭据。业务轮换切换示例也要求实时取密，保留值不被当作新版本且不自动确认轮换。原有低层事件入口继续返回事件，由现有业务代码调用取密接口；这些取密结果同样更新 SDK 保留值。
 

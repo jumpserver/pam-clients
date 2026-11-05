@@ -61,7 +61,7 @@ Upgrade: websocket
   "core_status": "pending",
   "delivery": {
     "delivery_id": "<delivery-id>",
-    "event": "credential.updated",
+    "event": "credential.refresh.requested",
     "service_id": "orders",
     "credentials": {
       "<primary-account-id>": {
@@ -107,6 +107,58 @@ Business status is separate from credential confirmation. Use starting, running,
 ```
 
 ## 5. API
+
+CLI/Socket 비밀 조회와 서비스 자격 증명 읽기는 `account`, `source`, `last_pull_at`을 반환합니다. `account.version`은 실제 계정의 자격 증명 버전입니다. 일반 결과에는 정책 버전, `account_revision`, `event_id`가 없습니다. `source`는 Core 실시간 조회 시 `api`, 캐시이면 `local`입니다. `last_pull_at`은 해당 계정을 Core에서 마지막으로 성공적으로 가져온 RFC 3339 시각이며 버전이 같아도 갱신됩니다. 캐시와 함께 저장되어 재시작 후에도 유지됩니다. 메타데이터 동기화, 캐시 읽기, 실패한 조회는 시각을 갱신하지 않습니다. 기존 캐시의 시각을 모르면 null입니다. 온디맨드 조회만으로 오프라인 보관이 활성화되지는 않습니다.
+
+`event_id`는 적용 결과 보고를 위해 알림 메타데이터와 스크립트 알림 외부에 유지됩니다. 스냅샷은 계정, 버전, 정책, 클라이언트가 일치하는 최신 이벤트를 재사용하고, 없으면 재발행 이벤트를 만듭니다. 스크립트는 `credentials[selector].account`를 읽습니다. 기존 Go 템플릿, 필드 매핑, EnvironmentFile 변수 이름은 유지됩니다. JSON 소비자는 중첩 account 구조에 맞춰야 합니다.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  },
+  "source": "local",
+  "last_pull_at": "2026-10-30T06:30:00Z"
+}
+```
+
+자격 증명 JSON 파일에는 `account`만 포함하며 `source`와 `last_pull_at`은 생략합니다. 가져온 시각은 실제 계정 ID를 키로 하여 `store.root` 디렉터리와 같은 상위 경로의 `last_pull_at.json`에 저장되며 비공개 상태에도 유지됩니다. 실시간 조회 성공 시 버전이 같아도 진단 파일을 즉시 갱신하고 자격 증명 파일은 다시 쓰지 않습니다. 버전 확인, 캐시 읽기, 조회 실패 시 시각은 유지됩니다. 권한이 취소된 계정의 항목은 제거됩니다.
+
+```json
+{
+  "account": {
+    "id": "<active-account-id>",
+    "name": "database",
+    "username": "db_app",
+    "secret_type": "password",
+    "secret": "<password>",
+    "version": 3,
+    "asset": {
+      "id": "<asset-id>",
+      "name": "database-server",
+      "address": "10.0.0.10"
+    }
+  }
+}
+```
+
+`last_pull_at.json`:
+
+```json
+{
+  "<active-account-id>": "2026-10-30T06:30:00Z"
+}
+```
 
 | HTTP | API |
 | --- | --- |

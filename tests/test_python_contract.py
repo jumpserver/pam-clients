@@ -20,7 +20,7 @@ from jms_pam.models import KnownRevision
 @unittest.skipUnless(os.environ.get("JMS_TEST_ENDPOINT"), "Run through tests/run.py")
 class PythonContractTests(unittest.TestCase):
     def test_authoritative_scope_removes_all_unauthorized_cache_aliases(self):
-        for name in ('snapshot', 'app.scope.updated', 'application.scope.updated'):
+        for name in ('snapshot', 'app.scope.updated'):
             instance = 'python-authority-cache-' + name
             with self.client(instance) as client:
                 client.get_account(account_id='account')
@@ -62,7 +62,7 @@ class PythonContractTests(unittest.TestCase):
             until(lambda: client.get_client_info().application_status is not None
                   and client.get_client_info().application_status.account_ids == ['account'])
             self.assertEqual(applied, [('account', 2)])
-            control(revision=3, account_id='backup', event='credential.updated')
+            control(revision=3, account_id='backup', event='credential.secret.updated')
             until(lambda: client.get_client_info().application_status.account_ids == ['backup'])
             self.assertEqual(applied[-1], ('backup', 3))
 
@@ -71,7 +71,7 @@ class PythonContractTests(unittest.TestCase):
         with urlopen(url) as response:
             self.assertEqual(response.status, 200)
 
-    def test_compatibility_errors_preserve_cache_but_fail_explicitly(self):
+    def test_http_errors_fail_without_returning_cached_values(self):
         instance = "python-compat-cycle"
         with self.client(instance) as client:
             initial = client.get_account(account_id="account")
@@ -79,7 +79,7 @@ class PythonContractTests(unittest.TestCase):
             for fresh in (False, True):
                 with self.assertRaises(PAMError) as result:
                     client.get_account(account_id="account", allow_local_fallback=not fresh)
-                self.assertTrue(result.exception.is_compatibility_error)
+                self.assertEqual(result.exception.status_code, 426)
             self.control(instance, 503)
             retained = client.get_account(account_id="account")
             self.assertTrue(retained.from_local)
@@ -87,12 +87,12 @@ class PythonContractTests(unittest.TestCase):
             self.control(instance, 401)
             with self.assertRaises(PAMError) as result:
                 client.get_account(account_id="account")
-            self.assertFalse(result.exception.is_compatibility_error)
+            self.assertNotEqual(result.exception.status_code, 426)
             self.control(instance, 503)
             with self.assertRaises(PAMError):
                 client.get_account(account_id="account")
 
-    def test_optional_metadata_compatibility(self):
+    def test_metadata_diagnostics(self):
         with self.client("python-compat-legacy") as client:
             self.assertIsNone(client.get_client_info().server_capabilities)
         with self.client("python-compat-capabilities") as client:
@@ -115,7 +115,7 @@ class PythonContractTests(unittest.TestCase):
                 client.get_credential(key=key)
                 with self.assertRaises(PAMError) as result:
                     client.get_credential(key=key)
-                self.assertTrue(result.exception.is_compatibility_error)
+                self.assertEqual(result.exception.status_code, 426)
                 self.assertEqual(len(client._latest_credentials), 1)
                 self.control(instance, 503)
                 self.assertTrue(client.get_credential(key=key).from_local)
@@ -333,7 +333,7 @@ class PythonContractTests(unittest.TestCase):
                 [event["event"] for event in events],
                 [
                     "snapshot",
-                    "credential.updated",
+                    "credential.secret.updated",
                     "future.notification",
                     "snapshot",
                 ],
