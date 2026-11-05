@@ -400,8 +400,8 @@ class Client:
 
     def confirm_event(self, *, event_id: str, status: str = "success", error_code: str = "") -> CommandResult:
         """Report only after applying the event; receiving or fetching is insufficient."""
-        if not isinstance(event_id, str) or not event_id or status not in ("success", "failed"):
-            raise ValueError("event_id and a success or failed status are required")
+        if not isinstance(event_id, str) or not event_id or status not in ("success", "failed", "skip"):
+            raise ValueError("event_id and a success, failed or skip status are required")
         return self._request(
             "POST", f"{CLIENT_PATH}/event-result/",
             {"event_id": event_id, "status": status, "error_code": error_code},
@@ -483,7 +483,7 @@ class Client:
         error_code: Optional[str] = None,
     ) -> CommandResult:
         """Claim a command with running, then report its actual outcome."""
-        if not command_id or status not in ("running", "success", "failed"):
+        if not command_id or status not in ("running", "success", "failed", "skip"):
             raise ValueError("command_id and a valid command status are required")
         return self._request(
             "POST",

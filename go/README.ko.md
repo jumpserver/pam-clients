@@ -398,7 +398,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | 모든 참여 인스턴스가 확인하거나 애플리케이션 검증을 건너뛰고 관리자가 실패를 승인한 후에만 원본 계정의 조회 관찰을 시작합니다. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -430,6 +430,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## 활동 로그와 프로토콜 이벤트 대응
+
+활동 로그는 감사 동작을 기록하고 이벤트 로그는 프로토콜 알림 및 명령의 전달과 처리 상태를 표시합니다. 감사 동작과 알림은 서로 다른 분류입니다. 표는 가능한 연관 관계이며 전달 성공을 뜻하지 않습니다. 실제 이벤트와 결과는 상세 내용에 있습니다. 수신, 조회, 적용, 건너뛰기 및 관리자 승인은 따로 기록합니다. credential_fetched는 조회 로그에 표시합니다.
+
+| 활동 유형 | 활동 코드 | 관련 알림 / 메시지 | Meaning |
+| --- | --- | --- | --- |
+| 애플리케이션 명령 전송 | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | 선택한 인스턴스에 게시된 자격 증명 적용 또는 재시작을 요청합니다. 새 교체 주기를 시작하지 않습니다. |
+| 애플리케이션 처리 결과 | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | 자격 증명 적용이나 명령의 진행과 결과를 보고합니다. 재시도가 성공해도 교체 실패에는 관리자 확인이 필요합니다. |
+| 통합 또는 교체 구성 생성 | `configuration_created` | `app.scope.updated` | 애플리케이션 또는 정책을 생성했습니다. 범위 변경 시 app.scope.updated를 보낼 수 있습니다. |
+| 통합 또는 교체 구성 수정 | `configuration_updated` | `app.scope.updated` | 설정을 수정했습니다. 범위 변경 시 app.scope.updated를 보낼 수 있습니다. |
+| 통합 또는 교체 구성 삭제 | `configuration_deleted` | 고정된 대응 이벤트 없음 | 애플리케이션 또는 정책을 삭제했습니다. 자격 증명 적용 결과가 아닙니다. |
+| 자격 증명 권한 또는 연결 추가 | `authorization_granted` | `credential.refresh.requested` | 권한이나 교체 정책 연결을 추가하고 새로 고침을 요청합니다. 연결만으로 계정 권한이 확대되지 않습니다. |
+| 자격 증명 권한 또는 연결 제거 | `authorization_revoked` | `app.scope.updated` | 권한이나 정책 연결을 제거했습니다. 계정 권한이 실제로 없어질 때만 업무 연결을 해제합니다. |
+| 자격 증명 조회 | `credential_fetched` | 고정된 대응 이벤트 없음 | 별도의 조회 로그에 기록합니다. 조회 성공만으로 업무 사용을 증명하지 않습니다. |
+| 계정 암호 버전 변경 | `credential_secret_updated` | `credential.secret.updated` | 변경된 자격 증명을 조회하고 적용해야 합니다. 현재 A/B 계정은 바뀌지 않습니다. |
+| 계정 전환 게시 | `credential_switch_published` | `credential.switch.published` | 대상 또는 복귀 계정과 정책 버전을 게시합니다. 게시가 전환 완료를 뜻하지 않습니다. |
+| 현재 자격 증명 적용 요청 | `credential_refresh_requested` | `credential.refresh.requested` | 게시된 버전의 조회와 적용을 요청합니다. 암호 변경이나 새 교체 주기를 뜻하지 않습니다. |
+| 자격 증명 알림 다시 게시 | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | 수동 새로 고침이나 snapshot 대조로 현재 자격 증명의 재적용을 요청합니다. 암호 버전은 같을 수 있습니다. |
+| 새 자격 증명 적용 확인 | `credential_confirmed` | 고정된 대응 이벤트 없음 | 클라이언트가 현재 버전 적용 성공을 보고합니다. 수신 확인이나 조회와 별도로 기록합니다. |
+| 애플리케이션 검사 건너뛰기 | `credential_confirmation_skipped` | 고정된 대응 이벤트 없음 | 다른 전달 단계 성공 후 선택적 검사에 skip을 보고합니다. 검사 통과를 뜻하지 않습니다. |
+| 관리자 계속 진행 승인 | `application_failure_reviewed` | 고정된 대응 이벤트 없음 | 관리자가 사유를 기록하여 실패 차단을 해제합니다. 원래 실패 기록은 유지됩니다. |
+| 자격 증명 이벤트 스트림 연결 | `credential_stream_connected` | `snapshot` | 알림 스트림에 연결하고 snapshot으로 범위를 대조합니다. 적용 성공을 뜻하지 않습니다. |
+| 자격 증명 이벤트 스트림 해제 | `credential_stream_disconnected` | 고정된 대응 이벤트 없음 | 알림 스트림이 끊겼습니다. 이것만으로 업무 연결 실패를 뜻하지 않습니다. |
+| 교체 단계 변경 | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | 검증, 적용 대기, 원래 계정 조회 관찰 및 결과를 기록합니다. 실제 단계는 상세 내용을 확인하세요. |
+| 계정 교체 시작 | `rotation_started` | `rotation.started` | 대상 계정을 게시하고 애플리케이션 전환을 시작했습니다. 전체 교체 완료가 아닙니다. |
+| 교체 취소 또는 강제 종료 | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | 취소는 원래 계정으로 복귀 확인을 기다립니다. 강제 종료는 남은 복구 확인을 기다리지 않습니다. |
+| 계정 암호 변경 시작 | `secret_change_started` | `credential.change.started` | 작업이 대기열에 있거나 시작되었습니다. 원격 암호는 아직 바뀌지 않았을 수 있습니다. |
+| 계정 암호 변경 완료 | `secret_change_completed` | `credential.change.completed` | 변경 작업이 성공했습니다. 애플리케이션의 자격 증명 적용을 증명하지 않습니다. |
+| 계정 암호 변경 실패 | `secret_change_failed` | `credential.change.failed` | 작업 실패 또는 결과 불명입니다. 작업과 원격 계정을 확인하세요. |
+| 클라이언트 인스턴스 등록 | `client_registered` | 고정된 대응 이벤트 없음 | SDK 또는 Agent 인스턴스가 등록되었습니다. 자격 증명 적용을 뜻하지 않습니다. |
+| 클라이언트 인스턴스 활성화 | `client_enabled` | 고정된 대응 이벤트 없음 | 기존 권한 내에서 접근을 재개합니다. 새 계정 권한을 부여하지 않습니다. |
+| 클라이언트 인스턴스 비활성화 | `client_disabled` | 고정된 대응 이벤트 없음 | 이후 접근을 거부합니다. 계정 암호는 변경하지 않습니다. |
+| 애플리케이션 알림 전달 | `notification` | 고정된 대응 이벤트 없음 | Webhook 전달 및 재시도를 기록합니다. HTTP 전달이 자격 증명 적용 성공을 뜻하지 않습니다. 실제 이벤트 코드는 상세 내용에 있습니다. |
+| 애플리케이션 접근 시크릿 재설정 | `application_secret_reset` | 고정된 대응 이벤트 없음 | JumpServer 연결용 인증 시크릿을 변경합니다. 업무 계정의 암호 교체와는 별개입니다. |
 
 ## Payload fields
 
@@ -463,6 +498,17 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 ## Receipts and business results
 
 SDK는 비즈니스 이벤트를 반환하기 전에 received 수신 확인을 가능한 범위에서 자동 전송합니다. 애플리케이션은 추가로 전송할 필요가 없습니다. 수신 확인은 이벤트를 읽었다는 뜻이며 자격 증명 적용이나 적용 확인을 대신하지 않습니다. 최초 및 재연결 스냅샷을 처리하세요. snapshot과 pong에는 수신 확인이 필요하지 않습니다.
+
+결과는 success, failed, skip입니다. app_check가 없는 로컬 service는 다른 단계가 성공하면 skip을 보고하며 애플리케이션 확인으로 계산하지 않습니다. failed는 이후 재시도가 성공하거나 건너뛰어도 다음 단계를 차단합니다. 관리자가 이유를 입력하고 진행을 승인해야 하며 원래 실패 기록은 유지됩니다.
+
+관리자 승인은 accounts.change_applicationcredential 권한이 있는 사용자 세션을 사용합니다. 현재 failure_id와 이유를 제출하세요. 만료된 실패 또는 정책 버전은 거부됩니다. 승인은 감사에 기록되며 클라이언트 결과는 유지됩니다.
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

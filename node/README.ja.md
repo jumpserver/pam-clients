@@ -362,7 +362,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | 全参加インスタンスが確認またはアプリケーション検証をスキップし、失敗を管理者が承認した後にのみ、元アカウントの取得監視を開始します。 |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -394,6 +394,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## アクティビティとプロトコルイベントの対応
+
+アクティビティログは監査操作を記録し、イベントログは通知・コマンドと配信・処理状況を表示します。監査操作と通知は異なる分類です。表は関連し得るコードを示し、配信成功を意味しません。実際のイベントと結果は詳細で確認してください。受信、取得、適用、スキップ、管理者承認は別々に記録します。credential_fetched は取得ログに表示します。
+
+| アクティビティ種別 | アクティビティコード | 関連通知・メッセージ | Meaning |
+| --- | --- | --- | --- |
+| アプリケーションコマンドを送信 | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | 管理者が選択したインスタンスに公開済み認証情報の適用または再起動を要求します。新しいローテーションは開始しません。 |
+| アプリケーション処理結果 | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | クライアントが認証情報適用やコマンドの進捗と結果を報告します。再試行が成功してもローテーションの失敗には管理者の確認が必要です。 |
+| 連携・ローテーション設定を作成 | `configuration_created` | `app.scope.updated` | アプリケーションまたはポリシーを作成しました。範囲変更時には app.scope.updated を送信する場合があります。 |
+| 連携・ローテーション設定を更新 | `configuration_updated` | `app.scope.updated` | 設定を更新しました。範囲変更時には app.scope.updated を送信する場合があります。 |
+| 連携・ローテーション設定を削除 | `configuration_deleted` | 固定の対応イベントなし | アプリケーションまたはポリシーを削除しました。認証情報適用の結果ではありません。 |
+| 認証情報の権限・関連付けを追加 | `authorization_granted` | `credential.refresh.requested` | 権限またはローテーションの関連付けを追加し、更新を要求します。関連付けだけではアカウント権限は拡大しません。 |
+| 認証情報の権限・関連付けを削除 | `authorization_revoked` | `app.scope.updated` | 権限または関連付けを削除しました。業務接続の解放はアカウント権限を実際に失った場合に限ります。 |
+| 認証情報を取得 | `credential_fetched` | 固定の対応イベントなし | 別の取得ログに記録します。取得成功だけでは業務での利用を証明しません。 |
+| アカウントのパスワードバージョン更新 | `credential_secret_updated` | `credential.secret.updated` | 変更された認証情報を再取得して適用します。現在の A/B アカウントは切り替わりません。 |
+| アカウント切替を公開 | `credential_switch_published` | `credential.switch.published` | 切替先または復帰先とポリシーバージョンを公開します。公開だけでは切替完了を証明しません。 |
+| 現在の認証情報の適用を要求 | `credential_refresh_requested` | `credential.refresh.requested` | 公開中のバージョンの取得と適用を要求します。パスワード変更や新しいローテーションを意味しません。 |
+| 認証情報通知を再公開 | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | 手動更新や snapshot の照合で現在の認証情報を再適用します。パスワードバージョンが同じ場合もあります。 |
+| 新しい認証情報の適用を確認 | `credential_confirmed` | 固定の対応イベントなし | クライアントが現在のバージョンの適用成功を報告します。受信確認や取得とは別です。 |
+| アプリケーション検証をスキップ | `credential_confirmation_skipped` | 固定の対応イベントなし | 他の配信手順が成功し、任意の検証に skip を報告しました。検証成功ではありません。 |
+| 管理者が続行を承認 | `application_failure_reviewed` | 固定の対応イベントなし | 管理者が理由を記録して失敗による停止を解除します。元の失敗は保持されます。 |
+| 認証情報イベントストリーム接続 | `credential_stream_connected` | `snapshot` | 通知ストリームに接続し、snapshot で範囲を照合します。適用成功を意味しません。 |
+| 認証情報イベントストリーム切断 | `credential_stream_disconnected` | 固定の対応イベントなし | 通知ストリームが切断されました。業務接続の失敗を意味するものではありません。 |
+| ローテーション段階の変更 | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | 検証、適用待機、元アカウントの取得監視と結果を記録します。実際の段階は詳細を確認してください。 |
+| アカウントローテーション開始 | `rotation_started` | `rotation.started` | 切替先を公開してアプリケーションの切替を開始しました。全体の完了ではありません。 |
+| ローテーション取消・強制終了 | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | 取消は元アカウントへの復帰確認を待ちます。強制終了は残りの復旧確認を待ちません。 |
+| アカウントパスワード変更開始 | `secret_change_started` | `credential.change.started` | タスクを登録または開始しました。リモートのパスワードはまだ変わっていない場合があります。 |
+| アカウントパスワード変更完了 | `secret_change_completed` | `credential.change.completed` | 変更タスクが成功しました。アプリケーションの認証情報適用は証明しません。 |
+| アカウントパスワード変更失敗 | `secret_change_failed` | `credential.change.failed` | タスク失敗または結果不明です。タスクとリモートアカウントを確認してください。 |
+| クライアントインスタンス登録 | `client_registered` | 固定の対応イベントなし | SDK または Agent が登録されました。認証情報適用を意味しません。 |
+| クライアントインスタンス有効化 | `client_enabled` | 固定の対応イベントなし | 既存の権限内でアクセスを再開できます。新たなアカウント権限は付与しません。 |
+| クライアントインスタンス無効化 | `client_disabled` | 固定の対応イベントなし | 以降のアクセスを拒否します。アカウントのパスワードは変更しません。 |
+| アプリケーション通知の配信 | `notification` | 固定の対応イベントなし | Webhook の配信と再試行を記録します。HTTP 配信は認証情報適用の成功ではありません。実際のイベントコードは詳細に表示します。 |
+| アプリケーション接続シークレットのリセット | `application_secret_reset` | 固定の対応イベントなし | JumpServer 接続用の認証シークレットを変更します。業務アカウントのパスワード変更とは別です。 |
 
 ## Payload fields
 
@@ -427,6 +462,17 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 ## Receipts and business results
 
 SDK は業務イベントを返す前に received 受領通知を可能な範囲で自動送信します。アプリケーションによる追加送信は不要です。受領通知は読み取り済みを表すだけで、認証情報の適用や確認の代わりにはなりません。初回接続と再接続のスナップショットを処理してください。snapshot と pong に受領通知は不要です。
+
+結果は success、failed、skip です。app_check を省略したローカル service は他の手順の成功後に skip を報告し、アプリケーションの確認とは区別します。failed 後は再試行が成功またはスキップしても次の段階へ進めません。管理者が理由を記入して続行を承認し、元の失敗記録を保持します。
+
+管理者承認には accounts.change_applicationcredential 権限を持つユーザーセッションが必要です。現在の failure_id と理由を送信してください。古い失敗やポリシーの版は拒否されます。承認は監査に記録され、クライアントの結果は保持されます。
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

@@ -330,7 +330,7 @@ async function startServer() {
         }
       } else if (route === "/event-result/") {
         assert.ok(data.event_id);
-        assert.ok(["success", "failed"].includes(data.status));
+        assert.ok(["success", "failed", "skip"].includes(data.status));
         assert.equal(data.key, undefined);
         assert.equal(data.revision, undefined);
         const control = controls.get(data.instance_id);
@@ -376,7 +376,7 @@ async function startServer() {
         };
         if (agentControl) result.commands = [];
       } else if (route === "/command-result/") {
-        assert.ok(["running", "success", "failed"].includes(data.status));
+        assert.ok(["running", "success", "failed", "skip"].includes(data.status));
         if (data.command_id === "report-failure" && data.status === "failed") {
           response.statusCode = 503;
           result = { code: "temporarily_unavailable" };

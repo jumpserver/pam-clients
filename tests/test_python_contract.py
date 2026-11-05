@@ -138,6 +138,7 @@ class PythonContractTests(unittest.TestCase):
             self.assertFalse(account.from_local)
             self.assertEqual(account.revision, 2)
             self.assertNotIn("DO_NOT_LOG_SECRET", repr(account))
+            self.assertEqual(client.confirm_event(event_id="event-skip", status="skip").status, "skip")
             self.assertTrue(client.confirm_event(event_id="event-one").accepted)
             self.assertEqual(client.confirm_event(event_id="event-two", status="failed", error_code="application_failed").status, "failed")
 

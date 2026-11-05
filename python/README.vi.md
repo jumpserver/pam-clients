@@ -237,6 +237,8 @@ curl --fail --silent --show-error \
 
 Chỉ xác nhận sau khi kiểm tra và đổi kết nối thực. Dùng `app_check` với `confirm_on_success: true` hoặc xác nhận tường minh. Không gọi API xác nhận từ script kiểm tra đồng bộ. Kết quả lưu trước: `confirmed` đã được Core chấp nhận, `pending` sẽ thử lại.
 
+Kết quả là success, failed hoặc skip. Service cục bộ không có app_check báo skip khi các bước khác thành công, không tính là ứng dụng đã xác nhận. failed chặn bước tiếp theo dù thử lại thành công hoặc bỏ qua. Quản trị viên phải duyệt tiếp tục kèm lý do; lỗi gốc được giữ lại.
+
 ```bash
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ```
@@ -244,6 +246,8 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ## 6. Cập nhật ứng dụng service
 
 Thêm các đối tượng dưới đây vào `services` với `name` duy nhất, ổn định. `allow_account_switch` ở cấp dịch vụ mặc định false: true theo tài khoản hiện hành của liên kết A/B rõ ràng; tài khoản khác giữ cố định. Chỉ cần khai báo A. `update_on_notification` cũng ở cấp dịch vụ, mặc định true. False đợi lần đối soát định kỳ tiếp theo, mặc định 300 giây; lưu trữ và thu hồi quyền vẫn hoạt động. Mỗi dịch vụ lưu phiên bản riêng. Chỉ tự xác nhận luân chuyển khi tất cả dịch vụ liên quan kiểm tra thành công với `app_check.confirm_on_success: true`.
+
+Kết quả là success, failed hoặc skip. Service cục bộ không có app_check báo skip khi các bước khác thành công, không tính là ứng dụng đã xác nhận. failed chặn bước tiếp theo dù thử lại thành công hoặc bỏ qua. Quản trị viên phải duyệt tiếp tục kèm lý do; lỗi gốc được giữ lại.
 
 Cấu hình dùng `update_config` → `reload_service` → `app_check`: cập nhật tệp, reload/restart dịch vụ (hoặc chạy script cố định), rồi kiểm tra ứng dụng đang chạy. Cần PAM Agent đã cập nhật. Ba bước này trong `services` chỉ chấp nhận tên mới; tên cũ bị từ chối.
 
@@ -722,7 +726,7 @@ client.report_status("degraded", account_ids=[account.id], error_code="db_unavai
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
 - `watch_credential_events(stop_event=...)`
-- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
+- `confirm_event(event_id=..., status="success" | "failed" | "skip", error_code=...)`
 - `list_application_commands()` / `execute_application_command(event, handler)`
 - `report_application_command_result(command_id=..., status="running")`
 - `clone()` / `close()`
@@ -829,7 +833,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | Chỉ bắt đầu theo dõi tài khoản nguồn sau khi mọi phiên bản xác nhận hoặc bỏ qua kiểm tra ứng dụng và quản trị viên đã duyệt các lỗi. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -861,6 +865,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## Đối chiếu hoạt động và sự kiện giao thức
+
+Nhật ký hoạt động ghi thao tác kiểm toán; nhật ký sự kiện hiển thị thông báo và lệnh cùng trạng thái giao và xử lý. Thao tác kiểm toán và thông báo là hai danh mục khác nhau. Bảng chỉ nêu liên hệ có thể có, không xác nhận đã giao; xem sự kiện và kết quả thực trong chi tiết. Biên nhận, lấy, áp dụng, bỏ qua và duyệt được ghi riêng. credential_fetched nằm trong nhật ký lấy thông tin.
+
+| Loại hoạt động | Mã hoạt động | Thông báo / thông điệp liên quan | Meaning |
+| --- | --- | --- | --- |
+| Gửi lệnh ứng dụng | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | Yêu cầu phiên bản được chọn áp dụng thông tin đã công bố hoặc khởi động lại; không bắt đầu vòng luân chuyển mới. |
+| Kết quả xử lý ứng dụng | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | Máy khách báo tiến độ và kết quả áp dụng hoặc lệnh. Lỗi luân chuyển vẫn cần quản trị viên duyệt dù thử lại thành công. |
+| Tạo cấu hình tích hợp hoặc luân chuyển | `configuration_created` | `app.scope.updated` | Tạo ứng dụng hoặc chính sách; thay đổi phạm vi có thể phát app.scope.updated. |
+| Sửa cấu hình tích hợp hoặc luân chuyển | `configuration_updated` | `app.scope.updated` | Thay đổi thiết lập; thay đổi phạm vi có thể phát app.scope.updated. |
+| Xóa cấu hình tích hợp hoặc luân chuyển | `configuration_deleted` | Không có sự kiện giao thức cố định | Xóa ứng dụng hoặc chính sách; không phải kết quả áp dụng thông tin đăng nhập. |
+| Thêm quyền hoặc liên kết thông tin đăng nhập | `authorization_granted` | `credential.refresh.requested` | Thêm quyền hoặc liên kết luân chuyển và yêu cầu làm mới; liên kết không mở rộng quyền tài khoản. |
+| Gỡ quyền hoặc liên kết thông tin đăng nhập | `authorization_revoked` | `app.scope.updated` | Gỡ quyền hoặc liên kết. Chỉ giải phóng kết nối nghiệp vụ khi thực sự mất quyền tài khoản. |
+| Lấy thông tin đăng nhập | `credential_fetched` | Không có sự kiện giao thức cố định | Ghi trong nhật ký lấy riêng; lấy thành công không chứng minh nghiệp vụ đã sử dụng. |
+| Cập nhật phiên bản mật khẩu tài khoản | `credential_secret_updated` | `credential.secret.updated` | Phiên bản thay đổi và cần được lấy rồi áp dụng; không đổi tài khoản A/B đang chọn. |
+| Công bố chuyển tài khoản | `credential_switch_published` | `credential.switch.published` | Công bố tài khoản đích hoặc quay về cùng phiên bản chính sách; không chứng minh ứng dụng đã chuyển. |
+| Yêu cầu áp dụng thông tin hiện tại | `credential_refresh_requested` | `credential.refresh.requested` | Yêu cầu lấy và áp dụng phiên bản công bố; không có nghĩa mật khẩu đổi hoặc vòng luân chuyển mới bắt đầu. |
+| Công bố lại thông báo thông tin đăng nhập | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | Làm mới thủ công hoặc đối soát snapshot yêu cầu áp dụng lại; phiên bản mật khẩu có thể không đổi. |
+| Xác nhận đã áp dụng thông tin mới | `credential_confirmed` | Không có sự kiện giao thức cố định | Máy khách xác nhận áp dụng phiên bản hiện tại; tách biệt với biên nhận và việc lấy thông tin. |
+| Bỏ qua kiểm tra ứng dụng | `credential_confirmation_skipped` | Không có sự kiện giao thức cố định | Các bước giao khác thành công và máy khách báo skip cho kiểm tra tùy chọn; không phải kiểm tra đạt. |
+| Quản trị viên duyệt tiếp tục | `application_failure_reviewed` | Không có sự kiện giao thức cố định | Quản trị viên ghi lý do và gỡ chặn do lỗi; giữ nguyên bản ghi lỗi gốc. |
+| Kết nối luồng sự kiện thông tin đăng nhập | `credential_stream_connected` | `snapshot` | Máy khách kết nối và đối soát phạm vi qua snapshot; không chứng minh áp dụng thành công. |
+| Ngắt luồng sự kiện thông tin đăng nhập | `credential_stream_disconnected` | Không có sự kiện giao thức cố định | Luồng thông báo bị ngắt; riêng việc này không chứng minh kết nối nghiệp vụ lỗi. |
+| Thay đổi giai đoạn luân chuyển | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | Ghi kiểm tra, chờ ứng dụng, theo dõi tài khoản nguồn và kết quả; xem giai đoạn cụ thể trong chi tiết. |
+| Bắt đầu luân chuyển tài khoản | `rotation_started` | `rotation.started` | Đã công bố tài khoản đích và bắt đầu chuyển ứng dụng; vòng luân chuyển chưa hoàn tất. |
+| Hủy hoặc buộc kết thúc luân chuyển | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | Hủy sẽ chờ xác nhận quay về tài khoản nguồn; buộc kết thúc sẽ bỏ các lần chờ phục hồi còn lại. |
+| Bắt đầu đổi mật khẩu tài khoản | `secret_change_started` | `credential.change.started` | Tác vụ đã xếp hàng hoặc bắt đầu; mật khẩu từ xa có thể chưa đổi. |
+| Hoàn tất đổi mật khẩu tài khoản | `secret_change_completed` | `credential.change.completed` | Tác vụ thành công; không chứng minh ứng dụng đã áp dụng thông tin đăng nhập. |
+| Đổi mật khẩu tài khoản thất bại | `secret_change_failed` | `credential.change.failed` | Tác vụ lỗi hoặc kết quả chưa rõ; kiểm tra tác vụ và tài khoản từ xa. |
+| Đăng ký phiên bản máy khách | `client_registered` | Không có sự kiện giao thức cố định | Đăng ký phiên bản SDK hoặc Agent; không chứng minh áp dụng thông tin đăng nhập. |
+| Bật phiên bản máy khách | `client_enabled` | Không có sự kiện giao thức cố định | Khôi phục truy cập trong quyền hiện có; không cấp quyền tài khoản mới. |
+| Tắt phiên bản máy khách | `client_disabled` | Không có sự kiện giao thức cố định | Các lần truy cập tiếp theo bị từ chối; thao tác này không đổi mật khẩu tài khoản. |
+| Giao thông báo ứng dụng | `notification` | Không có sự kiện giao thức cố định | Ghi giao Webhook và thử lại. Giao HTTP không chứng minh áp dụng thành công; xem mã sự kiện thực trong chi tiết. |
+| Đặt lại khóa truy cập ứng dụng | `application_secret_reset` | Không có sự kiện giao thức cố định | Đổi khóa xác thực ứng dụng với JumpServer; tách biệt với mật khẩu tài khoản nghiệp vụ. |
 
 ## Payload fields
 
@@ -894,6 +933,17 @@ Core gửi snapshot khi kết nối, kết nối lại và thay đổi phạm vi
 ## Receipts and business results
 
 SDK tự động cố gắng gửi biên nhận received trước khi trả về sự kiện nghiệp vụ. Ứng dụng không cần gửi thêm. Biên nhận chỉ cho biết đã đọc sự kiện, không có nghĩa là đã áp dụng thông tin xác thực và không thay thế xác nhận. Đối chiếu snapshot ban đầu và khi kết nối lại; snapshot và pong không cần biên nhận.
+
+Kết quả là success, failed hoặc skip. Service cục bộ không có app_check báo skip khi các bước khác thành công, không tính là ứng dụng đã xác nhận. failed chặn bước tiếp theo dù thử lại thành công hoặc bỏ qua. Quản trị viên phải duyệt tiếp tục kèm lý do; lỗi gốc được giữ lại.
+
+Quản trị viên dùng phiên người dùng có quyền accounts.change_applicationcredential. Gửi failure_id hiện tại và lý do; lỗi hoặc phiên bản chính sách lỗi thời sẽ bị từ chối. Việc duyệt được ghi nhật ký và giữ nguyên kết quả khách hàng.
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

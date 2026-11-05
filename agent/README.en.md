@@ -229,7 +229,9 @@ curl --fail --silent --show-error \
 
 ### Confirm application success
 
-Validate the running connection and switch the application before confirming an event. Use either a successful `app_check` with `confirm_on_success: true`, or explicit confirmation after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.
+Socket services require explicit application results after validating the running connection and switching the application. For local action services, omitting `app_check` reports `skip` after all configured stages succeed; Core permits rotation to continue without recording application confirmation. A configured `app_check` must succeed with `confirm_on_success: true` for automatic confirmation; otherwise confirm explicitly after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.
+
+Results are success, failed or skip. A local service without app_check reports skip after its other stages succeed; this is not application confirmation. A failed result blocks the next stage, even after a successful or skipped retry. An administrator must approve continuation with a reason; the original failure is retained.
 
 ```bash
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -237,7 +239,9 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. Application updates service
 
-Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.
+Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions.
+
+Results are success, failed or skip. A local service without app_check reports skip after its other stages succeed; this is not application confirmation. A failed result blocks the next stage, even after a successful or skipped retry. An administrator must approve continuation with a reason; the original failure is retained.
 
 New configurations use `update_config` → `reload_service` → `app_check`: update the business file, reload/restart the service (or run a fixed script), then verify the running application. These names require an updated PAM Agent.
 

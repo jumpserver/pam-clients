@@ -542,7 +542,7 @@ public final class Client implements AutoCloseable {
 
   public CommandResult confirmEvent(String eventId) { return confirmEvent(eventId, "success", ""); }
   public CommandResult confirmEvent(String eventId, String status, String errorCode) {
-    if (!java.util.Set.of("success", "failed").contains(status)) throw new IllegalArgumentException("Invalid event status");
+    if (!java.util.Set.of("success", "failed", "skip").contains(status)) throw new IllegalArgumentException("Invalid event status");
     return request("POST", "/event-result/", Map.of("event_id", nonempty(eventId, "eventId"), "status", status, "error_code", errorCode), CommandResult::new);
   }
 
@@ -597,7 +597,7 @@ public final class Client implements AutoCloseable {
 
   public CommandResult reportApplicationCommandResult(
       String commandId, String status, String errorCode) {
-    if (!Arrays.asList("running", "success", "failed").contains(status))
+    if (!Arrays.asList("running", "success", "failed", "skip").contains(status))
       throw new IllegalArgumentException("Invalid command status");
     Map<String, Object> data = new LinkedHashMap<>();
     data.put("command_id", nonempty(commandId, "commandId"));

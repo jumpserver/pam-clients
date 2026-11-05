@@ -398,7 +398,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | A observação da conta original começa somente após todos confirmarem ou ignorarem a verificação da aplicação e o administrador aprovar as falhas. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -430,6 +430,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## Correspondência entre atividades e eventos do protocolo
+
+O registro de atividade contém ações de auditoria; o de eventos mostra notificações e comandos com entrega e processamento. Ações de auditoria e notificações são catálogos distintos. A tabela mostra associações possíveis, não entrega confirmada; consulte os detalhes. Recebimento, obtenção, aplicação, dispensa e aprovação são registrados separadamente. credential_fetched fica no registro de obtenção.
+
+| Tipo de atividade | Código da atividade | Notificações / mensagens relacionadas | Meaning |
+| --- | --- | --- | --- |
+| Enviar comando à aplicação | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | Solicita aplicar credenciais publicadas ou reiniciar instâncias selecionadas; não inicia uma rotação. |
+| Resultado do processamento da aplicação | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | O cliente relata progresso e resultados de credenciais ou comandos. Uma falha de rotação exige revisão mesmo após nova tentativa bem-sucedida. |
+| Criar configuração de integração ou rotação | `configuration_created` | `app.scope.updated` | Cria uma aplicação ou política; mudanças de escopo podem gerar app.scope.updated. |
+| Alterar configuração de integração ou rotação | `configuration_updated` | `app.scope.updated` | Altera configurações; mudanças de escopo podem gerar app.scope.updated. |
+| Excluir configuração de integração ou rotação | `configuration_deleted` | Sem evento de protocolo fixo | Exclui uma aplicação ou política; não é um resultado de aplicação de credenciais. |
+| Adicionar autorização ou vínculo de credenciais | `authorization_granted` | `credential.refresh.requested` | Adiciona autorização ou vínculo de rotação e solicita atualização; o vínculo não amplia permissões da conta. |
+| Remover autorização ou vínculo de credenciais | `authorization_revoked` | `app.scope.updated` | Remove autorização ou vínculo. Libere conexões de negócio somente quando a autorização da conta for realmente perdida. |
+| Obter credenciais | `credential_fetched` | Sem evento de protocolo fixo | Consta no registro separado de obtenção; obter não comprova uso pela aplicação. |
+| Versão da senha da conta atualizada | `credential_secret_updated` | `credential.secret.updated` | A versão mudou e deve ser obtida e aplicada; a conta A/B selecionada não muda. |
+| Publicar troca de conta | `credential_switch_published` | `credential.switch.published` | Publica a conta de destino ou retorno e a revisão; não comprova a troca na aplicação. |
+| Solicitar aplicação das credenciais atuais | `credential_refresh_requested` | `credential.refresh.requested` | Solicita obter e aplicar a versão publicada; não implica mudança de senha ou nova rotação. |
+| Republicar notificação de credenciais | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | A atualização manual ou reconciliação de snapshot solicita reaplicar credenciais; a senha pode permanecer igual. |
+| Confirmar novas credenciais aplicadas | `credential_confirmed` | Sem evento de protocolo fixo | O cliente confirma a aplicação da versão atual, separadamente do recebimento e obtenção. |
+| Ignorar verificação da aplicação | `credential_confirmation_skipped` | Sem evento de protocolo fixo | As outras etapas tiveram sucesso e o cliente relata skip para a verificação opcional; não é uma verificação aprovada. |
+| Continuação aprovada pelo administrador | `application_failure_reviewed` | Sem evento de protocolo fixo | O administrador registra um motivo e libera o bloqueio; a falha original é preservada. |
+| Fluxo de eventos de credenciais conectado | `credential_stream_connected` | `snapshot` | O cliente se conecta e reconcilia o escopo com snapshot; não comprova aplicação bem-sucedida. |
+| Fluxo de eventos de credenciais desconectado | `credential_stream_disconnected` | Sem evento de protocolo fixo | O fluxo de notificações foi encerrado; isso não comprova falha de conexão de negócio. |
+| Etapa de rotação alterada | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | Registra verificação, espera da aplicação, observação da conta original e resultados; consulte a etapa exata nos detalhes. |
+| Iniciar rotação da conta | `rotation_started` | `rotation.started` | O destino foi publicado e a troca começou; a rotação ainda não terminou. |
+| Cancelar ou encerrar rotação à força | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | Cancelar aguarda confirmação de retorno à conta original; encerrar à força dispensa esperas de recuperação restantes. |
+| Alteração de senha da conta iniciada | `secret_change_started` | `credential.change.started` | A tarefa entrou na fila ou começou; a senha remota pode ainda não ter mudado. |
+| Alteração de senha da conta concluída | `secret_change_completed` | `credential.change.completed` | A tarefa teve sucesso; não comprova atualização das credenciais nas aplicações. |
+| Falha na alteração de senha da conta | `secret_change_failed` | `credential.change.failed` | A tarefa falhou ou o resultado é incerto; examine a tarefa e a conta remota. |
+| Registrar instância de cliente | `client_registered` | Sem evento de protocolo fixo | Uma instância SDK ou Agent foi registrada; não comprova aplicação de credenciais. |
+| Habilitar instância de cliente | `client_enabled` | Sem evento de protocolo fixo | Retoma acesso dentro das permissões existentes; não concede nova autorização. |
+| Desabilitar instância de cliente | `client_disabled` | Sem evento de protocolo fixo | Acessos posteriores são rejeitados; esta ação não altera senhas de conta. |
+| Entrega de notificação da aplicação | `notification` | Sem evento de protocolo fixo | Registra entregas e novas tentativas de Webhook. A entrega HTTP não comprova aplicação de credenciais; o código real aparece nos detalhes. |
+| Redefinir segredo de acesso da aplicação | `application_secret_reset` | Sem evento de protocolo fixo | Redefine o segredo de autenticação no JumpServer, separado da senha da conta de negócio. |
 
 ## Payload fields
 
@@ -463,6 +498,17 @@ O Core envia snapshot na conexão, reconexão e mudança de escopo. credentials 
 ## Receipts and business results
 
 O SDK envia automaticamente um recibo received, na medida do possível, antes de retornar um evento de negócio. A aplicação não precisa enviá-lo novamente. O recibo indica apenas leitura, não aplicação de credenciais, e não substitui a confirmação. Reconcilie snapshots iniciais e de reconexão; snapshot e pong não exigem recibo.
+
+Os resultados são success, failed ou skip. Um service local sem app_check informa skip após as demais etapas concluírem, sem contar como confirmação da aplicação. failed bloqueia a próxima etapa mesmo após nova tentativa bem-sucedida ou ignorada. Um administrador deve aprovar a continuação com um motivo; a falha original é preservada.
+
+A aprovação usa uma sessão de usuário com accounts.change_applicationcredential. Envie o failure_id atual e um motivo; falhas ou revisões de política superadas são rejeitadas. A aprovação é auditada e preserva o resultado do cliente.
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

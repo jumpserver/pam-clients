@@ -48,6 +48,24 @@ type Payload struct {
 	Credentials map[string]Credential `json:"credentials"`
 }
 
+// Keep the failed stage separate from diagnostic errors. Only the stage code is
+// reported to Core; script output and credential values are never included.
+type deliveryStageError struct {
+	stage string
+	err   error
+}
+
+func (e *deliveryStageError) Error() string { return e.stage + " failed: " + e.err.Error() }
+func (e *deliveryStageError) Unwrap() error { return e.err }
+
+func deliveryFailureCode(err error) string {
+	var failure *deliveryStageError
+	if errors.As(err, &failure) {
+		return failure.stage + "_failed"
+	}
+	return "service_update_failed"
+}
+
 // Rule payload keys are the administrator's selectors. For an account rule the
 // selector stays A even when the server selects B as the current account.
 func resolveRule(rule Rule, latest map[string]Credential) (Payload, []string, bool, error) {
@@ -278,7 +296,7 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 			if rule.ConfigUpdate.File != "" {
 				data, mode, uid, gid, err := renderMappedConfig(*rule.ConfigUpdate, rule.Accounts, payload)
 				if err != nil {
-					return err
+					return &deliveryStageError{"config_update", err}
 				}
 				item.writes = append(item.writes, write{
 					file: File{Path: rule.ConfigUpdate.File}, data: data,
@@ -288,7 +306,7 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 			}
 			for _, path := range rule.ConfigUpdate.targetPaths() {
 				if err := secureTarget(path); err != nil {
-					return err
+					return &deliveryStageError{"config_update", err}
 				}
 			}
 		}
@@ -297,11 +315,11 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 		}
 		for _, file := range files {
 			if err := secureTarget(file.Path); err != nil {
-				return err
+				return &deliveryStageError{"config_update", err}
 			}
 			data, err := render(file, payload)
 			if err != nil {
-				return err
+				return &deliveryStageError{"config_update", err}
 			}
 			item.writes = append(item.writes, write{file: file, data: data})
 		}
@@ -321,7 +339,7 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 	for _, job := range jobs {
 		if job.credentialCheck != nil {
 			if err := execute(ctx, *job.credentialCheck, job.payload); err != nil {
-				return fmt.Errorf("credential_check failed: %w", err)
+				return &deliveryStageError{"credential_check", err}
 			}
 		}
 	}
@@ -336,13 +354,13 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 			}
 		}
 		if err := backupTargets(config.StateFile, targets); err != nil {
-			return fmt.Errorf("business configuration backup failed: %w", err)
+			return &deliveryStageError{"config_update", fmt.Errorf("business configuration backup failed: %w", err)}
 		}
 	}
 	for _, job := range jobs {
 		if job.updateScript != nil {
 			if err := execute(ctx, *job.updateScript, job.payload); err != nil {
-				return fmt.Errorf("config_update failed: %w", err)
+				return &deliveryStageError{"config_update", err}
 			}
 		}
 	}
@@ -352,11 +370,11 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 				var err error
 				item.data, item.mode, item.uid, item.gid, err = renderMappedConfig(*item.mapping, item.accounts, job.payload)
 				if err != nil {
-					return err
+					return &deliveryStageError{"config_update", err}
 				}
 			}
 			if err := preparePrivateDirectory(filepath.Dir(item.file.Path), 0711); err != nil {
-				return err
+				return &deliveryStageError{"config_update", err}
 			}
 			mode, uid, gid := os.FileMode(0600), item.uid, item.gid
 			if item.preserve {
@@ -369,25 +387,25 @@ func Deliver(ctx context.Context, config Config, latest map[string]Credential, c
 				var err error
 				uid, gid, err = ownerIDs(owner)
 				if err != nil {
-					return err
+					return &deliveryStageError{"config_update", err}
 				}
 			}
 			if err := atomicWrite(item.file.Path, item.data, mode, uid, gid); err != nil {
-				return err
+				return &deliveryStageError{"config_update", err}
 			}
 		}
 	}
 	for _, job := range jobs {
 		if job.serviceAction != nil {
 			if err := execute(ctx, *job.serviceAction, job.payload); err != nil {
-				return fmt.Errorf("service_action failed: %w", err)
+				return &deliveryStageError{"service_action", err}
 			}
 		}
 	}
 	for _, job := range jobs {
 		if job.applicationCheck != nil {
 			if err := execute(ctx, job.applicationCheck.Action, job.payload); err != nil {
-				return fmt.Errorf("application_check failed: %w", err)
+				return &deliveryStageError{"application_check", err}
 			}
 		}
 	}

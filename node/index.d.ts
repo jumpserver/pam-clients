@@ -132,7 +132,7 @@ export class Client {
       ({ key: string; accountId?: never } | { key?: never; accountId: string }),
   ): Promise<Credential>
   getAccount(options: RequestOptions & { accountId: string; allowLocalFallback?: boolean }): Promise<RetrievedAccount>
-  confirmEvent(options: RequestOptions & { eventId: string; status?: 'success' | 'failed'; errorCode?: string }): Promise<CommandResult>
+  confirmEvent(options: RequestOptions & { eventId: string; status?: 'success' | 'failed' | 'skip'; errorCode?: string }): Promise<CommandResult>
   confirmCredential(
     options: RequestOptions & { key: string; revision: number; accountId: string },
   ): Promise<CredentialConfirmation>
@@ -152,7 +152,7 @@ export class Client {
   reportApplicationCommandResult(
     options: RequestOptions & {
       commandId: string
-      status: 'running' | 'success' | 'failed'
+      status: 'running' | 'success' | 'failed' | 'skip'
       errorCode?: string
     },
   ): Promise<CommandResult>

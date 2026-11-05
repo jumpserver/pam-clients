@@ -34,7 +34,7 @@
   "application_info": "Read the authenticated application ID, name, organization and authorized account/policy counts with get_application; get_client_info returns only the current replica’s registration, type and versions. Policy listing returns the entire visible bound list, including disabled policies; search matches policy names or keys. Fetch a policy using exactly one of its ID or base policy key, rather than an account push key. Rotation policies require authorization for both accounts and the active account. Subscription counts include only accounts currently authorized to this application. These calls return metadata without secrets and do not fetch credentials or confirm application changes. As with account queries, the replica is registered on first access. They require updated Core and SDK source; the published 1.0.2 does not yet contain these methods.",
   "methods": "Common methods",
   "sdk_errors": "The client closes HTTP sessions and event streams with with or close. clone creates an independent session. HTTP, network, authentication and decoding failures raise PAMError with code, status_code, detail and original_error. Retry transient errors at the application boundary; handle authorization denial explicitly and keep credentials out of logs.",
-  "sdk_receipts": "The SDK automatically sends a best-effort received receipt before yielding a business event. No additional receipt is required from the application. A receipt means only that the event was read, not that credentials were applied; it does not replace confirmation. Reconcile the initial and reconnect snapshots; snapshot and pong require no receipt.",
+  "sdk_receipts": "The SDK automatically sends a best-effort received receipt before yielding a business event. No additional receipt is required from the application. A receipt means only that the event was read, not that credentials were applied; it does not replace confirmation. Reconcile the initial and reconnect snapshots; snapshot and pong require no receipt.\n\nResults are success, failed or skip. A local service without app_check reports skip after its other stages succeed; this is not application confirmation. A failed result blocks the next stage, even after a successful or skipped retry. An administrator must approve continuation with a reason; the original failure is retained.",
   "native_intro": "Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.",
   "native_setup": "Install the SDK below and use the identity configuration downloaded from the application access wizard. Protect AK/SK and assign each replica a stable, unique instance ID.",
   "native_events": "Implement the account-change callback below, then start the managed listener. The SDK handles snapshots, fresh account lookup, account/version validation, retry, command claims and event results. Return only after validating the real connection, switching the application pool and releasing old connections. Python and Node.js use subclass hooks, Go uses OnAccountChanged, and Java uses AccountEventListener. The placeholder fails until business switching is implemented.",
@@ -75,7 +75,7 @@
   "agent_validation": "1. Verify the instance is online and its authorized account scope is correct.\n2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.\n3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.",
   "sdk_workflow": "Use only the retrieval section for pull-only access. For pushed updates or A/B rotation, implement the managed business callbacks and start listening. The SDK handles protocol and event results; the application validates and switches real connections. These examples reflect the current source: install a matching Core and SDK build before using new APIs; released 1.0.2 packages do not include all of them.",
   "sdk_validation": "1. Replace the account placeholder with an authorized account ID and verify a real connection without logging the password.\n2. If listening for updates, verify initial synchronization and an authorized-account update or A/B switch; complete the business callback before expecting a successful event result.\n3. Check the instance usage/status and event result separately. A fetch or usage report does not confirm credential application.",
-  "agent_confirmation": "Validate the running connection and switch the application before confirming an event. Use either a successful `app_check` with `confirm_on_success: true`, or explicit confirmation after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.",
+  "agent_confirmation": "Socket services require explicit application results after validating the running connection and switching the application. For local action services, omitting `app_check` reports `skip` after all configured stages succeed; Core permits rotation to continue without recording application confirmation. A configured `app_check` must succeed with `confirm_on_success: true` for automatic confirmation; otherwise confirm explicitly after business verification. Do not call the confirmation API from a synchronous check script. Local results are persisted: `confirmed` means Core accepted the result; `pending` is retried.\n\nResults are success, failed or skip. A local service without app_check reports skip after its other stages succeed; this is not application confirmation. A failed result blocks the next stage, even after a successful or skipped retry. An administrator must approve continuation with a reason; the original failure is retained.",
   "foreground_title": "Foreground mode",
   "source_install_title": "Local source installation (alternative)",
   "source_install": "If this Core does not provide the source download endpoint, or for offline deployment, obtain its matching client source at `/path/to/pam-clients` and run the following from the application directory. Replace the path with your actual checkout.",
@@ -88,7 +88,7 @@
   "agent_default_output_title": "store",
   "store_model": "`store` and `services` are independent. `store.accounts` is a string array: `[\"all\"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.",
   "store_layout": "Each stored account has its own file named by its actual account ID, including separate A/B accounts. Files contain plaintext credentials with mode 0600. A/B standby accounts being changed are temporarily unavailable. Successful authorization reconciliation removes revoked files. An unchanged reconciliation reads metadata without fetching passwords again; actual fetches remain audited and participate in rotation access observation.",
-  "services_model": "Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions. Only successful application checks with `confirm_on_success: true` can automatically confirm a rotation, after every relevant service succeeds.",
+  "services_model": "Add the service objects below to `services`. Each service needs a unique stable `name`. `allow_account_switch` belongs to the service and defaults to false: when true, accounts with a unique A/B association follow the active account; other accounts remain fixed. Declaring A is sufficient. `update_on_notification` also belongs to the service and defaults to true. False defers business actions until scheduled reconciliation (300 seconds by default), while storage and authorization revocations still update. Each service tracks its own applied versions.\n\nResults are success, failed or skip. A local service without app_check reports skip after its other stages succeed; this is not application confirmation. A failed result blocks the next stage, even after a successful or skipped retry. An administrator must approve continuation with a reason; the original failure is retained.",
   "aliases_model": "In `services.accounts`, use `id` to select an account. One account may use `username` / `secret` directly. Multiple accounts require unique aliases and qualified references such as `database.username` and `cache.secret`. Alias references stay stable across A/B switches. Optional selector `username` is a display hint only; actual values come from Core. Resolve every required account before writing the file, then run the service action once. Missing or ambiguous mappings fail before mutation.",
   "services_upgrade": "Core and PAM Agent use protocol version 1 and `version: 1`. Configure `store` and `services` independently; do not mix them with the older `delivery` / `rules` structure. Core supplies account scope and version metadata, never local executable paths. Restart the PAM Agent after editing its private configuration.",
   "services_portable": "For macOS, Windows or non-root Linux, initialize once with `init-local`, then reuse the generated private configuration with `run --local`. Standard JSON and environment files are supported; systemd actions require the Linux service.",
@@ -153,7 +153,7 @@
   "protocol_event_rotation_verify_cancelled": "Backup verification was cancelled.",
   "protocol_event_rotation_started": "The rotation cycle has published the target account and started switching.",
   "protocol_event_rotation_waiting_for_app": "Waiting for required application instances to apply and confirm the target.",
-  "protocol_event_rotation_source_waiting": "Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied.",
+  "protocol_event_rotation_source_waiting": "Source-account observation starts only after all participants confirm or skip application checks and an administrator has approved any failures.",
   "protocol_event_rotation_source_ready": "The original account no-fetch window and required client conditions allow password change.",
   "protocol_event_rotation_completed": "The original account password change was verified and the rotation completed.",
   "protocol_event_rotation_failed": "Rotation entered a password-change failure or recovery-required state.",
@@ -187,5 +187,126 @@
   "curl_intro": "Use signed HTTP requests to fetch the current credentials for an application-authorized account.",
   "curl_config": "Set the server, application identity, organization, instance ID and account ID.",
   "curl_response": "The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.",
-  "curl_errors": "Check identity, authorization, signature and instance ID."
+  "curl_errors": "Check identity, authorization, signature and instance ID.",
+  "protocol_failure_review": "Administrator approval uses a user session with accounts.change_applicationcredential. Submit the current failure_id and a reason; superseded failures or policy revisions are rejected. Approval is audited and preserves the client result.",
+  "audit_catalog_title": "Activity log and protocol event reference",
+  "audit_catalog_intro": "Activity logs record audit actions; event logs show protocol notifications and commands with delivery and processing status. Audit actions and protocol notifications are different catalogs. One action may produce several records or notifications; related codes below are possible associations, not proof of delivery. Inspect the record details for the actual event and result. Receipt, retrieval, credential application, skip and administrator approval are separate steps. credential_fetched appears in the separate credential retrieval log.",
+  "audit_type_label": "Activity type",
+  "audit_code_label": "Activity code",
+  "audit_protocol_label": "Related notifications / messages",
+  "audit_no_protocol": "No fixed protocol event",
+  "audit_events": {
+    "command_requested": {
+      "name": "Send application command",
+      "meaning": "An administrator asks selected instances to apply published credentials or restart the application; this does not start a rotation."
+    },
+    "command_result": {
+      "name": "Application processing result",
+      "meaning": "A client reports credential application or command progress/results. A rotation failure still needs administrator review after a successful retry."
+    },
+    "configuration_created": {
+      "name": "Create integration or rotation configuration",
+      "meaning": "An application or rotation policy was created; scope changes may cause app.scope.updated."
+    },
+    "configuration_updated": {
+      "name": "Update integration or rotation configuration",
+      "meaning": "Application or rotation settings changed; scope changes may cause app.scope.updated."
+    },
+    "configuration_deleted": {
+      "name": "Delete integration or rotation configuration",
+      "meaning": "An application or rotation policy was deleted; this is not a credential application result."
+    },
+    "authorization_granted": {
+      "name": "Add credential authorization or binding",
+      "meaning": "Credential authorization or a rotation binding was added and a refresh requested; a binding does not expand account access."
+    },
+    "authorization_revoked": {
+      "name": "Remove credential authorization or binding",
+      "meaning": "Authorization or a rotation binding was removed. Release business connections only when account authorization is actually lost."
+    },
+    "credential_fetched": {
+      "name": "Fetch credentials",
+      "meaning": "Records a credential retrieval in the separate retrieval log; fetching does not prove business use."
+    },
+    "credential_secret_updated": {
+      "name": "Account secret version updated",
+      "meaning": "The account password version changed. Applications must fetch and apply it; the selected A/B account does not change."
+    },
+    "credential_switch_published": {
+      "name": "Publish account switch",
+      "meaning": "Publishes the A/B target or return account and policy revision; publication does not prove an application switched."
+    },
+    "credential_refresh_requested": {
+      "name": "Request current credential application",
+      "meaning": "Requests fetching and applying the published version; no password change or new rotation is implied."
+    },
+    "credential_republished": {
+      "name": "Republish credential notification",
+      "meaning": "Manual refresh or snapshot reconciliation requests applying the current credentials again; the password version may be unchanged."
+    },
+    "credential_confirmed": {
+      "name": "Confirm new credentials applied",
+      "meaning": "A client confirms successful application of the current account/policy version, separately from receipt and retrieval."
+    },
+    "credential_confirmation_skipped": {
+      "name": "Skip application check",
+      "meaning": "Other delivery steps succeeded and the client reported skip for the optional application check; this is not a passed check."
+    },
+    "application_failure_reviewed": {
+      "name": "Administrator approved continuation",
+      "meaning": "An administrator records a reason and releases the instance failure gate; the original failure is retained."
+    },
+    "credential_stream_connected": {
+      "name": "Credential event stream connected",
+      "meaning": "A client connected to the notification stream; snapshot reconciles scope. Connection does not prove application success."
+    },
+    "credential_stream_disconnected": {
+      "name": "Credential event stream disconnected",
+      "meaning": "A client left the notification stream; this does not by itself prove a business connection failed."
+    },
+    "rotation_step": {
+      "name": "Rotation stage changed",
+      "meaning": "Records verification, application waiting, source-account observation and cycle outcomes; consult details for the actual stage."
+    },
+    "rotation_started": {
+      "name": "Start account rotation",
+      "meaning": "The target account was published and application switching began; the rotation is not yet complete."
+    },
+    "rotation_cancelled": {
+      "name": "Cancel or force-stop rotation",
+      "meaning": "Cancellation publishes the source account and waits for return confirmation; force-stop ends remaining recovery waits."
+    },
+    "secret_change_started": {
+      "name": "Account password change started",
+      "meaning": "A password-change task was queued or started; the remote password may not have changed yet."
+    },
+    "secret_change_completed": {
+      "name": "Account password change completed",
+      "meaning": "The password-change task succeeded; this does not prove applications applied the credentials."
+    },
+    "secret_change_failed": {
+      "name": "Account password change failed",
+      "meaning": "The task failed or its outcome is uncertain; inspect the task and remote account."
+    },
+    "client_registered": {
+      "name": "Register client instance",
+      "meaning": "An SDK or Agent instance registered; registration does not prove credential application."
+    },
+    "client_enabled": {
+      "name": "Enable client instance",
+      "meaning": "The instance can resume access within its existing authorization; no new account authorization is granted."
+    },
+    "client_disabled": {
+      "name": "Disable client instance",
+      "meaning": "The instance is disabled and subsequent access is rejected; account passwords are not changed by this action."
+    },
+    "notification": {
+      "name": "Application notification delivery",
+      "meaning": "Records webhook delivery and retries. HTTP delivery does not prove credential application; see delivery details for the actual event code."
+    },
+    "application_secret_reset": {
+      "name": "Reset application access secret",
+      "meaning": "Resets the application's authentication secret for JumpServer; this is separate from business account password rotation."
+    }
+  }
 }

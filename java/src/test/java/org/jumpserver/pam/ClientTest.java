@@ -127,6 +127,7 @@ class ClientTest {
       assertEquals(2, account.getRevision());
       assertFalse(account.isFromLocal());
       assertFalse(account.toString().contains("DO_NOT_LOG_SECRET"));
+      assertEquals("skip", sdk.confirmEvent("event-skip", "skip", "").getStatus());
       assertTrue(sdk.confirmEvent("event-one").isAccepted());
       assertEquals(
           "failed", sdk.confirmEvent("event-two", "failed", "application_failed").getStatus());

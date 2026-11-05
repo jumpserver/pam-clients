@@ -363,6 +363,7 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 			storeReady["account:"+id] = true
 		}
 	}
+	failedServices := map[string]string{}
 	matchedServices := map[string][]Rule{}
 	completeServices := map[string]bool{}
 	for _, declared := range a.Config.Services {
@@ -430,6 +431,11 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		config.Rules = []Rule{service}
 		if err = a.deliver(ctx, config, latest, changed); err != nil {
 			completeServices[service.Name] = false
+			for _, key := range matched {
+				if failedServices[key] == "" {
+					failedServices[key] = deliveryFailureCode(err)
+				}
+			}
 			problems = append(problems, fmt.Errorf("service %s update failed: %w", service.Name, err))
 			continue
 		}
@@ -450,9 +456,15 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		}
 	}
 	var deliveredEvents []pam.Event
+	type failedEvent struct {
+		event pam.Event
+		code  string
+	}
+	var failedEvents []failedEvent
 	a.mu.Lock()
 	for key, value := range latest {
 		ready, verified, seen := true, true, false
+		skipped := false
 		if path := wantedFiles[value.AccountID]; path != "" && key == "account:"+value.AccountID {
 			seen = true
 			ready = storeReady[key]
@@ -471,7 +483,12 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 					ready = false
 				}
 			}
-			if service.Delivery != "socket" && (service.ApplicationCheck == nil || !service.ApplicationCheck.ConfirmOnSuccess) {
+			// An omitted app_check is reported as skipped, separately from success. Explicit
+			// checks can still require manual confirmation after they pass.
+			if service.Delivery != "socket" && service.ApplicationCheck == nil {
+				skipped = true
+			}
+			if service.Delivery != "socket" && service.ApplicationCheck != nil && !service.ApplicationCheck.ConfirmOnSuccess {
 				verified = false
 			}
 		}
@@ -485,9 +502,18 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 		}
 		a.state.Delivered[key] = value.Revision
 		if len(matchedServices[key]) > 0 && verified && (contains(response.Scope.ConfirmationKeys, key) || a.state.Events[key].EventID != "") {
-			if applied := a.state.Applied[key]; applied.AccountID != value.AccountID || applied.Revision != value.Revision {
-				a.state.Applied[key] = Applied{Key: key, Revision: value.Revision, AccountID: value.AccountID}
+			result := "success"
+			if skipped {
+				result = "skip"
 			}
+			if applied := a.state.Applied[key]; applied.AccountID != value.AccountID || applied.Revision != value.Revision || !applied.Confirmed && applied.Result != result {
+				a.state.Applied[key] = Applied{Key: key, Revision: value.Revision, AccountID: value.AccountID, Result: result}
+			}
+		}
+	}
+	for key, code := range failedServices {
+		if event := a.state.Events[key]; event.EventID != "" {
+			failedEvents = append(failedEvents, failedEvent{event, code})
 		}
 	}
 	a.state.Digest = response.ConfigDigest
@@ -505,6 +531,13 @@ func (a *Agent) synchronizeServices(ctx context.Context, notification bool) (res
 	for _, event := range deliveredEvents {
 		if err = a.recordEvent("delivered", event); err != nil {
 			return err
+		}
+	}
+	for _, event := range failedEvents {
+		if event.event.EventID != "" {
+			if _, failure := a.remote.ConfirmEvent(ctx, event.event.EventID, "failed", event.code); failure != nil {
+				problems = append(problems, failure)
+			}
 		}
 	}
 	if err = a.reportPending(ctx); err != nil {

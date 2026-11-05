@@ -487,6 +487,66 @@ PROTOCOL_EVENT_GROUPS = [
 
 ]
 
+AUDIT_EVENTS = json.loads((CLIENTS / 'docs' / 'audit-events.json').read_text(encoding='utf-8'))
+
+
+def audit_event_reference(texts):
+    rows = []
+    for item in AUDIT_EVENTS:
+        event = item['event']
+        entry = texts['audit_events'][event]
+        related = '<br>'.join(f'`{code}`' for code in item['protocol_events']) or texts['audit_no_protocol']
+        rows.append(f"| {entry['name']} | `{event}` | {related} | {entry['meaning']} |")
+    return (
+        f"## {texts['audit_catalog_title']}\n\n{texts['audit_catalog_intro']}\n\n"
+        f"| {texts['audit_type_label']} | {texts['audit_code_label']} | "
+        f"{texts['audit_protocol_label']} | {texts['protocol_event_meaning']} |\n"
+        '| --- | --- | --- | --- |\n' + '\n'.join(rows)
+    )
+
+
+def frontend_audit_catalog(directory, translations, check=False):
+    directory = Path(directory)
+    definitions = {}
+    for item in AUDIT_EVENTS:
+        suffix = ''.join(part.title() for part in item['event'].split('_'))
+        definitions[item['event']] = {
+            'label': 'AppAuditType' + suffix,
+            'meaning': 'AppAuditMeaning' + suffix,
+            'protocolEvents': item['protocol_events'],
+        }
+    path = directory / 'src/views/accounts/Integration/components/auditEventDefinitions.json'
+    differences = []
+    if check:
+        if not path.is_file() or json.loads(path.read_text()) != definitions:
+            differences.append(str(path))
+    else:
+        path.write_text(json.dumps(definitions, ensure_ascii=False, indent=2) + '\n')
+    aliases = {'zh-hans': 'zh', 'zh-hant': 'zh_hant', 'pt-br': 'pt_br'}
+    for locale, texts in translations.items():
+        path = directory / 'src/i18n/langs' / f'{aliases.get(locale, locale)}.json'
+        values = json.loads(path.read_text(encoding='utf-8'))
+        generated = {}
+        generated.update({
+            'AppAuditEventMeaning': texts['protocol_event_meaning'],
+            'AppAuditEventCode': texts['audit_code_label'],
+            'AppAuditRelatedProtocolEvents': texts['audit_protocol_label'],
+            'AppAuditEventReference': texts['audit_catalog_title'],
+        })
+        for event, definition in definitions.items():
+            generated[definition['label']] = texts['audit_events'][event]['name']
+            generated[definition['meaning']] = texts['audit_events'][event]['meaning']
+        obsolete = [key for key in values if key.startswith(('AppAuditType', 'AppAuditMeaning')) and key not in generated]
+        if check:
+            if obsolete or any(values.get(key) != value for key, value in generated.items()):
+                differences.append(str(path))
+        else:
+            for key in obsolete:
+                del values[key]
+            values.update(generated)
+            path.write_text(json.dumps(values, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    return differences
+
 
 def protocol_event_catalog(texts):
     sections = [f"## {texts['protocol_catalog_title']}\n\n{texts['protocol_catalog_intro']}"]
@@ -516,6 +576,8 @@ def protocol_guide(texts):
 
 {protocol_event_catalog(texts)}
 
+{audit_event_reference(texts)}
+
 ## {texts['protocol_fields_title']}
 
 {texts['protocol_fields']}
@@ -539,6 +601,15 @@ def protocol_guide(texts):
 ## {texts['protocol_results_title']}
 
 {texts['sdk_receipts']}
+
+{texts['protocol_failure_review']}
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}}
+```
 
 ```json
 {{"event": "received", "event_id": "<event-id>"}}
@@ -1206,7 +1277,7 @@ python3
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
 - `watch_credential_events(stop_event=...)`
-- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
+- `confirm_event(event_id=..., status="success" | "failed" | "skip", error_code=...)`
 - `list_application_commands()` / `execute_application_command(event, handler)`
 - `report_application_command_result(command_id=..., status="running")`
 - `clone()` / `close()`
@@ -1234,14 +1305,17 @@ python3
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument('--frontend', help='Also generate/check the audit event catalog in a Lina checkout')
     args = parser.parse_args()
     differences = []
+    translations = {}
     for locale in LOCALES:
         texts = json.loads(
             (Path(__file__).parent / "translations" / f"{locale}.json").read_text(
                 encoding="utf-8"
             )
         )
+        translations[locale] = texts
         documents = {
             CLIENTS / language / f"README.{locale}.md": (
                 curl_guide(language, texts)
@@ -1292,6 +1366,8 @@ def main():
                     differences.append(str(path.relative_to(CLIENTS)))
             else:
                 path.write_text(content, encoding="utf-8")
+    if args.frontend:
+        differences.extend(frontend_audit_catalog(args.frontend, translations, args.check))
     if differences:
         parser.exit(1, "\n".join(differences) + "\n")
 

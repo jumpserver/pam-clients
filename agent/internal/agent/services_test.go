@@ -171,6 +171,127 @@ func TestStoreAllPersistsUnsubscribedAccountsAndRemovesRevocations(t *testing.T)
 	}
 }
 
+func TestServiceConfirmationWithOptionalApplicationCheck(t *testing.T) {
+	for _, scenario := range []struct {
+		name         string
+		failureStage string
+		check        *ApplicationCheck
+		confirm      bool
+	}{
+		{name: "omitted check", confirm: true},
+		{name: "explicit automatic check", check: &ApplicationCheck{Action: Action{Path: "/usr/bin/true"}, ConfirmOnSuccess: true}, confirm: true},
+		{name: "explicit manual check", check: &ApplicationCheck{Action: Action{Path: "/usr/bin/true"}}},
+		{name: "credential failure", failureStage: "credential"},
+		{name: "update failure", failureStage: "update"},
+		{name: "reload failure", failureStage: "reload"},
+		{name: "application failure", failureStage: "application", check: &ApplicationCheck{Action: Action{Path: "/usr/bin/false"}, ConfirmOnSuccess: true}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			config, remote := servicesFixture(t)
+			config.Store = nil
+			path := filepath.Join(filepath.Dir(config.StateFile), "business.json")
+			service := Rule{Name: "business", AllowAccountSwitch: true, Accounts: []AccountSelector{{AccountID: testA}},
+				ConfigUpdate: &ConfigUpdate{Files: []File{{Path: path, Format: "json"}}}, ApplicationCheck: scenario.check}
+			failure := &Action{Path: "/usr/bin/false"}
+			switch scenario.failureStage {
+			case "credential":
+				service.CredentialCheck = failure
+			case "update":
+				service.ConfigUpdate = &ConfigUpdate{Script: failure, Target: path}
+			case "reload":
+				service.ServiceAction = failure
+			}
+			config.Services = []Rule{service}
+			a, err := New(config, remote)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = a.Sync(context.Background())
+			if (err != nil) != (scenario.failureStage != "") {
+				t.Fatalf("unexpected synchronization result: %v", err)
+			}
+			if (remote.confirmed == 1) != scenario.confirm || remote.confirmed > 1 {
+				t.Fatalf("unexpected confirmation count: %d", remote.confirmed)
+			}
+			if scenario.confirm {
+				want := "success"
+				if scenario.check == nil {
+					want = "skip"
+				}
+				if !reflect.DeepEqual(remote.eventResults, []string{want}) {
+					t.Fatal("application check result was misreported", remote.eventResults, want)
+				}
+			} else if scenario.failureStage != "" && !reflect.DeepEqual(remote.eventResults, []string{"failed"}) {
+				t.Fatal("service failure was not reported", remote.eventResults)
+			}
+			if scenario.failureStage != "" {
+				want := map[string]string{
+					"credential":  "credential_check_failed",
+					"update":      "config_update_failed",
+					"reload":      "service_action_failed",
+					"application": "application_check_failed",
+				}[scenario.failureStage]
+				if !reflect.DeepEqual(remote.eventErrorCodes, []string{want}) {
+					t.Fatal("failed stage was lost in the application result", remote.eventErrorCodes, want)
+				}
+			}
+			if scenario.confirm {
+				data, err := os.ReadFile(path)
+				if err != nil || !strings.Contains(string(data), testA) {
+					t.Fatalf("confirmed without writing the business configuration: %v", err)
+				}
+				remote.active, remote.rotation = testB, 2
+				if err := a.Sync(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				data, err = os.ReadFile(path)
+				if err != nil || !strings.Contains(string(data), testB) || remote.confirmed != 2 {
+					t.Fatal("account switch was not applied and confirmed", err, remote.confirmed)
+				}
+			}
+		})
+	}
+}
+
+func TestServiceWithoutApplicationCheckConfirmsRetainedDelivery(t *testing.T) {
+	config, remote := servicesFixture(t)
+	config.Store = nil
+	config.Services = []Rule{{Name: "business", AllowAccountSwitch: true, Accounts: []AccountSelector{{AccountID: testA}},
+		ConfigUpdate: &ConfigUpdate{Files: []File{{Path: filepath.Join(filepath.Dir(config.StateFile), "business.json"), Format: "json"}}}}}
+	a, err := New(config, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Retain delivery without application confirmation, as an older Agent did.
+	a.state.Applied = map[string]Applied{}
+	if err := a.persist(); err != nil {
+		t.Fatal(err)
+	}
+	remote.confirmed = 0
+	restarted, err := New(config, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.deliver = func(context.Context, Config, map[string]Credential, map[string]bool) error {
+		t.Fatal("unchanged service stages ran again")
+		return nil
+	}
+	for i := 0; i < 2; i++ {
+		if err := restarted.Sync(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if remote.confirmed != 1 {
+		t.Fatal("retained delivery must be confirmed exactly once", remote.confirmed)
+	}
+	if restarted.state.Applied["rotation"].Result != "skip" {
+		t.Fatal("restarted Agent lost the skipped result")
+	}
+}
+
 func TestServicesShareFetchButTrackNotificationAndRotationSeparately(t *testing.T) {
 	config, remote := servicesFixture(t)
 	root := filepath.Dir(config.StateFile)
@@ -183,7 +304,7 @@ func TestServicesShareFetchButTrackNotificationAndRotationSeparately(t *testing.
 	check := &ApplicationCheck{Action: Action{Path: "/usr/bin/true"}, ConfirmOnSuccess: true}
 	config.Services = []Rule{
 		{Name: "immediate", AllowAccountSwitch: true, Accounts: []AccountSelector{{AccountID: testA, Alias: "database", Username: "DISPLAY_ONLY"}, {AccountID: testC, Alias: "cache"}}, ConfigUpdate: &ConfigUpdate{File: path, Format: "yaml", FieldsMap: map[string]string{"DB_USER": "database.username", "DB_PASSWORD": "database.secret", "CACHE_PASSWORD": "cache.secret"}}, ApplicationCheck: check},
-		{Name: "deferred", AllowAccountSwitch: true, UpdateOnNotification: &no, Accounts: []AccountSelector{{AccountID: testA}}, ConfigUpdate: &ConfigUpdate{Files: []File{{Path: deferredPath, Format: "json"}}}, ApplicationCheck: check},
+		{Name: "deferred", AllowAccountSwitch: true, UpdateOnNotification: &no, Accounts: []AccountSelector{{AccountID: testA}}, ConfigUpdate: &ConfigUpdate{Files: []File{{Path: deferredPath, Format: "json"}}}},
 	}
 	config.Services[0].ServiceAction = &Action{Path: "/usr/bin/true"}
 	// Exercise all three renamed JSON blocks through the real update and

@@ -328,4 +328,8 @@ func TestAccountAndEventResult(t *testing.T) {
 	if err != nil || result.Status != "failed" {
 		t.Fatalf("failed event result: %v", err)
 	}
+	result, err = client.ConfirmEvent(context.Background(), "event-skip", "skip", "")
+	if err != nil || result.Status != "skip" {
+		t.Fatalf("skipped event result: %v", err)
+	}
 }

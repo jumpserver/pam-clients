@@ -34,3 +34,5 @@ GOOS=windows GOARCH=amd64 go build -o pam-agent.exe ./cmd/pam-agent
 `credential.secret.updated`、`credential.switch.published`、`credential.refresh.requested` 触发取密和应用；`rotation.*` 与 `credential.change.*` 只报告进度。Agent 本地脚本和 Socket 交付批次使用 `credential.refresh.requested`，要求业务应用本次交付的凭据。
 
 `credential.switch.requested` 属于账号轮换的手动操作；`app.restart.requested` 属于应用运维。指令必须先以 `running` 认领，仅在 `accepted` 为 true 时执行，再上报实际结果。
+
+本地服务交付失败上报 `failed`，`error_code` 标识失败步骤：`credential_check_failed`（凭据校验）、`config_update_failed`（业务配置准备、备份或写入）、`service_action_failed`（服务重载或重启）、`application_check_failed`（应用校验）。无法识别步骤时使用 `service_update_failed`。只上报错误码，不上报脚本输出或凭据内容；失败仍须管理员填写原因确认，后续 `success` 或 `skip` 不会自动解除阻塞。

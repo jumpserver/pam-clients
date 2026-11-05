@@ -394,10 +394,10 @@ func (c *Client) getAccount(ctx context.Context, accountID string, fallback bool
 	return account, nil
 }
 
-// ConfirmEvent reports application success or failure, independently of delivery receipts.
+// ConfirmEvent reports success, failed or skip, independently of delivery receipts.
 func (c *Client) ConfirmEvent(ctx context.Context, eventID, status, errorCode string) (CommandResult, error) {
-	if eventID == "" || (status != "success" && status != "failed") {
-		return CommandResult{}, fmt.Errorf("event ID and success or failed status are required")
+	if eventID == "" || (status != "skip" && status != "success" && status != "failed") {
+		return CommandResult{}, fmt.Errorf("event ID and success, failed or skip status are required")
 	}
 	var value CommandResult
 	err := c.request(ctx, http.MethodPost, "/event-result/", map[string]any{"event_id": eventID, "status": status, "error_code": errorCode}, &value, func(data map[string]json.RawMessage) error { return required(data, "accepted", "status") })
@@ -487,7 +487,7 @@ func (c *Client) ListApplicationCommands(ctx context.Context) ([]Event, error) {
 	return value.Commands, err
 }
 func (c *Client) ReportApplicationCommandResult(ctx context.Context, commandID, status, errorCode string) (CommandResult, error) {
-	if commandID == "" || (status != "running" && status != "success" && status != "failed") {
+	if commandID == "" || (status != "running" && status != "skip" && status != "success" && status != "failed") {
 		return CommandResult{}, fmt.Errorf("command ID and a valid status are required")
 	}
 	data := map[string]any{"command_id": commandID, "status": status}

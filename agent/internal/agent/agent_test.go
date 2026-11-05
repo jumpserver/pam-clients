@@ -28,6 +28,8 @@ type fakeRemote struct {
 	unsubscribed               bool
 	confirmFault               error
 	fetched, confirmed, claims int
+	eventResults               []string
+	eventErrorCodes            []string
 	commandResults             []string
 	statusReports              []pam.ApplicationStatus
 	statusFault                error
@@ -72,11 +74,13 @@ func (f *fakeRemote) WatchCredentialEvents(ctx context.Context, _ func(pam.Event
 	<-ctx.Done()
 	return ctx.Err()
 }
-func (f *fakeRemote) ConfirmEvent(_ context.Context, _ string, status string, _ string) (pam.CommandResult, error) {
-	if status == "success" {
+func (f *fakeRemote) ConfirmEvent(_ context.Context, _ string, status string, code string) (pam.CommandResult, error) {
+	f.eventResults = append(f.eventResults, status)
+	f.eventErrorCodes = append(f.eventErrorCodes, code)
+	if status == "success" || status == "skip" {
 		f.confirmed++
 	}
-	return pam.CommandResult{Accepted: true, Status: "success"}, f.confirmFault
+	return pam.CommandResult{Accepted: true, Status: status}, f.confirmFault
 }
 func (f *fakeRemote) ConfirmCredential(context.Context, string, int64, string) (pam.CredentialConfirmation, error) {
 	f.confirmed++

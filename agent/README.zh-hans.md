@@ -229,7 +229,9 @@ curl --fail --silent --show-error \
 
 ### 确认业务生效
 
-业务验证真实连接、完成切换后再确认事件。可选择 `app_check` 验证成功后通过 `confirm_on_success: true` 自动确认，或由业务在验证后显式确认；同步执行的检查脚本不要反向调用确认接口。本地结果先持久化，`confirmed` 表示 Core 已接受，`pending` 表示稍后重试。
+Socket service 须由业务验证真实连接、完成切换后显式回报结果。执行本地动作的 service 未配置 `app_check` 时，在已配置的步骤全部成功后上报 `skip`，允许继续轮换，但不记为应用已确认；配置了 `app_check` 时，须检查成功且 `confirm_on_success: true` 才自动确认，否则由业务在验证后显式确认；同步执行的检查脚本不要反向调用确认接口。本地结果先持久化，`confirmed` 表示 Core 已接受，`pending` 表示稍后重试。
+
+结果为 success、failed 或 skip。未配置 app_check 的本地 service 在其他步骤成功后上报 skip，不计为应用已确认。failed 会阻止进入下一阶段；重试成功或跳过也不会自动解除，须由管理员填写原因并确认继续，原始失败记录保留。
 
 ```bash
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
@@ -237,7 +239,9 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 
 ## 6. 业务更新 service
 
-将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本；所有相关业务验证成功，且配置 `app_check.confirm_on_success: true`，才自动确认轮换成功。
+将下面的业务对象加入 `services`。每个业务须有唯一且稳定的 `name`。`allow_account_switch` 放在 service 层，默认 false；开启后，有明确 A/B 关联的账号跟随当前生效账号，无关联的账号仍固定使用声明账号，只需声明 A。`update_on_notification` 同样放在 service 层，默认 true；设为 false 后，业务动作等定时同步再执行，默认周期 300 秒，存储更新和授权撤销不受影响。各业务分别记录执行版本。
+
+结果为 success、failed 或 skip。未配置 app_check 的本地 service 在其他步骤成功后上报 skip，不计为应用已确认。failed 会阻止进入下一阶段；重试成功或跳过也不会自动解除，须由管理员填写原因并确认继续，原始失败记录保留。
 
 业务按 `update_config` → `reload_service` → `app_check` 执行：更新业务配置、重载或重启服务（也可执行固定脚本）、验证运行中的业务。新字段名需要新版 PAM Agent；`services` 的这三个步骤仅接受新名称，旧字段名会报错。
 

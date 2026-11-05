@@ -518,7 +518,7 @@ class Client {
 
   confirmEvent({ eventId, status = 'success', errorCode = '', signal }) {
     requiredString(eventId, 'eventId')
-    if (!['success', 'failed'].includes(status)) throw new TypeError('Invalid event status')
+    if (!['success', 'failed', 'skip'].includes(status)) throw new TypeError('Invalid event status')
     return this.#request('POST', '/event-result/', { event_id: eventId, status, error_code: errorCode }, (data) => {
       if (typeof data.accepted !== 'boolean' || typeof data.status !== 'string') throw new TypeError('Invalid event result')
       return camelize(data)
@@ -606,7 +606,7 @@ class Client {
 
   reportApplicationCommandResult({ commandId, status, errorCode, signal }) {
     requiredString(commandId, 'commandId')
-    if (!['running', 'success', 'failed'].includes(status))
+    if (!['running', 'success', 'failed', 'skip'].includes(status))
       throw new TypeError('Invalid command status')
     return this.#request(
       'POST',

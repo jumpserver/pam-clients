@@ -398,7 +398,7 @@ credential.secret.updated / credential.switch.published / credential.refresh.req
 | `rotation.verify.cancelled` | 备用账号验证已取消。 |
 | `rotation.started` | 轮换已发布目标账号并进入切换阶段。 |
 | `rotation.waiting_for_app` | 等待必需应用实例完成切换并确认。 |
-| `rotation.source.waiting` | 从发布切换时刻开始观察原主账号的成功取密，与应用切换确认并行进行；两项条件均达标后才允许改密。 |
+| `rotation.source.waiting` | 全部参与实例确认或跳过应用校验，且失败已由管理员确认后，才开始原主账号无取密观察期。 |
 | `rotation.source.ready` | 原主账号无取密窗口和客户端确认条件达标，可以继续改密。 |
 | `rotation.completed` | 原主账号改密已核验，本轮轮换完成。 |
 | `rotation.failed` | 轮换进入改密失败或需要核验恢复的状态。 |
@@ -430,6 +430,41 @@ SDK 和 Agent 管理保活及接收回执。snapshot、pong 无需 received 回�
 | `ping` | 客户端向 Core 发送应用层保活消息。 |
 | `pong` | Core 对应用层 ping 的响应。 |
 | `received` | 客户端确认已读取事件，不表示业务成功。 |
+
+## 活动日志与协议事件对应
+
+活动日志记录审计动作；事件日志按协议类型展示通知、指令及其投递和处理状态。审计动作与协议通知是两套类型。同一次操作可能生成多条日志或通知；下表列出可能的关联，不代表已经投递，实际事件和结果以记录详情为准。收到通知、获取凭据、应用新凭据、跳过校验及管理员确认分别记录。credential_fetched 单独显示在取密记录中。
+
+| 活动类型 | 活动代码 | 相关通知 / 消息 | 含义 |
+| --- | --- | --- | --- |
+| 发送应用指令 | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | 管理员要求选定实例应用已发布凭据或重启应用；不表示发起新的轮换。 |
+| 应用处理结果 | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | 客户端上报凭据应用或手动指令的进度与结果；轮换失败在重试成功后仍须管理员确认。 |
+| 创建接入或轮换配置 | `configuration_created` | `app.scope.updated` | 创建应用或轮换策略；涉及范围变化时可能发送 app.scope.updated。 |
+| 修改接入或轮换配置 | `configuration_updated` | `app.scope.updated` | 修改应用或轮换设置；涉及范围变化时可能发送 app.scope.updated。 |
+| 删除接入或轮换配置 | `configuration_deleted` | 无固定协议事件 | 删除应用或轮换策略；这不是应用使用新凭据的结果。 |
+| 添加凭据授权或绑定 | `authorization_granted` | `credential.refresh.requested` | 新增凭据授权或轮换绑定并请求刷新；绑定本身不扩大账号访问授权。 |
+| 移除凭据授权或绑定 | `authorization_revoked` | `app.scope.updated` | 移除授权或轮换绑定；只有实际失去账号授权时，才应释放业务连接。 |
+| 获取凭据 | `credential_fetched` | 无固定协议事件 | 取密调用单独展示于取密记录；成功获取不证明业务已使用新凭据。 |
+| 账号密码版本更新 | `credential_secret_updated` | `credential.secret.updated` | 账号密码版本发生变化，应用应重新取密并应用；不切换当前 A/B 账号。 |
+| 发布账号切换 | `credential_switch_published` | `credential.switch.published` | 发布 A/B 目标或回退账号及策略版本；发布不代表应用已完成切换。 |
+| 请求应用当前凭据 | `credential_refresh_requested` | `credential.refresh.requested` | 请求获取并应用当前发布版本；不表示密码已改变或新的轮换开始。 |
+| 重新发布凭据通知 | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | 手动刷新或快照对账时，重新请求应用当前凭据；密码版本未必改变。 |
+| 确认已应用新凭据 | `credential_confirmed` | 无固定协议事件 | 客户端确认当前账号或策略版本已成功应用；与事件回执和取密分开记录。 |
+| 跳过应用校验 | `credential_confirmation_skipped` | 无固定协议事件 | 其他交付步骤成功后，客户端上报 skip 跳过可选应用校验；不表示校验通过。 |
+| 管理员确认继续 | `application_failure_reviewed` | 无固定协议事件 | 管理员填写原因解除实例的失败阻塞；保留原始失败，不改写为校验成功。 |
+| 凭据事件流连接 | `credential_stream_connected` | `snapshot` | 客户端连接通知流，随后通过 snapshot 对账；连接不代表应用凭据成功。 |
+| 凭据事件流断开 | `credential_stream_disconnected` | 无固定协议事件 | 客户端断开通知流；本身不表示业务连接失败。 |
+| 轮换阶段变更 | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | 记录备用账号校验、应用等待、原账号取密观察及周期结果等阶段；具体阶段看详情。 |
+| 开始账号轮换 | `rotation_started` | `rotation.started` | 目标账号已发布，开始应用切换流程；轮换尚未完成。 |
+| 取消或强制结束轮换 | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | 普通取消发布原账号并等待回退确认；强制结束跳过剩余恢复确认。 |
+| 开始账号改密 | `secret_change_started` | `credential.change.started` | 改密任务已排队或开始执行；远程密码可能尚未改变。 |
+| 账号改密完成 | `secret_change_completed` | `credential.change.completed` | 改密任务成功；不代表业务应用已更新凭据。 |
+| 账号改密失败 | `secret_change_failed` | `credential.change.failed` | 任务失败或结果无法确认；需检查任务和远程账号。 |
+| 注册客户端实例 | `client_registered` | 无固定协议事件 | 注册 SDK 或 Agent 实例；注册不表示凭据已被业务应用。 |
+| 启用客户端实例 | `client_enabled` | 无固定协议事件 | 允许实例按现有授权恢复访问；不新增账号授权。 |
+| 禁用客户端实例 | `client_disabled` | 无固定协议事件 | 实例被禁用，后续访问会被拒绝；此操作不修改账号密码。 |
+| 应用通知投递 | `notification` | 无固定协议事件 | 记录 Webhook 投递与重试结果；HTTP 送达不代表凭据应用成功，实际事件代码看投递详情。 |
+| 重置应用接入密钥 | `application_secret_reset` | 无固定协议事件 | 重置应用连接 JumpServer 使用的身份密钥；不是业务账号密码轮换。 |
 
 ## 事件字段
 
@@ -463,6 +498,17 @@ SDK 和 Agent 管理保活及接收回执。snapshot、pong 无需 received 回�
 ## 接收回执与业务结果
 
 SDK 在交出业务事件前自动尽力发送 received 回执，应用无需额外发送。回执仅表示已读取事件，不表示凭据已经生效，也不能代替确认。应用应处理首次和重连快照；snapshot 与 pong 无需回执。
+
+结果为 success、failed 或 skip。未配置 app_check 的本地 service 在其他步骤成功后上报 skip，不计为应用已确认。failed 会阻止进入下一阶段；重试成功或跳过也不会自动解除，须由管理员填写原因并确认继续，原始失败记录保留。
+
+管理员通过用户会话确认继续，需要 accounts.change_applicationcredential 权限。提交当前 failure_id 和原因；过期失败记录或策略版本会被拒绝。操作留存审计，不改写客户端结果。
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

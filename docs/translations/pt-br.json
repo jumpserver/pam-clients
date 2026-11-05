@@ -34,7 +34,7 @@
   "application_info": "get_application retorna ID, nome, organização e contagens de contas autorizadas e políticas visíveis da aplicação autenticada. get_client_info retorna somente registro, tipo e versões da réplica atual. A lista retorna todas as políticas vinculadas visíveis, incluindo desativadas; search filtra nomes ou chaves. Consulte uma política pelo ID ou pela chave da própria política, sem usar chaves push de contas. Políticas de rotação exigem autorização para ambas as contas e a conta ativa; contagens de assinatura incluem somente contas autorizadas. As consultas não retornam segredos nem buscam ou confirmam credenciais. O primeiro acesso registra a réplica. Exigem Core e código SDK atualizados; a versão publicada 1.0.2 ainda não contém os métodos.",
   "methods": "Métodos comuns",
   "sdk_errors": "O cliente fecha sessões HTTP e fluxos de eventos com with ou close. clone cria uma sessão independente. Falhas HTTP, rede, autenticação e decodificação geram PAMError com code, status_code, detail e original_error. Repita erros transitórios na aplicação, trate rejeições de autorização e não registre credenciais.",
-  "sdk_receipts": "O SDK envia automaticamente um recibo received, na medida do possível, antes de retornar um evento de negócio. A aplicação não precisa enviá-lo novamente. O recibo indica apenas leitura, não aplicação de credenciais, e não substitui a confirmação. Reconcilie snapshots iniciais e de reconexão; snapshot e pong não exigem recibo.",
+  "sdk_receipts": "O SDK envia automaticamente um recibo received, na medida do possível, antes de retornar um evento de negócio. A aplicação não precisa enviá-lo novamente. O recibo indica apenas leitura, não aplicação de credenciais, e não substitui a confirmação. Reconcilie snapshots iniciais e de reconexão; snapshot e pong não exigem recibo.\n\nOs resultados são success, failed ou skip. Um service local sem app_check informa skip após as demais etapas concluírem, sem contar como confirmação da aplicação. failed bloqueia a próxima etapa mesmo após nova tentativa bem-sucedida ou ignorada. Um administrador deve aprovar a continuação com um motivo; a falha original é preservada.",
   "native_intro": "Implemente o callback de mudança de conta e inicie o listener gerenciado. O SDK trata snapshots, consulta em tempo real, validação de conta e versão, tentativas, reivindicação de comandos e resultados. Retorne apenas após validar a conexão real, trocar o pool e fechar conexões antigas. Python e Node.js usam subclasses, Go usa OnAccountChanged e Java AccountEventListener. O exemplo falha até implementar a troca real.",
   "native_setup": "Install the SDK below and use the identity configuration downloaded from the application access wizard. Protect AK/SK and assign each replica a stable, unique instance ID.",
   "native_events": "Implemente o callback de mudança de conta e inicie o listener gerenciado. O SDK trata snapshots, consulta em tempo real, validação de conta e versão, tentativas, reivindicação de comandos e resultados. Retorne apenas após validar a conexão real, trocar o pool e fechar conexões antigas. Python e Node.js usam subclasses, Go usa OnAccountChanged e Java AccountEventListener. O exemplo falha até implementar a troca real.",
@@ -75,7 +75,7 @@
   "agent_validation": "1. Verify the instance is online and its authorized account scope is correct.\n2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.\n3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.",
   "sdk_workflow": "Para pull, basta a primeira consulta. Push e A/B exigem callbacks de negócio e escuta. O SDK cuida do protocolo e resultados; a aplicação troca conexões reais. Os exemplos refletem o código atual: use builds Core/SDK compatíveis. Os pacotes publicados 1.0.2 não incluem todas as APIs novas.",
   "sdk_validation": "1. Consulte uma conta autorizada e teste uma conexão real.\n2. Verifique a sincronização inicial e uma atualização; o callback deve concluir a troca antes do sucesso.\n3. Confira uso/status e resultado do evento separadamente. Consulta e relato de uso não confirmam aplicação.",
-  "agent_confirmation": "Confirme após validar e trocar a conexão real. Use `app_check` com `confirm_on_success: true` ou confirmação explícita. Não chame a confirmação de um script de verificação síncrono. O resultado é persistido: `confirmed` indica aceite pelo Core; `pending` será repetido.",
+  "agent_confirmation": "Confirme após validar e trocar a conexão real. Use `app_check` com `confirm_on_success: true` ou confirmação explícita. Não chame a confirmação de um script de verificação síncrono. O resultado é persistido: `confirmed` indica aceite pelo Core; `pending` será repetido.\n\nOs resultados são success, failed ou skip. Um service local sem app_check informa skip após as demais etapas concluírem, sem contar como confirmação da aplicação. failed bloqueia a próxima etapa mesmo após nova tentativa bem-sucedida ou ignorada. Um administrador deve aprovar a continuação com um motivo; a falha original é preservada.",
   "foreground_title": "Execução em primeiro plano",
   "source_install_title": "Instalação local alternativa",
   "source_install": "Se o Core não fornecer o endpoint de código ou para implantação offline, obtenha o código compatível em `/path/to/pam-clients` e execute no diretório da aplicação. Substitua pelo caminho real.",
@@ -88,7 +88,7 @@
   "agent_default_output_title": "store",
   "store_model": "`store` and `services` are independent. `store.accounts` is a string array: `[\"all\"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.",
   "store_layout": "Cada conta, incluindo A e B, tem seu arquivo por account_id. As credenciais ficam em texto simples com permissões 0600. Contas inativas em alteração de senha ficam temporariamente indisponíveis. A verificação de autorização remove arquivos revogados. Sem mudança de versão, só são lidos metadados; consultas reais continuam auditadas e contam na observação de rotação.",
-  "services_model": "Adicione os objetos abaixo a `services`, com um `name` único e estável. `allow_account_switch` fica no serviço e o padrão é false: true acompanha a conta ativa de uma associação A/B inequívoca; outras contas permanecem fixas. Basta declarar A. `update_on_notification` também fica no serviço e o padrão é true. False adia ações até a próxima reconciliação, por padrão a cada 300 segundos; armazenamento e revogações continuam ativos. Cada serviço registra suas versões. A rotação só é confirmada após todos os serviços envolvidos passarem na verificação com `app_check.confirm_on_success: true`.",
+  "services_model": "Adicione os objetos abaixo a `services`, com um `name` único e estável. `allow_account_switch` fica no serviço e o padrão é false: true acompanha a conta ativa de uma associação A/B inequívoca; outras contas permanecem fixas. Basta declarar A. `update_on_notification` também fica no serviço e o padrão é true. False adia ações até a próxima reconciliação, por padrão a cada 300 segundos; armazenamento e revogações continuam ativos. Cada serviço registra suas versões. A rotação só é confirmada após todos os serviços envolvidos passarem na verificação com `app_check.confirm_on_success: true`.\n\nOs resultados são success, failed ou skip. Um service local sem app_check informa skip após as demais etapas concluírem, sem contar como confirmação da aplicação. failed bloqueia a próxima etapa mesmo após nova tentativa bem-sucedida ou ignorada. Um administrador deve aprovar a continuação com um motivo; a falha original é preservada.",
   "aliases_model": "Em `services.accounts`, use `id` para selecionar a conta. Uma conta aceita `username` / `secret` diretamente. Várias contas exigem aliases únicos e referências como `database.username` ou `cache.secret`. O alias permanece estável na troca A/B. O `username` opcional é apenas informativo; os valores reais vêm do Core. Todas as contas devem estar prontas antes da escrita e a ação de serviço executa uma vez. Mapeamentos ausentes ou ambíguos falham antes da alteração.",
   "services_upgrade": "Core e PAM Agent usam protocolo 1 e `version: 1`. Configure `store` e `services` de forma independente, sem misturar com a estrutura antiga `delivery` / `rules`. Core sincroniza escopo e versões, nunca caminhos executáveis locais. Reinicie PAM Agent após editar a configuração privada.",
   "services_portable": "Em macOS, Windows ou Linux sem root, execute `init-local` uma vez e reutilize a configuração privada com `run --local`. Há suporte a JSON e arquivos de ambiente; ações systemd exigem o serviço Linux.",
@@ -153,7 +153,7 @@
   "protocol_event_rotation_verify_cancelled": "Backup verification was cancelled.",
   "protocol_event_rotation_started": "The rotation cycle has published the target account and started switching.",
   "protocol_event_rotation_waiting_for_app": "Waiting for required application instances to apply and confirm the target.",
-  "protocol_event_rotation_source_waiting": "Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied.",
+  "protocol_event_rotation_source_waiting": "A observação da conta original começa somente após todos confirmarem ou ignorarem a verificação da aplicação e o administrador aprovar as falhas.",
   "protocol_event_rotation_source_ready": "The original account no-fetch window and required client conditions allow password change.",
   "protocol_event_rotation_completed": "The original account password change was verified and the rotation completed.",
   "protocol_event_rotation_failed": "Rotation entered a password-change failure or recovery-required state.",
@@ -187,5 +187,126 @@
   "curl_intro": "Use signed HTTP requests to fetch the current credentials for an application-authorized account.",
   "curl_config": "Set the server, application identity, organization, instance ID and account ID.",
   "curl_response": "The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.",
-  "curl_errors": "Check identity, authorization, signature and instance ID."
+  "curl_errors": "Check identity, authorization, signature and instance ID.",
+  "protocol_failure_review": "A aprovação usa uma sessão de usuário com accounts.change_applicationcredential. Envie o failure_id atual e um motivo; falhas ou revisões de política superadas são rejeitadas. A aprovação é auditada e preserva o resultado do cliente.",
+  "audit_catalog_title": "Correspondência entre atividades e eventos do protocolo",
+  "audit_catalog_intro": "O registro de atividade contém ações de auditoria; o de eventos mostra notificações e comandos com entrega e processamento. Ações de auditoria e notificações são catálogos distintos. A tabela mostra associações possíveis, não entrega confirmada; consulte os detalhes. Recebimento, obtenção, aplicação, dispensa e aprovação são registrados separadamente. credential_fetched fica no registro de obtenção.",
+  "audit_type_label": "Tipo de atividade",
+  "audit_code_label": "Código da atividade",
+  "audit_protocol_label": "Notificações / mensagens relacionadas",
+  "audit_no_protocol": "Sem evento de protocolo fixo",
+  "audit_events": {
+    "command_requested": {
+      "name": "Enviar comando à aplicação",
+      "meaning": "Solicita aplicar credenciais publicadas ou reiniciar instâncias selecionadas; não inicia uma rotação."
+    },
+    "command_result": {
+      "name": "Resultado do processamento da aplicação",
+      "meaning": "O cliente relata progresso e resultados de credenciais ou comandos. Uma falha de rotação exige revisão mesmo após nova tentativa bem-sucedida."
+    },
+    "configuration_created": {
+      "name": "Criar configuração de integração ou rotação",
+      "meaning": "Cria uma aplicação ou política; mudanças de escopo podem gerar app.scope.updated."
+    },
+    "configuration_updated": {
+      "name": "Alterar configuração de integração ou rotação",
+      "meaning": "Altera configurações; mudanças de escopo podem gerar app.scope.updated."
+    },
+    "configuration_deleted": {
+      "name": "Excluir configuração de integração ou rotação",
+      "meaning": "Exclui uma aplicação ou política; não é um resultado de aplicação de credenciais."
+    },
+    "authorization_granted": {
+      "name": "Adicionar autorização ou vínculo de credenciais",
+      "meaning": "Adiciona autorização ou vínculo de rotação e solicita atualização; o vínculo não amplia permissões da conta."
+    },
+    "authorization_revoked": {
+      "name": "Remover autorização ou vínculo de credenciais",
+      "meaning": "Remove autorização ou vínculo. Libere conexões de negócio somente quando a autorização da conta for realmente perdida."
+    },
+    "credential_fetched": {
+      "name": "Obter credenciais",
+      "meaning": "Consta no registro separado de obtenção; obter não comprova uso pela aplicação."
+    },
+    "credential_secret_updated": {
+      "name": "Versão da senha da conta atualizada",
+      "meaning": "A versão mudou e deve ser obtida e aplicada; a conta A/B selecionada não muda."
+    },
+    "credential_switch_published": {
+      "name": "Publicar troca de conta",
+      "meaning": "Publica a conta de destino ou retorno e a revisão; não comprova a troca na aplicação."
+    },
+    "credential_refresh_requested": {
+      "name": "Solicitar aplicação das credenciais atuais",
+      "meaning": "Solicita obter e aplicar a versão publicada; não implica mudança de senha ou nova rotação."
+    },
+    "credential_republished": {
+      "name": "Republicar notificação de credenciais",
+      "meaning": "A atualização manual ou reconciliação de snapshot solicita reaplicar credenciais; a senha pode permanecer igual."
+    },
+    "credential_confirmed": {
+      "name": "Confirmar novas credenciais aplicadas",
+      "meaning": "O cliente confirma a aplicação da versão atual, separadamente do recebimento e obtenção."
+    },
+    "credential_confirmation_skipped": {
+      "name": "Ignorar verificação da aplicação",
+      "meaning": "As outras etapas tiveram sucesso e o cliente relata skip para a verificação opcional; não é uma verificação aprovada."
+    },
+    "application_failure_reviewed": {
+      "name": "Continuação aprovada pelo administrador",
+      "meaning": "O administrador registra um motivo e libera o bloqueio; a falha original é preservada."
+    },
+    "credential_stream_connected": {
+      "name": "Fluxo de eventos de credenciais conectado",
+      "meaning": "O cliente se conecta e reconcilia o escopo com snapshot; não comprova aplicação bem-sucedida."
+    },
+    "credential_stream_disconnected": {
+      "name": "Fluxo de eventos de credenciais desconectado",
+      "meaning": "O fluxo de notificações foi encerrado; isso não comprova falha de conexão de negócio."
+    },
+    "rotation_step": {
+      "name": "Etapa de rotação alterada",
+      "meaning": "Registra verificação, espera da aplicação, observação da conta original e resultados; consulte a etapa exata nos detalhes."
+    },
+    "rotation_started": {
+      "name": "Iniciar rotação da conta",
+      "meaning": "O destino foi publicado e a troca começou; a rotação ainda não terminou."
+    },
+    "rotation_cancelled": {
+      "name": "Cancelar ou encerrar rotação à força",
+      "meaning": "Cancelar aguarda confirmação de retorno à conta original; encerrar à força dispensa esperas de recuperação restantes."
+    },
+    "secret_change_started": {
+      "name": "Alteração de senha da conta iniciada",
+      "meaning": "A tarefa entrou na fila ou começou; a senha remota pode ainda não ter mudado."
+    },
+    "secret_change_completed": {
+      "name": "Alteração de senha da conta concluída",
+      "meaning": "A tarefa teve sucesso; não comprova atualização das credenciais nas aplicações."
+    },
+    "secret_change_failed": {
+      "name": "Falha na alteração de senha da conta",
+      "meaning": "A tarefa falhou ou o resultado é incerto; examine a tarefa e a conta remota."
+    },
+    "client_registered": {
+      "name": "Registrar instância de cliente",
+      "meaning": "Uma instância SDK ou Agent foi registrada; não comprova aplicação de credenciais."
+    },
+    "client_enabled": {
+      "name": "Habilitar instância de cliente",
+      "meaning": "Retoma acesso dentro das permissões existentes; não concede nova autorização."
+    },
+    "client_disabled": {
+      "name": "Desabilitar instância de cliente",
+      "meaning": "Acessos posteriores são rejeitados; esta ação não altera senhas de conta."
+    },
+    "notification": {
+      "name": "Entrega de notificação da aplicação",
+      "meaning": "Registra entregas e novas tentativas de Webhook. A entrega HTTP não comprova aplicação de credenciais; o código real aparece nos detalhes."
+    },
+    "application_secret_reset": {
+      "name": "Redefinir segredo de acesso da aplicação",
+      "meaning": "Redefine o segredo de autenticação no JumpServer, separado da senha da conta de negócio."
+    }
+  }
 }

@@ -34,7 +34,7 @@
   "application_info": "get_application は署名したアプリケーションの ID、名前、組織、認可アカウント数と可視ポリシー数を返します。get_client_info は現在のレプリカの登録、種類、バージョンのみを返します。一覧は無効化されたものを含む可視な関連ポリシー全件を返し、search は名前と key を検索します。単一ポリシーは ID またはポリシー自体の key の一方で取得します。アカウントの push key は使用しません。輪換ポリシーには両アカウントと有効アカウントの認可が必要で、購読数は現在認可されたものだけです。秘密やパスワードを返さず、取得や適用確認も行いません。初回アクセスでレプリカを登録します。更新した Core と SDK ソースが必要です。公開済み1.0.2には未収録です。",
   "methods": "主なメソッド",
   "sdk_errors": "with または close で HTTP セッションとイベント接続を閉じ、clone で独立したセッションを作成します。HTTP、ネットワーク、認証、解析のエラーは code、status_code、detail、original_error を持つ PAMError になります。一時障害を再試行し、権限拒否を明示的に処理してください。",
-  "sdk_receipts": "SDK は業務イベントを返す前に received 受領通知を可能な範囲で自動送信します。アプリケーションによる追加送信は不要です。受領通知は読み取り済みを表すだけで、認証情報の適用や確認の代わりにはなりません。初回接続と再接続のスナップショットを処理してください。snapshot と pong に受領通知は不要です。",
+  "sdk_receipts": "SDK は業務イベントを返す前に received 受領通知を可能な範囲で自動送信します。アプリケーションによる追加送信は不要です。受領通知は読み取り済みを表すだけで、認証情報の適用や確認の代わりにはなりません。初回接続と再接続のスナップショットを処理してください。snapshot と pong に受領通知は不要です。\n\n結果は success、failed、skip です。app_check を省略したローカル service は他の手順の成功後に skip を報告し、アプリケーションの確認とは区別します。failed 後は再試行が成功またはスキップしても次の段階へ進めません。管理者が理由を記入して続行を承認し、元の失敗記録を保持します。",
   "native_intro": "以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。",
   "native_setup": "Install the SDK below and use the identity configuration downloaded from the application access wizard. Protect AK/SK and assign each replica a stable, unique instance ID.",
   "native_events": "以下のアカウント変更コールバックを実装し、マネージドリスナーを開始します。SDK がスナップショット、最新情報の取得、アカウントと版の検証、再試行、コマンドの実行権取得と結果報告を処理します。実接続の検証、接続プール切替、旧接続の解放を完了してから戻ってください。Python と Node.js はサブクラス、Go は OnAccountChanged、Java は AccountEventListener を使用します。未実装の例は失敗します。",
@@ -75,7 +75,7 @@
   "agent_validation": "1. Verify the instance is online and its authorized account scope is correct.\n2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.\n3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.",
   "sdk_workflow": "pull のみなら最初の取得までで十分です。push や A/B には業務コールバックと監視が必要です。SDK がプロトコルと結果を処理し、業務が実接続を切り替えます。例は現行ソース用です。対応する Core と SDK を用意してください。公開済みの 1.0.2 には新 API がすべて含まれるわけではありません。",
   "sdk_validation": "1. 許可された ID で取得し実接続を検証します。\n2. 監視では初回同期とポリシー更新を確認し、業務処理完了後に成功を確認します。\n3. 使用状態とイベント結果を別々に確認します。取得や状態報告は適用確認ではありません。",
-  "agent_confirmation": "実接続の検証と切替後に確認します。`app_check` と `confirm_on_success: true`、または明示確認を使用します。同期チェック内から確認 API を呼ばないでください。結果は永続化され、`confirmed` は Core 受理、`pending` は再試行を示します。",
+  "agent_confirmation": "実接続の検証と切替後に確認します。`app_check` と `confirm_on_success: true`、または明示確認を使用します。同期チェック内から確認 API を呼ばないでください。結果は永続化され、`confirmed` は Core 受理、`pending` は再試行を示します。\n\n結果は success、failed、skip です。app_check を省略したローカル service は他の手順の成功後に skip を報告し、アプリケーションの確認とは区別します。failed 後は再試行が成功またはスキップしても次の段階へ進めません。管理者が理由を記入して続行を承認し、元の失敗記録を保持します。",
   "foreground_title": "フォアグラウンド実行",
   "source_install_title": "ローカルソースからの代替インストール",
   "source_install": "Core がソース取得 API を提供していない場合やオフラインの場合は、対応ソースを `/path/to/pam-clients` に用意し、アプリのディレクトリで実行します。実際のパスに置き換えてください。",
@@ -88,7 +88,7 @@
   "agent_default_output_title": "store",
   "store_model": "`store` and `services` are independent. `store.accounts` is a string array: `[\"all\"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.",
   "store_layout": "実際の account_id ごとに個別ファイルを保存し、A/B も別々です。平文の認証情報を含むファイルの権限は 0600 です。パスワード変更中の非アクティブアカウントは一時利用不可です。権限確認後、取消済みファイルを削除します。変更のない定期同期はメタデータのみ取得し、実際の認証情報取得は監査とローテーション監視に記録します。",
-  "services_model": "以下の業務オブジェクトを `services` に追加し、一意で安定した `name` を指定します。service の `allow_account_switch` は既定 false。true では関連する A/B の現在のアカウントに追従し、関連のないアカウントは固定です。A の宣言だけで十分です。`update_on_notification` も service に置き、既定 true。false では次の定期同期（既定 300 秒）で業務処理します。保存更新と権限取消は継続します。業務ごとに版を記録し、全対象業務の検証成功と `app_check.confirm_on_success: true` が揃って初めて切替を確認します。",
+  "services_model": "以下の業務オブジェクトを `services` に追加し、一意で安定した `name` を指定します。service の `allow_account_switch` は既定 false。true では関連する A/B の現在のアカウントに追従し、関連のないアカウントは固定です。A の宣言だけで十分です。`update_on_notification` も service に置き、既定 true。false では次の定期同期（既定 300 秒）で業務処理します。保存更新と権限取消は継続します。業務ごとに版を記録し、全対象業務の検証成功と `app_check.confirm_on_success: true` が揃って初めて切替を確認します。\n\n結果は success、failed、skip です。app_check を省略したローカル service は他の手順の成功後に skip を報告し、アプリケーションの確認とは区別します。failed 後は再試行が成功またはスキップしても次の段階へ進めません。管理者が理由を記入して続行を承認し、元の失敗記録を保持します。",
   "aliases_model": "`services.accounts` では `id` でアカウントを指定します。単一アカウントは `username` / `secret` を直接指定できます。複数では一意の alias と `database.username`、`cache.secret` の形式が必要です。alias は A/B 切替でも不変です。任意の `username` は表示用で、実際の値は Core から取得します。全アカウントの準備後にファイルを更新し、業務処理を一度だけ実行します。未取得や曖昧な対応は書込み前にエラーとなります。",
   "services_upgrade": "Core と PAM Agent のプロトコル版および `version` は 1 です。`store` と `services` は独立して設定し、旧構造の `delivery` / `rules` と混在させません。Core はアカウント範囲と版のメタデータのみを同期し、ローカル実行パスを配信しません。私有設定の変更後は PAM Agent を再起動します。",
   "services_portable": "macOS、Windows、非 root Linux では一度 `init-local` を実行し、その後 `run --local` で私有設定を再利用します。JSON と環境変数ファイルを使用できます。systemd 処理は Linux サービス専用です。",
@@ -153,7 +153,7 @@
   "protocol_event_rotation_verify_cancelled": "Backup verification was cancelled.",
   "protocol_event_rotation_started": "The rotation cycle has published the target account and started switching.",
   "protocol_event_rotation_waiting_for_app": "Waiting for required application instances to apply and confirm the target.",
-  "protocol_event_rotation_source_waiting": "Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied.",
+  "protocol_event_rotation_source_waiting": "全参加インスタンスが確認またはアプリケーション検証をスキップし、失敗を管理者が承認した後にのみ、元アカウントの取得監視を開始します。",
   "protocol_event_rotation_source_ready": "The original account no-fetch window and required client conditions allow password change.",
   "protocol_event_rotation_completed": "The original account password change was verified and the rotation completed.",
   "protocol_event_rotation_failed": "Rotation entered a password-change failure or recovery-required state.",
@@ -187,5 +187,126 @@
   "curl_intro": "Use signed HTTP requests to fetch the current credentials for an application-authorized account.",
   "curl_config": "Set the server, application identity, organization, instance ID and account ID.",
   "curl_response": "The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.",
-  "curl_errors": "Check identity, authorization, signature and instance ID."
+  "curl_errors": "Check identity, authorization, signature and instance ID.",
+  "protocol_failure_review": "管理者承認には accounts.change_applicationcredential 権限を持つユーザーセッションが必要です。現在の failure_id と理由を送信してください。古い失敗やポリシーの版は拒否されます。承認は監査に記録され、クライアントの結果は保持されます。",
+  "audit_catalog_title": "アクティビティとプロトコルイベントの対応",
+  "audit_catalog_intro": "アクティビティログは監査操作を記録し、イベントログは通知・コマンドと配信・処理状況を表示します。監査操作と通知は異なる分類です。表は関連し得るコードを示し、配信成功を意味しません。実際のイベントと結果は詳細で確認してください。受信、取得、適用、スキップ、管理者承認は別々に記録します。credential_fetched は取得ログに表示します。",
+  "audit_type_label": "アクティビティ種別",
+  "audit_code_label": "アクティビティコード",
+  "audit_protocol_label": "関連通知・メッセージ",
+  "audit_no_protocol": "固定の対応イベントなし",
+  "audit_events": {
+    "command_requested": {
+      "name": "アプリケーションコマンドを送信",
+      "meaning": "管理者が選択したインスタンスに公開済み認証情報の適用または再起動を要求します。新しいローテーションは開始しません。"
+    },
+    "command_result": {
+      "name": "アプリケーション処理結果",
+      "meaning": "クライアントが認証情報適用やコマンドの進捗と結果を報告します。再試行が成功してもローテーションの失敗には管理者の確認が必要です。"
+    },
+    "configuration_created": {
+      "name": "連携・ローテーション設定を作成",
+      "meaning": "アプリケーションまたはポリシーを作成しました。範囲変更時には app.scope.updated を送信する場合があります。"
+    },
+    "configuration_updated": {
+      "name": "連携・ローテーション設定を更新",
+      "meaning": "設定を更新しました。範囲変更時には app.scope.updated を送信する場合があります。"
+    },
+    "configuration_deleted": {
+      "name": "連携・ローテーション設定を削除",
+      "meaning": "アプリケーションまたはポリシーを削除しました。認証情報適用の結果ではありません。"
+    },
+    "authorization_granted": {
+      "name": "認証情報の権限・関連付けを追加",
+      "meaning": "権限またはローテーションの関連付けを追加し、更新を要求します。関連付けだけではアカウント権限は拡大しません。"
+    },
+    "authorization_revoked": {
+      "name": "認証情報の権限・関連付けを削除",
+      "meaning": "権限または関連付けを削除しました。業務接続の解放はアカウント権限を実際に失った場合に限ります。"
+    },
+    "credential_fetched": {
+      "name": "認証情報を取得",
+      "meaning": "別の取得ログに記録します。取得成功だけでは業務での利用を証明しません。"
+    },
+    "credential_secret_updated": {
+      "name": "アカウントのパスワードバージョン更新",
+      "meaning": "変更された認証情報を再取得して適用します。現在の A/B アカウントは切り替わりません。"
+    },
+    "credential_switch_published": {
+      "name": "アカウント切替を公開",
+      "meaning": "切替先または復帰先とポリシーバージョンを公開します。公開だけでは切替完了を証明しません。"
+    },
+    "credential_refresh_requested": {
+      "name": "現在の認証情報の適用を要求",
+      "meaning": "公開中のバージョンの取得と適用を要求します。パスワード変更や新しいローテーションを意味しません。"
+    },
+    "credential_republished": {
+      "name": "認証情報通知を再公開",
+      "meaning": "手動更新や snapshot の照合で現在の認証情報を再適用します。パスワードバージョンが同じ場合もあります。"
+    },
+    "credential_confirmed": {
+      "name": "新しい認証情報の適用を確認",
+      "meaning": "クライアントが現在のバージョンの適用成功を報告します。受信確認や取得とは別です。"
+    },
+    "credential_confirmation_skipped": {
+      "name": "アプリケーション検証をスキップ",
+      "meaning": "他の配信手順が成功し、任意の検証に skip を報告しました。検証成功ではありません。"
+    },
+    "application_failure_reviewed": {
+      "name": "管理者が続行を承認",
+      "meaning": "管理者が理由を記録して失敗による停止を解除します。元の失敗は保持されます。"
+    },
+    "credential_stream_connected": {
+      "name": "認証情報イベントストリーム接続",
+      "meaning": "通知ストリームに接続し、snapshot で範囲を照合します。適用成功を意味しません。"
+    },
+    "credential_stream_disconnected": {
+      "name": "認証情報イベントストリーム切断",
+      "meaning": "通知ストリームが切断されました。業務接続の失敗を意味するものではありません。"
+    },
+    "rotation_step": {
+      "name": "ローテーション段階の変更",
+      "meaning": "検証、適用待機、元アカウントの取得監視と結果を記録します。実際の段階は詳細を確認してください。"
+    },
+    "rotation_started": {
+      "name": "アカウントローテーション開始",
+      "meaning": "切替先を公開してアプリケーションの切替を開始しました。全体の完了ではありません。"
+    },
+    "rotation_cancelled": {
+      "name": "ローテーション取消・強制終了",
+      "meaning": "取消は元アカウントへの復帰確認を待ちます。強制終了は残りの復旧確認を待ちません。"
+    },
+    "secret_change_started": {
+      "name": "アカウントパスワード変更開始",
+      "meaning": "タスクを登録または開始しました。リモートのパスワードはまだ変わっていない場合があります。"
+    },
+    "secret_change_completed": {
+      "name": "アカウントパスワード変更完了",
+      "meaning": "変更タスクが成功しました。アプリケーションの認証情報適用は証明しません。"
+    },
+    "secret_change_failed": {
+      "name": "アカウントパスワード変更失敗",
+      "meaning": "タスク失敗または結果不明です。タスクとリモートアカウントを確認してください。"
+    },
+    "client_registered": {
+      "name": "クライアントインスタンス登録",
+      "meaning": "SDK または Agent が登録されました。認証情報適用を意味しません。"
+    },
+    "client_enabled": {
+      "name": "クライアントインスタンス有効化",
+      "meaning": "既存の権限内でアクセスを再開できます。新たなアカウント権限は付与しません。"
+    },
+    "client_disabled": {
+      "name": "クライアントインスタンス無効化",
+      "meaning": "以降のアクセスを拒否します。アカウントのパスワードは変更しません。"
+    },
+    "notification": {
+      "name": "アプリケーション通知の配信",
+      "meaning": "Webhook の配信と再試行を記録します。HTTP 配信は認証情報適用の成功ではありません。実際のイベントコードは詳細に表示します。"
+    },
+    "application_secret_reset": {
+      "name": "アプリケーション接続シークレットのリセット",
+      "meaning": "JumpServer 接続用の認証シークレットを変更します。業務アカウントのパスワード変更とは別です。"
+    }
+  }
 }

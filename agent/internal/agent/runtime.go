@@ -34,6 +34,7 @@ type Applied struct {
 	Revision  int64  `json:"revision"`
 	AccountID string `json:"account_id"`
 	Confirmed bool   `json:"confirmed"`
+	Result    string `json:"result,omitempty"`
 }
 
 type State struct {
@@ -472,11 +473,15 @@ func (a *Agent) reportPending(ctx context.Context) error {
 			if event.Revision != value.Revision || event.AccountID != value.AccountID || accountRevision != event.AccountRevision {
 				continue
 			}
-			result, err := a.remote.ConfirmEvent(ctx, event.EventID, "success", "")
+			status := value.Result
+			if status == "" {
+				status = "success"
+			}
+			result, err := a.remote.ConfirmEvent(ctx, event.EventID, status, "")
 			if err != nil {
 				return a.failure(err, true)
 			}
-			if result.Status != "success" {
+			if result.Status != status && result.Status != "success" {
 				return errors.New("Core rejected the event application result")
 			}
 		}
@@ -518,10 +523,14 @@ func (a *Agent) finishSwitch(ctx context.Context, event pam.Event) error {
 		return nil
 	}
 	var err error
+	status := applied.Result
+	if status == "" {
+		status = "success"
+	}
 	if event.EventID != "" {
-		_, err = a.remote.ConfirmEvent(ctx, event.EventID, "success", "")
+		_, err = a.remote.ConfirmEvent(ctx, event.EventID, status, "")
 	} else {
-		_, err = a.remote.ReportApplicationCommandResult(ctx, event.CommandID, "success", "")
+		_, err = a.remote.ReportApplicationCommandResult(ctx, event.CommandID, status, "")
 	}
 	if err != nil {
 		return err

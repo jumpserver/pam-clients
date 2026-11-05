@@ -357,7 +357,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | Наблюдение за исходным аккаунтом начинается только после подтверждения или пропуска проверки всеми участниками и одобрения ошибок администратором. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -389,6 +389,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## Соответствие действий и событий протокола
+
+Журнал действий содержит аудит операций; журнал событий показывает уведомления и команды, состояние доставки и обработки. Действия аудита и уведомления — разные категории. Таблица показывает возможные связи, а не подтверждение доставки; фактическое событие указано в подробностях. Получение уведомления, запрос данных, применение, пропуск и одобрение учитываются отдельно. credential_fetched находится в журнале получения данных.
+
+| Тип действия | Код действия | Связанные уведомления / сообщения | Meaning |
+| --- | --- | --- | --- |
+| Отправить команду приложению | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | Запрашивает применение опубликованных данных или перезапуск выбранных экземпляров; не запускает ротацию. |
+| Результат обработки приложением | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | Клиент сообщает ход и результат применения данных или команды. Ошибка ротации требует проверки администратором даже после успешного повтора. |
+| Создать настройки интеграции или ротации | `configuration_created` | `app.scope.updated` | Создано приложение или политика; изменение области может вызвать app.scope.updated. |
+| Изменить настройки интеграции или ротации | `configuration_updated` | `app.scope.updated` | Настройки изменены; изменение области может вызвать app.scope.updated. |
+| Удалить настройки интеграции или ротации | `configuration_deleted` | Нет фиксированного события | Удалено приложение или политика; это не результат применения учётных данных. |
+| Добавить разрешение или привязку учётных данных | `authorization_granted` | `credential.refresh.requested` | Добавлено разрешение или привязка ротации и запрошено обновление; привязка не расширяет доступ к аккаунту. |
+| Удалить разрешение или привязку учётных данных | `authorization_revoked` | `app.scope.updated` | Удалено разрешение или привязка. Освобождайте рабочие соединения только при действительной утрате доступа к аккаунту. |
+| Получить учётные данные | `credential_fetched` | Нет фиксированного события | Записывается в отдельный журнал получения; получение не доказывает использование приложением. |
+| Версия пароля аккаунта обновлена | `credential_secret_updated` | `credential.secret.updated` | Версия изменилась, её нужно получить и применить; выбранный аккаунт A/B не меняется. |
+| Опубликовать переключение аккаунта | `credential_switch_published` | `credential.switch.published` | Опубликованы целевой или исходный аккаунт и ревизия; публикация не доказывает переключение приложения. |
+| Запросить применение текущих данных | `credential_refresh_requested` | `credential.refresh.requested` | Запрашивает получение и применение опубликованной версии; не означает смену пароля или новую ротацию. |
+| Повторить уведомление об учётных данных | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | Ручное обновление или сверка snapshot повторно запрашивает применение; версия пароля может остаться прежней. |
+| Подтвердить применение новых данных | `credential_confirmed` | Нет фиксированного события | Клиент подтверждает применение текущей версии; подтверждение получения и запрос данных учитываются отдельно. |
+| Пропустить проверку приложения | `credential_confirmation_skipped` | Нет фиксированного события | Другие этапы доставки успешны, для необязательной проверки сообщён skip; это не успешная проверка. |
+| Продолжение одобрено администратором | `application_failure_reviewed` | Нет фиксированного события | Администратор записал причину и снял блокировку; исходная ошибка сохраняется. |
+| Поток событий учётных данных подключён | `credential_stream_connected` | `snapshot` | Клиент подключается и сверяет область через snapshot; это не доказывает успешное применение. |
+| Поток событий учётных данных отключён | `credential_stream_disconnected` | Нет фиксированного события | Поток уведомлений закрыт; само по себе это не означает сбой рабочего соединения. |
+| Этап ротации изменён | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | Фиксирует проверку, ожидание приложения, наблюдение за исходным аккаунтом и итоги; точный этап указан в подробностях. |
+| Начать ротацию аккаунта | `rotation_started` | `rotation.started` | Целевой аккаунт опубликован, переключение началось; ротация ещё не завершена. |
+| Отменить или принудительно завершить ротацию | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | Отмена ожидает подтверждения возврата к исходному аккаунту; принудительное завершение прекращает оставшееся ожидание восстановления. |
+| Смена пароля аккаунта начата | `secret_change_started` | `credential.change.started` | Задание поставлено в очередь или запущено; удалённый пароль ещё мог не измениться. |
+| Смена пароля аккаунта завершена | `secret_change_completed` | `credential.change.completed` | Задание выполнено успешно; это не доказывает применение данных приложениями. |
+| Ошибка смены пароля аккаунта | `secret_change_failed` | `credential.change.failed` | Задание завершилось ошибкой или результат неизвестен; проверьте задание и удалённый аккаунт. |
+| Зарегистрировать экземпляр клиента | `client_registered` | Нет фиксированного события | Зарегистрирован экземпляр SDK или Agent; это не доказывает применение данных. |
+| Включить экземпляр клиента | `client_enabled` | Нет фиксированного события | Возобновляет доступ в рамках существующих разрешений; новые права не выдаются. |
+| Отключить экземпляр клиента | `client_disabled` | Нет фиксированного события | Последующие обращения отклоняются; пароли аккаунтов не изменяются. |
+| Доставка уведомления приложению | `notification` | Нет фиксированного события | Фиксирует доставку Webhook и повторы. Доставка HTTP не доказывает применение данных; фактический код события указан в подробностях. |
+| Сбросить секрет доступа приложения | `application_secret_reset` | Нет фиксированного события | Меняет секрет аутентификации приложения в JumpServer, отдельно от пароля рабочего аккаунта. |
 
 ## Payload fields
 
@@ -422,6 +457,17 @@ Core отправляет snapshot при подключении, перепод
 ## Receipts and business results
 
 SDK автоматически пытается отправить квитанцию received перед передачей бизнес-события. Приложению не нужно отправлять её повторно. Квитанция означает только чтение события, а не применение учётных данных, и не заменяет подтверждение. Сверяйте начальный снимок и снимки при переподключении; snapshot и pong не требуют квитанций.
+
+Результаты: success, failed или skip. Локальный service без app_check отправляет skip после успеха остальных шагов; это не подтверждение применения. failed блокирует следующий этап даже после успешной или пропущенной повторной попытки. Администратор должен разрешить продолжение с указанием причины; исходная ошибка сохраняется.
+
+Для одобрения нужна пользовательская сессия с правом accounts.change_applicationcredential. Передайте текущий failure_id и причину; устаревшие ошибки или версии политики отклоняются. Одобрение фиксируется в аудите, результат клиента сохраняется.
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

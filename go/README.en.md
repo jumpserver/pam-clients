@@ -398,7 +398,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | Source-account observation starts only after all participants confirm or skip application checks and an administrator has approved any failures. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -430,6 +430,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## Activity log and protocol event reference
+
+Activity logs record audit actions; event logs show protocol notifications and commands with delivery and processing status. Audit actions and protocol notifications are different catalogs. One action may produce several records or notifications; related codes below are possible associations, not proof of delivery. Inspect the record details for the actual event and result. Receipt, retrieval, credential application, skip and administrator approval are separate steps. credential_fetched appears in the separate credential retrieval log.
+
+| Activity type | Activity code | Related notifications / messages | Meaning |
+| --- | --- | --- | --- |
+| Send application command | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | An administrator asks selected instances to apply published credentials or restart the application; this does not start a rotation. |
+| Application processing result | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | A client reports credential application or command progress/results. A rotation failure still needs administrator review after a successful retry. |
+| Create integration or rotation configuration | `configuration_created` | `app.scope.updated` | An application or rotation policy was created; scope changes may cause app.scope.updated. |
+| Update integration or rotation configuration | `configuration_updated` | `app.scope.updated` | Application or rotation settings changed; scope changes may cause app.scope.updated. |
+| Delete integration or rotation configuration | `configuration_deleted` | No fixed protocol event | An application or rotation policy was deleted; this is not a credential application result. |
+| Add credential authorization or binding | `authorization_granted` | `credential.refresh.requested` | Credential authorization or a rotation binding was added and a refresh requested; a binding does not expand account access. |
+| Remove credential authorization or binding | `authorization_revoked` | `app.scope.updated` | Authorization or a rotation binding was removed. Release business connections only when account authorization is actually lost. |
+| Fetch credentials | `credential_fetched` | No fixed protocol event | Records a credential retrieval in the separate retrieval log; fetching does not prove business use. |
+| Account secret version updated | `credential_secret_updated` | `credential.secret.updated` | The account password version changed. Applications must fetch and apply it; the selected A/B account does not change. |
+| Publish account switch | `credential_switch_published` | `credential.switch.published` | Publishes the A/B target or return account and policy revision; publication does not prove an application switched. |
+| Request current credential application | `credential_refresh_requested` | `credential.refresh.requested` | Requests fetching and applying the published version; no password change or new rotation is implied. |
+| Republish credential notification | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | Manual refresh or snapshot reconciliation requests applying the current credentials again; the password version may be unchanged. |
+| Confirm new credentials applied | `credential_confirmed` | No fixed protocol event | A client confirms successful application of the current account/policy version, separately from receipt and retrieval. |
+| Skip application check | `credential_confirmation_skipped` | No fixed protocol event | Other delivery steps succeeded and the client reported skip for the optional application check; this is not a passed check. |
+| Administrator approved continuation | `application_failure_reviewed` | No fixed protocol event | An administrator records a reason and releases the instance failure gate; the original failure is retained. |
+| Credential event stream connected | `credential_stream_connected` | `snapshot` | A client connected to the notification stream; snapshot reconciles scope. Connection does not prove application success. |
+| Credential event stream disconnected | `credential_stream_disconnected` | No fixed protocol event | A client left the notification stream; this does not by itself prove a business connection failed. |
+| Rotation stage changed | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | Records verification, application waiting, source-account observation and cycle outcomes; consult details for the actual stage. |
+| Start account rotation | `rotation_started` | `rotation.started` | The target account was published and application switching began; the rotation is not yet complete. |
+| Cancel or force-stop rotation | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | Cancellation publishes the source account and waits for return confirmation; force-stop ends remaining recovery waits. |
+| Account password change started | `secret_change_started` | `credential.change.started` | A password-change task was queued or started; the remote password may not have changed yet. |
+| Account password change completed | `secret_change_completed` | `credential.change.completed` | The password-change task succeeded; this does not prove applications applied the credentials. |
+| Account password change failed | `secret_change_failed` | `credential.change.failed` | The task failed or its outcome is uncertain; inspect the task and remote account. |
+| Register client instance | `client_registered` | No fixed protocol event | An SDK or Agent instance registered; registration does not prove credential application. |
+| Enable client instance | `client_enabled` | No fixed protocol event | The instance can resume access within its existing authorization; no new account authorization is granted. |
+| Disable client instance | `client_disabled` | No fixed protocol event | The instance is disabled and subsequent access is rejected; account passwords are not changed by this action. |
+| Application notification delivery | `notification` | No fixed protocol event | Records webhook delivery and retries. HTTP delivery does not prove credential application; see delivery details for the actual event code. |
+| Reset application access secret | `application_secret_reset` | No fixed protocol event | Resets the application's authentication secret for JumpServer; this is separate from business account password rotation. |
 
 ## Payload fields
 
@@ -463,6 +498,17 @@ Core sends snapshot on connection, reconnection and scope changes. Its credentia
 ## Receipts and business results
 
 The SDK automatically sends a best-effort received receipt before yielding a business event. No additional receipt is required from the application. A receipt means only that the event was read, not that credentials were applied; it does not replace confirmation. Reconcile the initial and reconnect snapshots; snapshot and pong require no receipt.
+
+Results are success, failed or skip. A local service without app_check reports skip after its other stages succeed; this is not application confirmation. A failed result blocks the next stage, even after a successful or skipped retry. An administrator must approve continuation with a reason; the original failure is retained.
+
+Administrator approval uses a user session with accounts.change_applicationcredential. Submit the current failure_id and a reason; superseded failures or policy revisions are rejected. Approval is audited and preserves the client result.
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

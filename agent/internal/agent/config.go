@@ -112,8 +112,9 @@ func (u ConfigUpdate) targetPaths() []string {
 	return u.Targets
 }
 
-// An application check may opt into confirming an alternating rotation only
-// after its trusted local script has verified the running application.
+// An explicit application check may opt into automatic confirmation after its
+// trusted local script succeeds. An omitted check reports skip
+// once the other configured service stages succeed.
 type ApplicationCheck struct {
 	Action
 	ConfirmOnSuccess bool `json:"confirm_on_success,omitempty"`

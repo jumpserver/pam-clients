@@ -237,6 +237,8 @@ curl --fail --silent --show-error \
 
 業務驗證真實連線並完成切換後再確認事件。可用 `app_check` 成功後以 `confirm_on_success: true` 自動確認，或由業務驗證後顯式確認；同步檢查腳本不要反向呼叫確認介面。結果先持久化，`confirmed` 表示 Core 已接受，`pending` 會重試。
 
+結果為 success、failed 或 skip。未設定 app_check 的本地 service 在其他步驟成功後回報 skip，不計為應用已確認。failed 會阻止進入下一階段；重試成功或略過不會自動解除，須由管理員填寫原因並確認繼續，保留原始失敗記錄。
+
 ```bash
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ```
@@ -244,6 +246,8 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ## 6. 業務更新 service
 
 將下方業務物件加入 `services`，各業務使用唯一且穩定的 `name`。service 層的 `allow_account_switch` 預設 false；開啟後，有明確 A/B 關聯者跟隨目前帳號，其他帳號保持固定，只需宣告 A。`update_on_notification` 也在 service 層，預設 true；false 會等定時同步再執行業務動作，預設 300 秒，儲存及授權撤銷不受影響。各業務獨立記錄版本；所有相關業務檢查成功且設定 `app_check.confirm_on_success: true` 後才自動確認輪換。
+
+結果為 success、failed 或 skip。未設定 app_check 的本地 service 在其他步驟成功後回報 skip，不計為應用已確認。failed 會阻止進入下一階段；重試成功或略過不會自動解除，須由管理員填寫原因並確認繼續，保留原始失敗記錄。
 
 業務依 `update_config` → `reload_service` → `app_check` 執行：更新業務設定、重新載入或重啟服務（亦可執行固定腳本）、驗證運行中的業務。新欄位名稱需要新版 PAM Agent；`services` 的這三個步驟僅接受新名稱，舊欄位名稱會報錯。
 
@@ -722,7 +726,7 @@ client.report_status("degraded", account_ids=[account.id], error_code="db_unavai
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
 - `watch_credential_events(stop_event=...)`
-- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
+- `confirm_event(event_id=..., status="success" | "failed" | "skip", error_code=...)`
 - `list_application_commands()` / `execute_application_command(event, handler)`
 - `report_application_command_result(command_id=..., status="running")`
 - `clone()` / `close()`
@@ -829,7 +833,7 @@ credential.secret.updated / credential.switch.published / credential.refresh.req
 | `rotation.verify.cancelled` | 备用账号验证已取消。 |
 | `rotation.started` | 轮换已发布目标账号并进入切换阶段。 |
 | `rotation.waiting_for_app` | 等待必需应用实例完成切换并确认。 |
-| `rotation.source.waiting` | 从发布切换时刻开始观察原主账号的成功取密，与应用切换确认并行进行；两项条件均达标后才允许改密。 |
+| `rotation.source.waiting` | 所有參與實例確認或略過應用驗證，且失敗已由管理員確認後，才開始原主帳號無取密觀察期。 |
 | `rotation.source.ready` | 原主账号无取密窗口和客户端确认条件达标，可以继续改密。 |
 | `rotation.completed` | 原主账号改密已核验，本轮轮换完成。 |
 | `rotation.failed` | 轮换进入改密失败或需要核验恢复的状态。 |
@@ -861,6 +865,41 @@ SDK 和 Agent 管理保活及接收回执。snapshot、pong 无需 received 回�
 | `ping` | 客户端向 Core 发送应用层保活消息。 |
 | `pong` | Core 对应用层 ping 的响应。 |
 | `received` | 客户端确认已读取事件，不表示业务成功。 |
+
+## 活動日誌與協定事件對應
+
+活動日誌記錄稽核動作；事件日誌依協定類型顯示通知、指令及其投遞和處理狀態。稽核動作與協定通知是兩套類型。同一次操作可能產生多筆日誌或通知；下表列出可能的關聯，不代表已投遞，實際事件和結果以記錄詳情為準。收到通知、取得憑據、套用新憑據、略過校驗及管理員確認分開記錄。credential_fetched 另外顯示於取密記錄。
+
+| 活動類型 | 活動代碼 | 相關通知 / 訊息 | 含义 |
+| --- | --- | --- | --- |
+| 傳送應用程式指令 | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | 管理員要求選定執行個體套用已發佈憑據或重新啟動應用程式；不表示發起新的輪換。 |
+| 應用程式處理結果 | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | 用戶端回報憑據套用或手動指令的進度與結果；輪換失敗在重試成功後仍須管理員確認。 |
+| 建立接入或輪換設定 | `configuration_created` | `app.scope.updated` | 建立應用程式或輪換策略；涉及範圍變更時可能傳送 app.scope.updated。 |
+| 修改接入或輪換設定 | `configuration_updated` | `app.scope.updated` | 修改應用程式或輪換設定；涉及範圍變更時可能傳送 app.scope.updated。 |
+| 刪除接入或輪換設定 | `configuration_deleted` | 無固定協定事件 | 刪除應用程式或輪換策略；這不是使用新憑據的結果。 |
+| 新增憑據授權或綁定 | `authorization_granted` | `credential.refresh.requested` | 新增憑據授權或輪換綁定並要求重新整理；綁定本身不擴大帳號存取授權。 |
+| 移除憑據授權或綁定 | `authorization_revoked` | `app.scope.updated` | 移除授權或輪換綁定；只有實際失去帳號授權時，才應釋放業務連線。 |
+| 取得憑據 | `credential_fetched` | 無固定協定事件 | 取密呼叫另外顯示於取密記錄；成功取得不證明業務已使用新憑據。 |
+| 帳號密碼版本更新 | `credential_secret_updated` | `credential.secret.updated` | 帳號密碼版本變更，應用程式應重新取密並套用；不切換目前的 A/B 帳號。 |
+| 發佈帳號切換 | `credential_switch_published` | `credential.switch.published` | 發佈 A/B 目標或還原帳號及策略版本；發佈不代表應用程式已完成切換。 |
+| 要求套用目前憑據 | `credential_refresh_requested` | `credential.refresh.requested` | 要求取得並套用目前發佈版本；不表示密碼已變更或新輪換開始。 |
+| 重新發佈憑據通知 | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | 手動重新整理或快照對帳時，再次要求套用目前憑據；密碼版本未必變更。 |
+| 確認已套用新憑據 | `credential_confirmed` | 無固定協定事件 | 用戶端確認目前帳號或策略版本已成功套用；與事件回執和取密分開記錄。 |
+| 略過應用程式校驗 | `credential_confirmation_skipped` | 無固定協定事件 | 其他交付步驟成功後，用戶端回報 skip 略過選用的應用程式校驗；不表示校驗通過。 |
+| 管理員確認繼續 | `application_failure_reviewed` | 無固定協定事件 | 管理員填寫原因以解除執行個體的失敗阻擋；保留原始失敗，不改寫為校驗成功。 |
+| 憑據事件串流連線 | `credential_stream_connected` | `snapshot` | 用戶端連上通知串流，隨後透過 snapshot 對帳；連線不代表憑據套用成功。 |
+| 憑據事件串流中斷 | `credential_stream_disconnected` | 無固定協定事件 | 用戶端中斷通知串流；本身不表示業務連線失敗。 |
+| 輪換階段變更 | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | 記錄備用帳號校驗、應用程式等待、原帳號取密觀察及週期結果；具體階段請看詳情。 |
+| 開始帳號輪換 | `rotation_started` | `rotation.started` | 目標帳號已發佈，開始應用程式切換流程；輪換尚未完成。 |
+| 取消或強制結束輪換 | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | 一般取消會發佈原帳號並等待還原確認；強制結束會略過剩餘恢復確認。 |
+| 開始帳號改密 | `secret_change_started` | `credential.change.started` | 改密任務已排入佇列或開始執行；遠端密碼可能尚未變更。 |
+| 帳號改密完成 | `secret_change_completed` | `credential.change.completed` | 改密任務成功；不代表業務應用程式已更新憑據。 |
+| 帳號改密失敗 | `secret_change_failed` | `credential.change.failed` | 任務失敗或結果無法確認；需檢查任務和遠端帳號。 |
+| 註冊用戶端執行個體 | `client_registered` | 無固定協定事件 | 註冊 SDK 或 Agent 執行個體；註冊不表示憑據已套用。 |
+| 啟用用戶端執行個體 | `client_enabled` | 無固定協定事件 | 允許執行個體依現有授權恢復存取；不新增帳號授權。 |
+| 停用用戶端執行個體 | `client_disabled` | 無固定協定事件 | 執行個體被停用，後續存取將被拒絕；此操作不修改帳號密碼。 |
+| 應用程式通知投遞 | `notification` | 無固定協定事件 | 記錄 Webhook 投遞與重試；HTTP 送達不代表憑據套用成功，實際事件代碼請看投遞詳情。 |
+| 重設應用程式接入金鑰 | `application_secret_reset` | 無固定協定事件 | 重設應用程式連接 JumpServer 的身分金鑰；不是業務帳號密碼輪換。 |
 
 ## 事件字段
 
@@ -894,6 +933,17 @@ SDK 和 Agent 管理保活及接收回执。snapshot、pong 无需 received 回�
 ## 接收回执与业务结果
 
 SDK 在交出業務事件前自動盡力傳送 received 回執，應用程式無需額外傳送。回執僅表示已讀取事件，不表示憑證已經生效，也不能取代確認。應用程式應處理首次與重新連線快照；snapshot 和 pong 無需回執。
+
+結果為 success、failed 或 skip。未設定 app_check 的本地 service 在其他步驟成功後回報 skip，不計為應用已確認。failed 會阻止進入下一階段；重試成功或略過不會自動解除，須由管理員填寫原因並確認繼續，保留原始失敗記錄。
+
+管理員使用具備 accounts.change_applicationcredential 權限的使用者工作階段確認繼續。提交目前的 failure_id 與原因；過期失敗記錄或策略版本會被拒絕。操作保留稽核，不改寫客戶端結果。
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

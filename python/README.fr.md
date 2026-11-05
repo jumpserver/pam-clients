@@ -237,6 +237,8 @@ curl --fail --silent --show-error \
 
 Confirmez après validation et bascule de la connexion réelle. Utilisez `app_check` avec `confirm_on_success: true` ou une confirmation explicite. N’appelez pas cette API depuis un contrôle synchrone. Le résultat est conservé : `confirmed` signifie accepté par Core ; `pending` sera réessayé.
 
+Les résultats sont success, failed ou skip. Un service local sans app_check signale skip après réussite des autres étapes ; cela ne vaut pas confirmation de l’application. failed bloque l’étape suivante même après une nouvelle tentative réussie ou ignorée. Un administrateur doit autoriser la poursuite avec un motif ; l’échec initial est conservé.
+
 ```bash
 pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ```
@@ -244,6 +246,8 @@ pam-agent confirm '<event-id>' --socket '/run/jms-pam-agent/agent.sock'
 ## 6. Mises à jour de l’application service
 
 Ajoutez les objets ci-dessous à `services`, avec un `name` unique et stable. `allow_account_switch`, au niveau service, vaut false par défaut : true suit le compte actif d’une association A/B non ambiguë ; les autres comptes restent fixes. Déclarer A suffit. `update_on_notification` est aussi au niveau service et vaut true par défaut. False reporte les actions à la prochaine réconciliation, toutes les 300 secondes par défaut ; stockage et révocations restent actifs. Chaque service mémorise ses versions. La rotation n’est confirmée automatiquement qu’après validation de tous les services concernés avec `app_check.confirm_on_success: true`.
+
+Les résultats sont success, failed ou skip. Un service local sans app_check signale skip après réussite des autres étapes ; cela ne vaut pas confirmation de l’application. failed bloque l’étape suivante même après une nouvelle tentative réussie ou ignorée. Un administrateur doit autoriser la poursuite avec un motif ; l’échec initial est conservé.
 
 Les configurations utilisent `update_config` → `reload_service` → `app_check` : modifier le fichier, recharger/redémarrer le service (ou exécuter un script fixe), puis vérifier l’application en cours. Un PAM Agent mis à jour est nécessaire. `services` accepte uniquement ces trois noms d’étapes ; les anciens noms sont refusés.
 
@@ -722,7 +726,7 @@ client.report_status("degraded", account_ids=[account.id], error_code="db_unavai
 - `account.username` / `account.secret` / `account.asset` / `account.from_local`
 - `watch_events(stop_event=...)` / `start_events(stop_event=...)` / `stop_events()`
 - `watch_credential_events(stop_event=...)`
-- `confirm_event(event_id=..., status="success" | "failed", error_code=...)`
+- `confirm_event(event_id=..., status="success" | "failed" | "skip", error_code=...)`
 - `list_application_commands()` / `execute_application_command(event, handler)`
 - `report_application_command_result(command_id=..., status="running")`
 - `clone()` / `close()`
@@ -829,7 +833,7 @@ These notifications explain cycle progress and outcomes. Application switching f
 | `rotation.verify.cancelled` | Backup verification was cancelled. |
 | `rotation.started` | The rotation cycle has published the target account and started switching. |
 | `rotation.waiting_for_app` | Waiting for required application instances to apply and confirm the target. |
-| `rotation.source.waiting` | Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied. |
+| `rotation.source.waiting` | L’observation du compte source commence uniquement après confirmation ou omission du contrôle par tous les participants et validation des échecs par un administrateur. |
 | `rotation.source.ready` | The original account no-fetch window and required client conditions allow password change. |
 | `rotation.completed` | The original account password change was verified and the rotation completed. |
 | `rotation.failed` | Rotation entered a password-change failure or recovery-required state. |
@@ -861,6 +865,41 @@ SDK and Agent manage liveness and receipts. snapshot and pong need no received r
 | `ping` | The client sends an application-level keepalive to Core. |
 | `pong` | Core replies to an application-level ping. |
 | `received` | The client acknowledges reading an event; it does not report business success. |
+
+## Correspondance des activités et événements du protocole
+
+Le journal d’activité consigne les actions d’audit ; celui des événements affiche les notifications et commandes avec leur livraison et traitement. Actions d’audit et notifications sont distinctes. Le tableau indique des associations possibles, pas une livraison confirmée ; consultez les détails. Réception, récupération, application, omission et approbation sont séparées. credential_fetched figure dans le journal de récupération.
+
+| Type d’activité | Code d’activité | Notifications / messages associés | Meaning |
+| --- | --- | --- | --- |
+| Envoyer une commande d’application | `command_requested` | `credential.switch.requested`<br>`app.restart.requested` | Demande aux instances choisies d’appliquer les identifiants publiés ou de redémarrer ; ne lance pas de rotation. |
+| Résultat du traitement de l’application | `command_result` | `credential.secret.updated`<br>`credential.switch.published`<br>`credential.refresh.requested`<br>`credential.switch.requested`<br>`app.restart.requested` | Le client rapporte progression et résultat des identifiants ou commandes. Un échec de rotation exige une validation même après une nouvelle tentative réussie. |
+| Créer une configuration d’intégration ou de rotation | `configuration_created` | `app.scope.updated` | Crée une application ou une politique ; un changement de périmètre peut produire app.scope.updated. |
+| Modifier une configuration d’intégration ou de rotation | `configuration_updated` | `app.scope.updated` | Modifie les paramètres ; un changement de périmètre peut produire app.scope.updated. |
+| Supprimer une configuration d’intégration ou de rotation | `configuration_deleted` | Aucun événement fixe | Supprime une application ou une politique ; ce n’est pas un résultat d’application des identifiants. |
+| Ajouter une autorisation ou une liaison d’identifiants | `authorization_granted` | `credential.refresh.requested` | Ajoute une autorisation ou liaison de rotation et demande une actualisation ; la liaison n’élargit pas les droits du compte. |
+| Retirer une autorisation ou une liaison d’identifiants | `authorization_revoked` | `app.scope.updated` | Retire une autorisation ou liaison. Libérez les connexions métier uniquement si l’autorisation du compte est réellement perdue. |
+| Récupérer les identifiants | `credential_fetched` | Aucun événement fixe | Figure dans le journal de récupération séparé ; récupérer ne prouve pas l’utilisation métier. |
+| Version du mot de passe du compte mise à jour | `credential_secret_updated` | `credential.secret.updated` | La version a changé et doit être récupérée puis appliquée ; le compte A/B sélectionné ne change pas. |
+| Publier un changement de compte | `credential_switch_published` | `credential.switch.published` | Publie le compte cible ou de retour et la révision ; ne prouve pas le basculement de l’application. |
+| Demander l’application des identifiants actuels | `credential_refresh_requested` | `credential.refresh.requested` | Demande de récupérer et appliquer la version publiée ; n’implique ni nouveau mot de passe ni nouvelle rotation. |
+| Republier la notification d’identifiants | `credential_republished` | `credential.refresh.requested`<br>`snapshot` | L’actualisation manuelle ou la réconciliation snapshot redemande l’application ; le mot de passe peut être inchangé. |
+| Confirmer les nouveaux identifiants appliqués | `credential_confirmed` | Aucun événement fixe | Le client confirme l’application de la version actuelle, séparément de la réception et de la récupération. |
+| Ignorer le contrôle de l’application | `credential_confirmation_skipped` | Aucun événement fixe | Les autres étapes ont réussi et le client rapporte skip pour le contrôle facultatif ; ce n’est pas un contrôle réussi. |
+| Poursuite approuvée par l’administrateur | `application_failure_reviewed` | Aucun événement fixe | L’administrateur consigne un motif et lève le blocage ; l’échec initial est conservé. |
+| Flux d’événements d’identifiants connecté | `credential_stream_connected` | `snapshot` | Le client se connecte et réconcilie le périmètre avec snapshot ; ne prouve pas l’application réussie. |
+| Flux d’événements d’identifiants déconnecté | `credential_stream_disconnected` | Aucun événement fixe | Le flux de notifications est coupé ; cela ne prouve pas un échec de connexion métier. |
+| Étape de rotation modifiée | `rotation_step` | `rotation.verify.started`<br>`rotation.verify.skipped`<br>`rotation.verify.failed`<br>`rotation.verify.cancelled`<br>`rotation.waiting_for_app`<br>`rotation.source.waiting`<br>`rotation.source.ready`<br>`rotation.completed`<br>`rotation.failed` | Enregistre vérification, attente de l’application, observation du compte source et résultats ; l’étape précise figure dans les détails. |
+| Démarrer la rotation du compte | `rotation_started` | `rotation.started` | La cible est publiée et le basculement commence ; la rotation n’est pas terminée. |
+| Annuler ou arrêter de force la rotation | `rotation_cancelled` | `credential.switch.published`<br>`rotation.force_stopped` | L’annulation attend la confirmation de retour au compte source ; l’arrêt forcé omet les attentes de récupération restantes. |
+| Changement du mot de passe du compte démarré | `secret_change_started` | `credential.change.started` | La tâche est en attente ou démarrée ; le mot de passe distant peut être inchangé. |
+| Changement du mot de passe du compte terminé | `secret_change_completed` | `credential.change.completed` | La tâche a réussi ; cela ne prouve pas la mise à jour des applications. |
+| Échec du changement du mot de passe du compte | `secret_change_failed` | `credential.change.failed` | La tâche a échoué ou le résultat est incertain ; inspectez la tâche et le compte distant. |
+| Enregistrer une instance cliente | `client_registered` | Aucun événement fixe | Une instance SDK ou Agent est enregistrée ; cela ne prouve pas l’application des identifiants. |
+| Activer une instance cliente | `client_enabled` | Aucun événement fixe | Rétablit l’accès dans les droits existants ; n’accorde aucune nouvelle autorisation. |
+| Désactiver une instance cliente | `client_disabled` | Aucun événement fixe | Les accès ultérieurs sont refusés ; cette action ne change pas les mots de passe. |
+| Livraison de notification d’application | `notification` | Aucun événement fixe | Enregistre livraisons et nouvelles tentatives Webhook. La livraison HTTP ne prouve pas l’application des identifiants ; le code réel figure dans les détails. |
+| Réinitialiser le secret d’accès de l’application | `application_secret_reset` | Aucun événement fixe | Réinitialise le secret d’authentification auprès de JumpServer, distinct du mot de passe du compte métier. |
 
 ## Payload fields
 
@@ -894,6 +933,17 @@ Core envoie snapshot à la connexion, à la reconnexion et lors des changements 
 ## Receipts and business results
 
 Le SDK tente automatiquement d’envoyer un accusé received avant de transmettre un événement métier. L’application n’a pas à le renvoyer. Il indique uniquement la lecture, pas l’application des identifiants, et ne remplace pas la confirmation. Réconciliez les snapshots initiaux et de reconnexion ; snapshot et pong ne nécessitent aucun accusé.
+
+Les résultats sont success, failed ou skip. Un service local sans app_check signale skip après réussite des autres étapes ; cela ne vaut pas confirmation de l’application. failed bloque l’étape suivante même après une nouvelle tentative réussie ou ignorée. Un administrateur doit autoriser la poursuite avec un motif ; l’échec initial est conservé.
+
+La validation utilise une session utilisateur avec accounts.change_applicationcredential. Envoyez le failure_id actuel et un motif ; les échecs ou révisions de politique obsolètes sont rejetés. La validation est auditée et préserve le résultat du client.
+
+```http
+POST /api/v1/accounts/application-credentials/<policy-id>/review-application-failure/
+Content-Type: application/json
+
+{"client_id": "<client-id>", "failure_id": "<current-failure-id>", "reason": "<review-reason>"}
+```
 
 ```json
 {"event": "received", "event_id": "<event-id>"}

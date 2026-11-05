@@ -34,7 +34,7 @@
   "application_info": "get_application trả ID, tên, tổ chức và số tài khoản được cấp quyền cùng chính sách hiển thị của ứng dụng đã ký. get_client_info chỉ trả đăng ký, loại và phiên bản của bản sao hiện tại. Danh sách trả toàn bộ chính sách liên kết hiển thị, gồm chính sách vô hiệu; search tìm theo tên hoặc key. Truy vấn chính sách bằng ID hoặc key của chính sách, không dùng key push tài khoản. Chính sách luân phiên yêu cầu quyền cho cả hai tài khoản và tài khoản đang hoạt động; số tài khoản đăng ký chỉ tính tài khoản được cấp quyền. Không trả bí mật, lấy hay xác nhận thông tin xác thực. Lần truy cập đầu đăng ký bản sao. Cần Core và mã SDK mới; bản 1.0.2 đã phát hành chưa có phương thức này.",
   "methods": "Phương thức thông dụng",
   "sdk_errors": "with hoặc close đóng phiên HTTP và luồng sự kiện; clone tạo phiên độc lập. Lỗi HTTP, mạng, xác thực và phân tích tạo PAMError có code, status_code, detail, original_error. Thử lại lỗi tạm thời tại ranh giới ứng dụng, xử lý rõ việc từ chối quyền và không ghi thông tin xác thực.",
-  "sdk_receipts": "SDK tự động cố gắng gửi biên nhận received trước khi trả về sự kiện nghiệp vụ. Ứng dụng không cần gửi thêm. Biên nhận chỉ cho biết đã đọc sự kiện, không có nghĩa là đã áp dụng thông tin xác thực và không thay thế xác nhận. Đối chiếu snapshot ban đầu và khi kết nối lại; snapshot và pong không cần biên nhận.",
+  "sdk_receipts": "SDK tự động cố gắng gửi biên nhận received trước khi trả về sự kiện nghiệp vụ. Ứng dụng không cần gửi thêm. Biên nhận chỉ cho biết đã đọc sự kiện, không có nghĩa là đã áp dụng thông tin xác thực và không thay thế xác nhận. Đối chiếu snapshot ban đầu và khi kết nối lại; snapshot và pong không cần biên nhận.\n\nKết quả là success, failed hoặc skip. Service cục bộ không có app_check báo skip khi các bước khác thành công, không tính là ứng dụng đã xác nhận. failed chặn bước tiếp theo dù thử lại thành công hoặc bỏ qua. Quản trị viên phải duyệt tiếp tục kèm lý do; lỗi gốc được giữ lại.",
   "native_intro": "Triển khai hàm xử lý thay đổi tài khoản rồi bắt đầu bộ lắng nghe được quản lý. SDK xử lý ảnh chụp trạng thái, lấy dữ liệu trực tiếp, kiểm tra tài khoản và phiên bản, thử lại, nhận quyền thực thi lệnh và báo cáo kết quả. Chỉ trả về sau khi kiểm tra kết nối thật, chuyển nhóm kết nối và giải phóng kết nối cũ. Python và Node.js dùng lớp con, Go dùng OnAccountChanged, Java dùng AccountEventListener. Ví dụ sẽ thất bại cho đến khi triển khai chuyển đổi thực tế.",
   "native_setup": "Install the SDK below and use the identity configuration downloaded from the application access wizard. Protect AK/SK and assign each replica a stable, unique instance ID.",
   "native_events": "Triển khai hàm xử lý thay đổi tài khoản rồi bắt đầu bộ lắng nghe được quản lý. SDK xử lý ảnh chụp trạng thái, lấy dữ liệu trực tiếp, kiểm tra tài khoản và phiên bản, thử lại, nhận quyền thực thi lệnh và báo cáo kết quả. Chỉ trả về sau khi kiểm tra kết nối thật, chuyển nhóm kết nối và giải phóng kết nối cũ. Python và Node.js dùng lớp con, Go dùng OnAccountChanged, Java dùng AccountEventListener. Ví dụ sẽ thất bại cho đến khi triển khai chuyển đổi thực tế.",
@@ -75,7 +75,7 @@
   "agent_validation": "1. Verify the instance is online and its authorized account scope is correct.\n2. Enable application notifications, change an authorized account credential and check its version in the delivered file or Socket. Inspect per-instance receipts and results in the application event history.\n3. For A/B switching, verify that the running application uses the new account and releases old connections before confirming success. Receipt, fetch and delivery do not prove business success.",
   "sdk_workflow": "Chỉ pull thì hoàn thành truy vấn đầu tiên. Push và A/B cần callback nghiệp vụ và lắng nghe. SDK xử lý giao thức và kết quả; ứng dụng đổi kết nối thực. Ví dụ theo mã nguồn hiện tại, cần bản Core/SDK tương thích. Gói 1.0.2 đã phát hành chưa có mọi API mới.",
   "sdk_validation": "1. Lấy tài khoản được cấp quyền và thử kết nối thực.\n2. Kiểm tra đồng bộ ban đầu và cập nhật; callback phải hoàn tất chuyển đổi trước khi báo thành công.\n3. Kiểm tra trạng thái/sử dụng và kết quả sự kiện riêng. Lấy mật khẩu hoặc báo sử dụng không xác nhận áp dụng.",
-  "agent_confirmation": "Chỉ xác nhận sau khi kiểm tra và đổi kết nối thực. Dùng `app_check` với `confirm_on_success: true` hoặc xác nhận tường minh. Không gọi API xác nhận từ script kiểm tra đồng bộ. Kết quả lưu trước: `confirmed` đã được Core chấp nhận, `pending` sẽ thử lại.",
+  "agent_confirmation": "Chỉ xác nhận sau khi kiểm tra và đổi kết nối thực. Dùng `app_check` với `confirm_on_success: true` hoặc xác nhận tường minh. Không gọi API xác nhận từ script kiểm tra đồng bộ. Kết quả lưu trước: `confirmed` đã được Core chấp nhận, `pending` sẽ thử lại.\n\nKết quả là success, failed hoặc skip. Service cục bộ không có app_check báo skip khi các bước khác thành công, không tính là ứng dụng đã xác nhận. failed chặn bước tiếp theo dù thử lại thành công hoặc bỏ qua. Quản trị viên phải duyệt tiếp tục kèm lý do; lỗi gốc được giữ lại.",
   "foreground_title": "Chạy tiền cảnh",
   "source_install_title": "Cài mã nguồn cục bộ (thay thế)",
   "source_install": "Nếu Core chưa cung cấp API tải mã nguồn hoặc triển khai ngoại tuyến, đặt mã nguồn tương thích ở `/path/to/pam-clients` rồi chạy trong thư mục ứng dụng. Thay bằng đường dẫn thực.",
@@ -88,7 +88,7 @@
   "agent_default_output_title": "store",
   "store_model": "`store` and `services` are independent. `store.accounts` is a string array: `[\"all\"]` stores every authorized account, or list specific account IDs. Application notifications cover all authorized accounts when enabled. Local declarations control storage and business actions. On-demand access and scheduled synchronization also work with notifications disabled. Omit `store` for services-only use; an empty array stores nothing. Never combine `all` with IDs.",
   "store_layout": "Mỗi tài khoản, kể cả A và B, có tệp riêng theo account_id. Tệp chứa thông tin xác thực dạng rõ với quyền 0600. Tài khoản không hoạt động đang đổi mật khẩu tạm thời không khả dụng. Đối soát quyền sẽ xóa tệp bị thu hồi. Phiên bản không đổi chỉ đọc siêu dữ liệu; lần lấy bí mật thực tế vẫn được kiểm toán và tính vào quan sát luân chuyển.",
-  "services_model": "Thêm các đối tượng dưới đây vào `services` với `name` duy nhất, ổn định. `allow_account_switch` ở cấp dịch vụ mặc định false: true theo tài khoản hiện hành của liên kết A/B rõ ràng; tài khoản khác giữ cố định. Chỉ cần khai báo A. `update_on_notification` cũng ở cấp dịch vụ, mặc định true. False đợi lần đối soát định kỳ tiếp theo, mặc định 300 giây; lưu trữ và thu hồi quyền vẫn hoạt động. Mỗi dịch vụ lưu phiên bản riêng. Chỉ tự xác nhận luân chuyển khi tất cả dịch vụ liên quan kiểm tra thành công với `app_check.confirm_on_success: true`.",
+  "services_model": "Thêm các đối tượng dưới đây vào `services` với `name` duy nhất, ổn định. `allow_account_switch` ở cấp dịch vụ mặc định false: true theo tài khoản hiện hành của liên kết A/B rõ ràng; tài khoản khác giữ cố định. Chỉ cần khai báo A. `update_on_notification` cũng ở cấp dịch vụ, mặc định true. False đợi lần đối soát định kỳ tiếp theo, mặc định 300 giây; lưu trữ và thu hồi quyền vẫn hoạt động. Mỗi dịch vụ lưu phiên bản riêng. Chỉ tự xác nhận luân chuyển khi tất cả dịch vụ liên quan kiểm tra thành công với `app_check.confirm_on_success: true`.\n\nKết quả là success, failed hoặc skip. Service cục bộ không có app_check báo skip khi các bước khác thành công, không tính là ứng dụng đã xác nhận. failed chặn bước tiếp theo dù thử lại thành công hoặc bỏ qua. Quản trị viên phải duyệt tiếp tục kèm lý do; lỗi gốc được giữ lại.",
   "aliases_model": "Trong `services.accounts`, dùng `id` để chọn tài khoản. Một tài khoản có thể dùng trực tiếp `username` / `secret`. Nhiều tài khoản cần alias duy nhất và tham chiếu như `database.username`, `cache.secret`. Alias không đổi khi chuyển A/B. `username` tùy chọn chỉ để đọc; giá trị thật lấy từ Core. Phải có đủ tài khoản trước khi ghi tệp, sau đó thực hiện hành động dịch vụ một lần. Ánh xạ thiếu hoặc mơ hồ phải báo lỗi trước khi sửa.",
   "services_upgrade": "Core và PAM Agent dùng giao thức 1 và `version: 1`. Cấu hình `store` và `services` độc lập, không trộn với cấu trúc cũ `delivery` / `rules`. Core đồng bộ phạm vi tài khoản và phiên bản, không gửi đường dẫn thực thi cục bộ. Khởi động lại PAM Agent sau khi sửa cấu hình riêng.",
   "services_portable": "Trên macOS, Windows hoặc Linux không có root, chạy `init-local` một lần rồi dùng lại cấu hình riêng bằng `run --local`. Hỗ trợ JSON và tệp môi trường; systemd chỉ dùng với dịch vụ Linux.",
@@ -153,7 +153,7 @@
   "protocol_event_rotation_verify_cancelled": "Backup verification was cancelled.",
   "protocol_event_rotation_started": "The rotation cycle has published the target account and started switching.",
   "protocol_event_rotation_waiting_for_app": "Waiting for required application instances to apply and confirm the target.",
-  "protocol_event_rotation_source_waiting": "Observe successful secret fetches for the original account from switch publication onward, in parallel with application confirmation. Password change requires both conditions to be satisfied.",
+  "protocol_event_rotation_source_waiting": "Chỉ bắt đầu theo dõi tài khoản nguồn sau khi mọi phiên bản xác nhận hoặc bỏ qua kiểm tra ứng dụng và quản trị viên đã duyệt các lỗi.",
   "protocol_event_rotation_source_ready": "The original account no-fetch window and required client conditions allow password change.",
   "protocol_event_rotation_completed": "The original account password change was verified and the rotation completed.",
   "protocol_event_rotation_failed": "Rotation entered a password-change failure or recovery-required state.",
@@ -187,5 +187,126 @@
   "curl_intro": "Use signed HTTP requests to fetch the current credentials for an application-authorized account.",
   "curl_config": "Set the server, application identity, organization, instance ID and account ID.",
   "curl_response": "The response contains the account, asset and credential revision. Secrets are returned only by the signed credential-fetch API.",
-  "curl_errors": "Check identity, authorization, signature and instance ID."
+  "curl_errors": "Check identity, authorization, signature and instance ID.",
+  "protocol_failure_review": "Quản trị viên dùng phiên người dùng có quyền accounts.change_applicationcredential. Gửi failure_id hiện tại và lý do; lỗi hoặc phiên bản chính sách lỗi thời sẽ bị từ chối. Việc duyệt được ghi nhật ký và giữ nguyên kết quả khách hàng.",
+  "audit_catalog_title": "Đối chiếu hoạt động và sự kiện giao thức",
+  "audit_catalog_intro": "Nhật ký hoạt động ghi thao tác kiểm toán; nhật ký sự kiện hiển thị thông báo và lệnh cùng trạng thái giao và xử lý. Thao tác kiểm toán và thông báo là hai danh mục khác nhau. Bảng chỉ nêu liên hệ có thể có, không xác nhận đã giao; xem sự kiện và kết quả thực trong chi tiết. Biên nhận, lấy, áp dụng, bỏ qua và duyệt được ghi riêng. credential_fetched nằm trong nhật ký lấy thông tin.",
+  "audit_type_label": "Loại hoạt động",
+  "audit_code_label": "Mã hoạt động",
+  "audit_protocol_label": "Thông báo / thông điệp liên quan",
+  "audit_no_protocol": "Không có sự kiện giao thức cố định",
+  "audit_events": {
+    "command_requested": {
+      "name": "Gửi lệnh ứng dụng",
+      "meaning": "Yêu cầu phiên bản được chọn áp dụng thông tin đã công bố hoặc khởi động lại; không bắt đầu vòng luân chuyển mới."
+    },
+    "command_result": {
+      "name": "Kết quả xử lý ứng dụng",
+      "meaning": "Máy khách báo tiến độ và kết quả áp dụng hoặc lệnh. Lỗi luân chuyển vẫn cần quản trị viên duyệt dù thử lại thành công."
+    },
+    "configuration_created": {
+      "name": "Tạo cấu hình tích hợp hoặc luân chuyển",
+      "meaning": "Tạo ứng dụng hoặc chính sách; thay đổi phạm vi có thể phát app.scope.updated."
+    },
+    "configuration_updated": {
+      "name": "Sửa cấu hình tích hợp hoặc luân chuyển",
+      "meaning": "Thay đổi thiết lập; thay đổi phạm vi có thể phát app.scope.updated."
+    },
+    "configuration_deleted": {
+      "name": "Xóa cấu hình tích hợp hoặc luân chuyển",
+      "meaning": "Xóa ứng dụng hoặc chính sách; không phải kết quả áp dụng thông tin đăng nhập."
+    },
+    "authorization_granted": {
+      "name": "Thêm quyền hoặc liên kết thông tin đăng nhập",
+      "meaning": "Thêm quyền hoặc liên kết luân chuyển và yêu cầu làm mới; liên kết không mở rộng quyền tài khoản."
+    },
+    "authorization_revoked": {
+      "name": "Gỡ quyền hoặc liên kết thông tin đăng nhập",
+      "meaning": "Gỡ quyền hoặc liên kết. Chỉ giải phóng kết nối nghiệp vụ khi thực sự mất quyền tài khoản."
+    },
+    "credential_fetched": {
+      "name": "Lấy thông tin đăng nhập",
+      "meaning": "Ghi trong nhật ký lấy riêng; lấy thành công không chứng minh nghiệp vụ đã sử dụng."
+    },
+    "credential_secret_updated": {
+      "name": "Cập nhật phiên bản mật khẩu tài khoản",
+      "meaning": "Phiên bản thay đổi và cần được lấy rồi áp dụng; không đổi tài khoản A/B đang chọn."
+    },
+    "credential_switch_published": {
+      "name": "Công bố chuyển tài khoản",
+      "meaning": "Công bố tài khoản đích hoặc quay về cùng phiên bản chính sách; không chứng minh ứng dụng đã chuyển."
+    },
+    "credential_refresh_requested": {
+      "name": "Yêu cầu áp dụng thông tin hiện tại",
+      "meaning": "Yêu cầu lấy và áp dụng phiên bản công bố; không có nghĩa mật khẩu đổi hoặc vòng luân chuyển mới bắt đầu."
+    },
+    "credential_republished": {
+      "name": "Công bố lại thông báo thông tin đăng nhập",
+      "meaning": "Làm mới thủ công hoặc đối soát snapshot yêu cầu áp dụng lại; phiên bản mật khẩu có thể không đổi."
+    },
+    "credential_confirmed": {
+      "name": "Xác nhận đã áp dụng thông tin mới",
+      "meaning": "Máy khách xác nhận áp dụng phiên bản hiện tại; tách biệt với biên nhận và việc lấy thông tin."
+    },
+    "credential_confirmation_skipped": {
+      "name": "Bỏ qua kiểm tra ứng dụng",
+      "meaning": "Các bước giao khác thành công và máy khách báo skip cho kiểm tra tùy chọn; không phải kiểm tra đạt."
+    },
+    "application_failure_reviewed": {
+      "name": "Quản trị viên duyệt tiếp tục",
+      "meaning": "Quản trị viên ghi lý do và gỡ chặn do lỗi; giữ nguyên bản ghi lỗi gốc."
+    },
+    "credential_stream_connected": {
+      "name": "Kết nối luồng sự kiện thông tin đăng nhập",
+      "meaning": "Máy khách kết nối và đối soát phạm vi qua snapshot; không chứng minh áp dụng thành công."
+    },
+    "credential_stream_disconnected": {
+      "name": "Ngắt luồng sự kiện thông tin đăng nhập",
+      "meaning": "Luồng thông báo bị ngắt; riêng việc này không chứng minh kết nối nghiệp vụ lỗi."
+    },
+    "rotation_step": {
+      "name": "Thay đổi giai đoạn luân chuyển",
+      "meaning": "Ghi kiểm tra, chờ ứng dụng, theo dõi tài khoản nguồn và kết quả; xem giai đoạn cụ thể trong chi tiết."
+    },
+    "rotation_started": {
+      "name": "Bắt đầu luân chuyển tài khoản",
+      "meaning": "Đã công bố tài khoản đích và bắt đầu chuyển ứng dụng; vòng luân chuyển chưa hoàn tất."
+    },
+    "rotation_cancelled": {
+      "name": "Hủy hoặc buộc kết thúc luân chuyển",
+      "meaning": "Hủy sẽ chờ xác nhận quay về tài khoản nguồn; buộc kết thúc sẽ bỏ các lần chờ phục hồi còn lại."
+    },
+    "secret_change_started": {
+      "name": "Bắt đầu đổi mật khẩu tài khoản",
+      "meaning": "Tác vụ đã xếp hàng hoặc bắt đầu; mật khẩu từ xa có thể chưa đổi."
+    },
+    "secret_change_completed": {
+      "name": "Hoàn tất đổi mật khẩu tài khoản",
+      "meaning": "Tác vụ thành công; không chứng minh ứng dụng đã áp dụng thông tin đăng nhập."
+    },
+    "secret_change_failed": {
+      "name": "Đổi mật khẩu tài khoản thất bại",
+      "meaning": "Tác vụ lỗi hoặc kết quả chưa rõ; kiểm tra tác vụ và tài khoản từ xa."
+    },
+    "client_registered": {
+      "name": "Đăng ký phiên bản máy khách",
+      "meaning": "Đăng ký phiên bản SDK hoặc Agent; không chứng minh áp dụng thông tin đăng nhập."
+    },
+    "client_enabled": {
+      "name": "Bật phiên bản máy khách",
+      "meaning": "Khôi phục truy cập trong quyền hiện có; không cấp quyền tài khoản mới."
+    },
+    "client_disabled": {
+      "name": "Tắt phiên bản máy khách",
+      "meaning": "Các lần truy cập tiếp theo bị từ chối; thao tác này không đổi mật khẩu tài khoản."
+    },
+    "notification": {
+      "name": "Giao thông báo ứng dụng",
+      "meaning": "Ghi giao Webhook và thử lại. Giao HTTP không chứng minh áp dụng thành công; xem mã sự kiện thực trong chi tiết."
+    },
+    "application_secret_reset": {
+      "name": "Đặt lại khóa truy cập ứng dụng",
+      "meaning": "Đổi khóa xác thực ứng dụng với JumpServer; tách biệt với mật khẩu tài khoản nghiệp vụ."
+    }
+  }
 }
