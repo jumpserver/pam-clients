@@ -19,7 +19,7 @@
 通过下方命令安装当前 Core 随附的客户端源码，避免已发布的 1.0.2 包缺少托管回调。将 jumpserver.example.com 替换为 Core 地址；保留解压后的 jms-pam-clients 目录，Go 模块使用本地替换路径。
 
 ```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/java/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-java-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz &&
 mvn -f ./jms-pam-clients/java/pom.xml install
 ```
@@ -28,7 +28,7 @@ mvn -f ./jms-pam-clients/java/pom.xml install
 <dependency>
   <groupId>org.jumpserver</groupId>
   <artifactId>jms-pam</artifactId>
-  <version>1.0.2</version>
+  <version>1.0.3</version>
 </dependency>
 ```
 
@@ -685,7 +685,7 @@ Python 示例使用 websockets，不依赖 JumpServer SDK。默认仅观察元�
 
 ```bash
 python3 -m pip install 'websockets>=11'
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/socket/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-socket-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz
 cd ./jms-pam-clients/socket
 python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders

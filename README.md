@@ -147,9 +147,10 @@ CLI 提供 `get_accounts` 和 `get_secret ACCOUNT_ID`，通过运行中的 PAM A
 本仓库独立维护 Python、Go、Java、Node.js、cURL SDK 和 PAM Agent。
 客户端协议版本为 1；客户端版本独立于 JumpServer 服务端版本。
 
-推送 `vX.Y.Z` tag 后，Release CI 测试 Go 客户端并编译 Linux amd64 / arm64 PAM Agent，
-同时打包各 SDK 源码，上传到草稿 Release。完整协议测试由 SDK contracts CI 执行。
-发布前检查两项 CI 均通过，然后发布草稿。当前稳定版本为 `1.0.2`。
+推送 `vX.Y.Z` tag 后，Release CI 测试 PAM Agent，并为 Linux、macOS、Windows 的 amd64 / arm64 架构构建二进制。
+统一构建脚本还生成 Python wheel / sdist、各 SDK 源码包、manifest 和 SHA256SUMS，上传到草稿 Release。
+完整协议测试由 SDK contracts CI 执行。发布前检查 CI 均通过，然后发布草稿。
+当前源码版本为 `1.0.3`（待发布）；PyPI 已发布版本仍为 `1.0.2`。
 Go 模块位于 `github.com/jumpserver/pam-clients/go`；Go 子模块使用 `go/vX.Y.Z` tag，
 需要通过 Go 模块代理分发时，应同时创建该 tag。
 
@@ -161,7 +162,19 @@ git submodule update --init --recursive apps/accounts/clients
 
 后端继续从原路径读取文档和示例。更新客户端时，在 submodule 中检出指定版本，
 然后在 JumpServer 提交新的 gitlink。构建后端镜像前必须初始化 submodule。
-docker-web 使用独立的 `pam-agent-version.txt` 从本仓库 Release 下载二进制。
+Core 的 Dockerfile 在独立构建阶段运行 `distribution.py`，将产物复制到
+`apps/static/pam/<客户端版本>/`；启动时由 collectstatic 收集到 `data/static/pam/`，由 docker-web 的 Nginx 提供下载。
+docker-web 不再单独固定或下载 PAM 客户端版本。接入向导默认使用随 Core 镜像交付的 wheel、源码包及校验过的 Agent。
+
+本地构建同一批产物：
+
+```bash
+python3 -m pip install build setuptools wheel
+python3 distribution.py --output dist
+```
+
+输出到 `dist/<客户端版本>/`。`--platforms linux/amd64,linux/arm64` 可缩小本地验证范围；镜像和 Release 默认包含全部六个平台。
+脚本拒绝覆盖已有版本目录，失败时不会留下可下载的半成品。`SHA256SUMS` 覆盖所有发行文件和 manifest。
 
 ## PAM Agent 与 Go SDK
 

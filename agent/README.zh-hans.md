@@ -12,7 +12,7 @@
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/pam-agent-linux-amd64) · [Linux ARM64](/download/pam/pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+[Linux x86_64 (amd64)](/static/pam/1.0.3/pam-agent-linux-amd64) · [Linux ARM64](/static/pam/1.0.3/pam-agent-linux-arm64) · [SHA256SUMS](/static/pam/1.0.3/SHA256SUMS)
 
 ```bash
 # 在下载的 PAM Agent 和 SHA256SUMS 所在目录执行。
@@ -24,6 +24,8 @@ esac
 sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./pam-agent-linux-${agent_arch}" /usr/local/bin/pam-agent
 ```
+
+[macOS amd64](/static/pam/1.0.3/pam-agent-darwin-amd64) · [macOS arm64](/static/pam/1.0.3/pam-agent-darwin-arm64) · [Windows amd64](/static/pam/1.0.3/pam-agent-windows-amd64.exe) · [Windows arm64](/static/pam/1.0.3/pam-agent-windows-arm64.exe)
 
 在下载的 `pam-agent.json` 所在目录执行。下方 Linux 服务命令需要 root 和 systemd。前台运行时使用与主机系统和架构匹配的可执行文件。
 

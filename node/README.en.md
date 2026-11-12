@@ -19,7 +19,7 @@ Install the SDK below and use the identity configuration downloaded from the app
 Install the client source shipped by the same Core using the commands below; released v1.0.2 packages do not include managed callbacks. Replace jumpserver.example.com with your Core address. Keep the extracted jms-pam-clients directory with your application, including the Go module replacement path.
 
 ```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/node/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-node-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz &&
 npm install ./jms-pam-clients/node
 ```
@@ -690,7 +690,7 @@ The Python example uses websockets, not a JumpServer SDK. By default it only obs
 
 ```bash
 python3 -m pip install 'websockets>=11'
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/socket/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-socket-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz
 cd ./jms-pam-clients/socket
 python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders

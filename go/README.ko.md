@@ -19,10 +19,10 @@ Install the SDK below and use the identity configuration downloaded from the app
 아래 명령으로 같은 Core에 포함된 클라이언트 소스를 설치하세요. 배포된 1.0.2에는 관리형 콜백이 없습니다. jumpserver.example.com을 Core 주소로 바꾸고 Go 로컬 대체 경로를 포함한 jms-pam-clients 디렉터리를 보관하세요.
 
 ```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/go/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-go-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz &&
 go mod edit -replace github.com/jumpserver/pam-clients/go=./jms-pam-clients/go &&
-go get github.com/jumpserver/pam-clients/go@v1.0.2
+go get github.com/jumpserver/pam-clients/go@v1.0.3
 ```
 
 ```go
@@ -726,7 +726,7 @@ The Python example uses websockets, not a JumpServer SDK. By default it only obs
 
 ```bash
 python3 -m pip install 'websockets>=11'
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/socket/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-socket-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz
 cd ./jms-pam-clients/socket
 python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders

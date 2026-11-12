@@ -18,7 +18,7 @@ Python 3.9+ は認証情報ポリシー SDK を提供します。Go 製 pam-agen
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/pam-agent-linux-amd64) · [Linux ARM64](/download/pam/pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+[Linux x86_64 (amd64)](/static/pam/1.0.3/pam-agent-linux-amd64) · [Linux ARM64](/static/pam/1.0.3/pam-agent-linux-arm64) · [SHA256SUMS](/static/pam/1.0.3/SHA256SUMS)
 
 ```bash
 # Run in the directory containing the downloaded PAM Agent and SHA256SUMS.
@@ -30,6 +30,8 @@ esac
 sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./pam-agent-linux-${agent_arch}" /usr/local/bin/pam-agent
 ```
+
+[macOS amd64](/static/pam/1.0.3/pam-agent-darwin-amd64) · [macOS arm64](/static/pam/1.0.3/pam-agent-darwin-arm64) · [Windows amd64](/static/pam/1.0.3/pam-agent-windows-amd64.exe) · [Windows arm64](/static/pam/1.0.3/pam-agent-windows-arm64.exe)
 
 取得した `pam-agent.json` のディレクトリで実行します。以下の Linux サービスコマンドには root と systemd が必要です。フォアグラウンド実行では OS とアーキテクチャに対応する実行ファイルを使用します。
 
@@ -555,9 +557,7 @@ pull のみなら最初の取得までで十分です。push や A/B には業�
 以下のコマンドで同じ Core に同梱されたクライアントソースをインストールします。公開済み 1.0.2 には管理コールバックがありません。jumpserver.example.com を Core のアドレスに置き換え、Go のローカル置換パスを含む jms-pam-clients ディレクトリを保持してください。
 
 ```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
-tar -xzf jms-pam-clients.tar.gz &&
-python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
+python3 -m pip install --upgrade --force-reinstall https://jumpserver.example.com/static/pam/1.0.3/jms_pam-1.0.3-py3-none-any.whl
 ```
 
 ### ローカルソースからの代替インストール
@@ -1161,7 +1161,7 @@ The Python example uses websockets, not a JumpServer SDK. By default it only obs
 
 ```bash
 python3 -m pip install 'websockets>=11'
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/socket/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-socket-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz
 cd ./jms-pam-clients/socket
 python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders

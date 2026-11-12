@@ -36,8 +36,10 @@ jobs:
           from pathlib import Path
           from runpy import run_path
           from packaging.version import Version
+          from distribution import ROOT, verify_versions
           version = run_path(str(Path('python/jms_pam/_version.py')))['__version__']
           assert Version(version) == Version(os.environ['RELEASE_TAG'][1:]), 'Python package version must match the release tag'
+          verify_versions(ROOT, version)
           PYTHON
       - name: Build and validate distributions
         run: |

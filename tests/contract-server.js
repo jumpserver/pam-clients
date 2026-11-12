@@ -44,7 +44,7 @@ async function startServer() {
       "SHA-256=" + crypto.createHash("sha256").update(body).digest("base64"),
     );
     assert.equal(headers["x-jms-org"], "contract-org");
-    assert.equal(headers["x-jms-client-version"], "1.0.2");
+    assert.equal(headers["x-jms-client-version"], "1.0.3");
     assert.equal(headers["x-jms-protocol-version"], "1");
     assert.equal(
       headers["x-jms-config-schema-version"],
@@ -155,7 +155,7 @@ async function startServer() {
         } else if (route === "/client/") {
           result = {id: "current-client", instance_id: data.instance_id,
             type: request.headers["x-source"] === "jms-pam-agent" ? "agent" : "sdk",
-            is_active: true, client_version: "1.0.2", protocol_version: 1,
+            is_active: true, client_version: "1.0.3", protocol_version: 1,
             config_schema_version: request.headers["x-source"] === "jms-pam-agent" ? 1 : 0,
             application_status: applicationStatuses.get(data.instance_id) || null,
             date_status_reported: applicationStatuses.has(data.instance_id) ? "2026-10-13T00:00:00Z" : null,

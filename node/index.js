@@ -8,7 +8,7 @@ const { WebSocket, createWebSocketStream } = require('ws')
 const { EventSubscription } = require('./event-dispatcher')
 
 
-const VERSION = '1.0.2'
+const VERSION = '1.0.3'
 const PROTOCOL_VERSION = 1
 const CONFIG_SCHEMA_VERSION = 1
 const CLIENT_PATH = '/api/v1/accounts/credential-client'

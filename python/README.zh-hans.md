@@ -53,7 +53,7 @@ with Client(instance_id=instance_id, **client_options) as client:
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/pam-agent-linux-amd64) · [Linux ARM64](/download/pam/pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+[Linux x86_64 (amd64)](/static/pam/1.0.3/pam-agent-linux-amd64) · [Linux ARM64](/static/pam/1.0.3/pam-agent-linux-arm64) · [SHA256SUMS](/static/pam/1.0.3/SHA256SUMS)
 
 ```bash
 # 在下载的 PAM Agent 和 SHA256SUMS 所在目录执行。
@@ -65,6 +65,8 @@ esac
 sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./pam-agent-linux-${agent_arch}" /usr/local/bin/pam-agent
 ```
+
+[macOS amd64](/static/pam/1.0.3/pam-agent-darwin-amd64) · [macOS arm64](/static/pam/1.0.3/pam-agent-darwin-arm64) · [Windows amd64](/static/pam/1.0.3/pam-agent-windows-amd64.exe) · [Windows arm64](/static/pam/1.0.3/pam-agent-windows-arm64.exe)
 
 在下载的 `pam-agent.json` 所在目录执行。下方 Linux 服务命令需要 root 和 systemd。前台运行时使用与主机系统和架构匹配的可执行文件。
 
@@ -590,9 +592,7 @@ PAM Agent 在启动、相关通知及定时周期进行同步，默认 300 秒�
 需要 Python 3.9+。使用应用自己的 Python 或虚拟环境。通过下方命令安装当前 Core 随附的客户端源码，避免已发布的 1.0.2 包缺少托管回调。将 jumpserver.example.com 替换为 Core 地址；保留解压后的 jms-pam-clients 目录，Go 模块使用本地替换路径。
 
 ```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
-tar -xzf jms-pam-clients.tar.gz &&
-python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
+python3 -m pip install --upgrade --force-reinstall https://jumpserver.example.com/static/pam/1.0.3/jms_pam-1.0.3-py3-none-any.whl
 ```
 
 ### 本地源码安装（备用）
@@ -1194,7 +1194,7 @@ Python 示例使用 websockets，不依赖 JumpServer SDK。默认仅观察元�
 
 ```bash
 python3 -m pip install 'websockets>=11'
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/socket/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-socket-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz
 cd ./jms-pam-clients/socket
 python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders

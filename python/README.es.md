@@ -18,7 +18,7 @@ Ejecute el PAM Agent Go independiente en el host de la aplicación, sin Python. 
 
 ### Linux / systemd
 
-[Linux x86_64 (amd64)](/download/pam/pam-agent-linux-amd64) · [Linux ARM64](/download/pam/pam-agent-linux-arm64) · [SHA256SUMS](/download/pam/SHA256SUMS)
+[Linux x86_64 (amd64)](/static/pam/1.0.3/pam-agent-linux-amd64) · [Linux ARM64](/static/pam/1.0.3/pam-agent-linux-arm64) · [SHA256SUMS](/static/pam/1.0.3/SHA256SUMS)
 
 ```bash
 # Run in the directory containing the downloaded PAM Agent and SHA256SUMS.
@@ -30,6 +30,8 @@ esac
 sha256sum --ignore-missing --check SHA256SUMS && \
 sudo install -m 0755 "./pam-agent-linux-${agent_arch}" /usr/local/bin/pam-agent
 ```
+
+[macOS amd64](/static/pam/1.0.3/pam-agent-darwin-amd64) · [macOS arm64](/static/pam/1.0.3/pam-agent-darwin-arm64) · [Windows amd64](/static/pam/1.0.3/pam-agent-windows-amd64.exe) · [Windows arm64](/static/pam/1.0.3/pam-agent-windows-arm64.exe)
 
 Ejecute desde el directorio del archivo `pam-agent.json` descargado. Los comandos del servicio Linux requieren root y systemd. Para ejecución en primer plano, use el ejecutable correspondiente al sistema y arquitectura.
 
@@ -555,9 +557,7 @@ Para solo pull basta la primera consulta. Push y A/B necesitan callbacks de nego
 Instale el código del cliente incluido en el mismo Core; los paquetes 1.0.2 no incluyen callbacks gestionados. Sustituya jumpserver.example.com por su Core y conserve el directorio jms-pam-clients, incluida la ruta local de reemplazo de Go.
 
 ```bash
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/python/ -o jms-pam-clients.tar.gz &&
-tar -xzf jms-pam-clients.tar.gz &&
-python3 -m pip install --upgrade --force-reinstall ./jms-pam-clients/python
+python3 -m pip install --upgrade --force-reinstall https://jumpserver.example.com/static/pam/1.0.3/jms_pam-1.0.3-py3-none-any.whl
 ```
 
 ### Instalación local alternativa
@@ -1161,7 +1161,7 @@ The Python example uses websockets, not a JumpServer SDK. By default it only obs
 
 ```bash
 python3 -m pip install 'websockets>=11'
-curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/socket/ -o jms-pam-clients.tar.gz &&
+curl -fL https://jumpserver.example.com/static/pam/1.0.3/jms-pam-socket-source.tar.gz -o jms-pam-clients.tar.gz &&
 tar -xzf jms-pam-clients.tar.gz
 cd ./jms-pam-clients/socket
 python3 python_example.py --socket /run/jms-pam-agent/agent.sock --service orders

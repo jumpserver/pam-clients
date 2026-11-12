@@ -3,15 +3,21 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 CLIENTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(CLIENTS))
+from distribution import client_version
+
+VERSION = client_version()
+DOWNLOAD_ROOT = f'/static/pam/{VERSION}'
 SOURCE_DIRECTORY = "jms-pam-clients"
 
 def source_archive(language):
-    return f"curl -fL https://jumpserver.example.com/api/v1/accounts/client-source/{language}/ -o jms-pam-clients.tar.gz &&\ntar -xzf jms-pam-clients.tar.gz"
+    return f"curl -fL https://jumpserver.example.com{DOWNLOAD_ROOT}/jms-pam-{language}-source.tar.gz -o jms-pam-clients.tar.gz &&\ntar -xzf jms-pam-clients.tar.gz"
 
-PYTHON_INSTALL = f"{source_archive('python')} &&\npython3 -m pip install --upgrade --force-reinstall ./{SOURCE_DIRECTORY}/python"
+PYTHON_INSTALL = f"python3 -m pip install --upgrade --force-reinstall https://jumpserver.example.com{DOWNLOAD_ROOT}/jms_pam-{VERSION}-py3-none-any.whl"
 LOCALES = ("en", "zh-hans", "zh-hant", "ja", "ko", "pt-br", "ru", "vi", "es", "fr")
 EXAMPLES = {
     "go": (
@@ -237,7 +243,7 @@ NATIVE_INSTALL = {
     "go": f"""```bash
 {source_archive('go')} &&
 go mod edit -replace github.com/jumpserver/pam-clients/go=./jms-pam-clients/go &&
-go get github.com/jumpserver/pam-clients/go@v1.0.2
+go get github.com/jumpserver/pam-clients/go@v{VERSION}
 ```
 
 ```go
@@ -252,7 +258,7 @@ mvn -f ./{SOURCE_DIRECTORY}/java/pom.xml install
 <dependency>
   <groupId>org.jumpserver</groupId>
   <artifactId>jms-pam</artifactId>
-  <version>1.0.2</version>
+  <version>{VERSION}</version>
 </dependency>
 ```
 
@@ -1064,7 +1070,9 @@ def agent_guide(texts):
 
 ### Linux / systemd
 
-{texts['agent_setup']}
+{texts['agent_setup'].replace('/download/pam/', DOWNLOAD_ROOT + '/')}
+
+[macOS amd64]({DOWNLOAD_ROOT}/pam-agent-darwin-amd64) · [macOS arm64]({DOWNLOAD_ROOT}/pam-agent-darwin-arm64) · [Windows amd64]({DOWNLOAD_ROOT}/pam-agent-windows-amd64.exe) · [Windows arm64]({DOWNLOAD_ROOT}/pam-agent-windows-arm64.exe)
 
 {texts['agent_bootstrap']}
 
